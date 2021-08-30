@@ -1,0 +1,3 @@
+[submodule "3rd_party/open_vins"]
+	path = 3rd_party/open_vins
+	url = https://github.com/asyounis/open_vins.git
