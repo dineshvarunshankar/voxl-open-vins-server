@@ -48,92 +48,82 @@
 #include <cctype>
 
 
-// #define VIO_CONFIG_FILE_HEADER_STRING "\
-// /**\n\
-//  * This file contains configuration that's specific to voxl-qvio-server.\n\
-//  *\n\
-//  * voxl-qvio-server also uses parameters from the following shared config files:\n\
-//  * /etc/modalai/extrinsics.conf\n\
-//  * /etc/modalai/cameras.cal\n\
-//  *\n\
-//  * parameter descriptions:\n\
-//  * \n\
-//  * imu_name: VOXL uses imu1 by defualt since it's the most reliable. On\n\
-//  * VOXL-FLIGHT you can optionally try imu0 which is a newer icm42688\n\
-//  *\n\
-//  * cam_name: camera to use, defaults to tracking0\n\
-//  *\n\
-//  * odr_hz: Output data date is independent from the camera frame rate so you can\n\
-//  * choose the desired output data rate. Note that voxl-imu-server defaults to\n\
-//  * 500hz imu sampling but new data is received by voxl-qvio-server at 100hz by\n\
-//  * default so requesting qvio data faster requires updating voxl-imu-server.\n\
-//  *\n\
-//  * use_camera_height_bootstrap: When enabled, the feature estimator will assume\n\
-//  * the system starts up with the camera pointed partially at the ground and use\n\
-//  * this to make an intial guess of the feature's depth. This should be enabled\n\
-//  * for drones that have known-height landing gear.\n\
-//  *\n\
-//  * camera_height_off_ground_m: camera distance above ground (meters) for the\n\
-//  * above bootstrap feature.\n\
-//  *\n\
-//  * enable_init_while_moving: optionally allow the algorithm to initialize or\n\
-//  * reinitialize while moving. Use this if you want to be able to reinitialize\n\
-//  * during flight. Based on camera motion, not IMU motion. Recommended to leave\n\
-//  * this off unless absolutely desired.\n\
-//  *\n\
-//  * cam_imu_timeshift_s: Misalignment between camera and imu timestamp in\n\
-//  * seconds.\n\
-//  *\n\
-//  * cam_imu_timeshift_s_uncertainty: uncertainty in camera imu timestamp\n\
-//  * misalignment\n\
-//  *\n\
-//  * T_cam_wrt_imu_uncertainty[3] & R_cam_to_imu_uncertainty[3]: uncertainty in\n\
-//  * camera-imu translation\n\
-//  *\n\
-//  * accl_fsr_ms2 & gyro_fsr_rad: Full scale range used to detect clipping. By\n\
-//  * default this is set to a little under the real 16G and 2000DPS FSR so\n\
-//  * clipping is detected reliably\n\
-//  *\n\
-//  * accl_noise_std_dev & gyro_noise_std_dev: standard deviation of accl and gyro\n\
-//  * noise\n\
-//  *\n\
-//  * cam_noise_std_dev: Standard dev of camera noise per pixel.\n\
-//  *\n\
-//  * min_std_pixel_noise: Minimum of standard deviation of feature measurement\n\
-//  * noise in pixels.\n\
-//  *\n\
-//  * fail_high_pixel_noise_points: Scales measurement noise and compares against\n\
-//  * search area (is search area large enough to reliably compute measurement\n\
-//  * noise covariance matrix).\n\
-//  *\n\
-//  * limited_imu_bw_trigger: To prevent tracking failure during/right after (hard)\n\
-//  * landing: If sum of 3 consecutive accelerometer samples in any dimension\n\
-//  * divided by 4.3 exceed this threshold, IMU measurement noise is increased (and\n\
-//  * resets become more likely); if platform vibrates heavily during flight, this\n\
-//  * may trigger mid- flight; if poseQuality in mvVISLAMPose drops to\n\
-//  * MV_TRACKING_STATE_LOW_QUALITY during flight, improve mechanical dampening\n\
-//  * (and/or increase threshold)\n\
-//  *\n\
-//  * gps_imu_time_alignment_s: Misalignment between GPS and IMU time in seconds\n\
-//  *\n\
-//  * T_gps_wrt_imu: location of gps with respect to the IMU in meters\n\
-//  *\n\
-//  * enable_mapping: rudimentary lightweight mapping of feature points, leave this\n\
-//  * on.\n\
-//  *\n\
-//  * enable_gps_vel: allow gps velocity to be added to VIO, requires ModalAI\n\
-//  * custom PX4 firmware to expose this data. This is an Alpha feature, don't\n\
-//  * enable this unless instructed to.\n\
-//  */\n"
-
-#define VIO_CONFIG_FILE_HEADER_STRING "/**hi*/"
+#define VIO_CONFIG_FILE_HEADER_STRING "/**\n\
+* The file contains the configuration information for the voxl-open-vins-server application.  \n\
+* \n\
+* This application uses data from the following config files:\n\
+*     - /etc/modalai/extrinsics.conf\n\
+* \n\
+* \n\
+* Parameter Description:\n\
+* \n\
+* imu_name: The name of the IMU to use [default: \"imu0\"]\n\
+* \n\
+* online_camera_to_imu_pose_calibration: If the vio estimator should estimate the imu to camera \n\
+*                                        extrinsics. [default: true]\n\
+* \n\
+* online_camera_intrinsics_calibration: If the vio estimator should estimate the camera intrinsics.\n\
+*                                       [default: true]\n\
+* \n\
+* online_camera_imu_timestamp_calibration: If the vio estimator should estimate the camera to imu    \n\
+*                                          timestamps.  The estimator should estimate this to be \"0\"\n\
+*                                          if running on VOXL. [default: true]\n\
+* \n\
+* dt_slam_delay_after_initing: The time delay to use between initialization the system and starting\n\
+*                              the vio estimator.  [default: 0]\n\
+* \n\
+* \n\
+* downsize_cameras: If the cameras should be downsized to half resolution. This does not change the \n\
+*                   CPU usage on VOXL that much so leaving it false is best on VOXL. [default: false]\n\
+* \n\
+* number_of_features_to_track: The number of features to track with the feature tracker.  This \n\
+*                              will have an effect on CPU utilization. [default: 80]\n\
+* \n\
+* max_clone_size: The max number of clones to use in the MSCKF estimator.  This will have a large \n\
+*                 effect on performance and CPU utilization. Large values = better performance but \n\
+*                 more CPU required. [default: 5]\n\
+* \n\
+* use_zupt: If zero velocity estimation should be used for detecting when the drone is not moving.\n\
+*           This should be enabled since it offers better performance.[default: true]\n\
+* \n\
+* init_imu_thresh: If use_zupt=false then this is the threshold to be used as the threshold for imu\n\
+*                  movement [default: 0.3] \n\
+* \n\
+* zupt_max_velocity: Max velocity we will consider to try to do a zupt (i.e. if above this, \n\
+*                    don't do zupt)[default: 0.1]\n\
+* \n\
+* zupt_only_at_beginning: If we should only use the zupt at the very beginning static initialization \n\
+*                         phase. [default: false]\n\
+* \n\
+* zupt_noise_multiplier: Multiplier of our zupt measurement IMU noise matrix. [default: 50.0]\n\
+* \n\
+* zupt_max_disparity: Max disparity we will consider to try to do a zupt (i.e. if above this, \n\
+*                     don't do zupt)[default: 0.5]\n\
+* \n\
+* cameras: List of camera parameters (Listed Below) [default value has 1 camera entry below]:\n\
+*     camera_name: The name of the camera data [default: \"tracking\"]\n\
+* \n\
+*     camera_id: The ID to give the camera [default 0]\n\
+* \n\
+*     camera_type: The type of camera.  Supported types:\"tracking\" [default \"tracking\"]\n\
+* \n\
+*     image_width:  The image width in pixels [default 640]\n\
+* \n\
+*     image_height: The image height in pixels [default 480]\n\
+* \n\
+*     intrinsic_focal_point: Focal point of camera [default: [275.078, 274.931]]\n\
+*     \n\
+*     intrinsic_principal_point: Principal point of camera [default: [319.625, 243.144]]\n\
+*     \n\
+*     intrinsic_distortion_coeffs: Distortion coefficients for the distortion model  \n\
+*                                  [default: [0.003908, -0.009574, 0.010173, -0.003329]]\n\
+*/"
 
 ConfigParser::ConfigParser(const std::string& config_filepath_in):
     config_filepath{config_filepath_in}
 {
 
 }
-
 
 bool ConfigParser::parse_file()
 {
@@ -156,7 +146,19 @@ bool ConfigParser::parse_file()
         this->configs.online_camera_to_imu_pose_calibration = ConfigParser::parse_bool_with_default(json_root, "online_camera_to_imu_pose_calibration", true);
         this->configs.online_camera_intrinsics_calibration = ConfigParser::parse_bool_with_default(json_root, "online_camera_intrinsics_calibration", true);
         this->configs.online_camera_imu_timestamp_calibration = ConfigParser::parse_bool_with_default(json_root, "online_camera_imu_timestamp_calibration", true);
+        this->configs.downsample_cameras = ConfigParser::parse_bool_with_default(json_root, "downsample_cameras", false);
 
+        if (json_fetch_int_with_default(json_root, "number_of_features_to_track", &(this->configs.number_of_features_to_track), 80))
+        {
+            std::cerr << "Could not get double with default for node: number_of_features_to_track" << std::endl;
+            throw std::runtime_error("");
+        }
+
+        if (json_fetch_int_with_default(json_root, "max_clone_size", &(this->configs.max_clone_size), 5))
+        {
+            std::cerr << "Could not get double with default for node: max_clone_size" << std::endl;
+            throw std::runtime_error("");
+        }
 
         if (json_fetch_double_with_default(json_root, "dt_slam_delay_after_initing", &(this->configs.dt_slam_delay_after_initing), 0.0))
         {
@@ -164,11 +166,51 @@ bool ConfigParser::parse_file()
             throw std::runtime_error("");
         }
 
+        // If we should use zupt or if we should do a simple IMU moving threshold
+        this->configs.use_zupt = ConfigParser::parse_bool_with_default(json_root, "use_zupt", true);
+        if(this->configs.use_zupt)
+        {
+            this->configs.zupt_only_at_beginning = ConfigParser::parse_bool_with_default(json_root, "zupt_only_at_beginning", false);
+
+            if (json_fetch_double_with_default(json_root, "zupt_max_velocity", &(this->configs.zupt_max_velocity), 0.1))
+            {
+                std::cerr << "Could not get double with default for node: zupt_max_velocity" << std::endl;
+                std::cerr << "This is needed since we are using zupt." << std::endl;
+                throw std::runtime_error("");
+            }
+
+            if (json_fetch_double_with_default(json_root, "zupt_noise_multiplier", &(this->configs.zupt_noise_multiplier), 50.0))
+            {
+                std::cerr << "Could not get double with default for node: zupt_noise_multiplier" << std::endl;
+                std::cerr << "This is needed since we are using zupt." << std::endl;
+                throw std::runtime_error("");
+            }
+
+            if (json_fetch_double_with_default(json_root, "zupt_max_disparity", &(this->configs.zupt_max_disparity), 0.5))
+            {
+                std::cerr << "Could not get double with default for node: zupt_max_disparity" << std::endl;
+                std::cerr << "This is needed since we are using zupt." << std::endl;
+                throw std::runtime_error("");
+            }
+        }
+        else
+        {
+            if (json_fetch_double_with_default(json_root, "init_imu_thresh", &(this->configs.init_imu_thresh), 0.3))
+            {
+                std::cerr << "Could not get double with default for node: init_imu_thresh" << std::endl;
+                std::cerr << "This is needed since we are not using zupt." << std::endl;
+                throw std::runtime_error("");
+            }
+        }
+
+        // Keep track for if the json was modified
+        bool json_was_modified;
+
         // Parse the camera configs
-        this->configs.camera_configs = this->parse_camera_configs(json_root, this->configs.imu_name);
+        this->configs.camera_configs = this->parse_camera_configs(json_root, this->configs.imu_name, json_was_modified);
 
         // write modified data to disk if necessary
-        if (json_get_modified_flag())
+        if (json_was_modified || json_get_modified_flag())
         {
             json_write_to_file_with_header(this->config_filepath.c_str(), json_root, VIO_CONFIG_FILE_HEADER_STRING);
         }
@@ -189,7 +231,6 @@ bool ConfigParser::parse_file()
     return true;
 }
 
-
 void ConfigParser::print_configs()
 {
     std::cout << "=================================================================" << std::endl;
@@ -205,7 +246,23 @@ void ConfigParser::print_configs()
     std::cout << "online_camera_intrinsics_calibration:    " << this->configs.online_camera_intrinsics_calibration << std::endl;
     std::cout << "online_camera_imu_timestamp_calibration: " << this->configs.online_camera_imu_timestamp_calibration << std::endl;
     std::cout << "dt_slam_delay_after_initing:             " << std::fixed << this->configs.dt_slam_delay_after_initing  << " seconds" << std::endl;
+    std::cout << "downsample_cameras:                      " << this->configs.downsample_cameras << std::endl;
+    std::cout << "number_of_features_to_track:             " << this->configs.number_of_features_to_track << std::endl;
+    std::cout << "max_clone_size:                          " << this->configs.max_clone_size << std::endl;
 
+    std::cout << "use_zupt:                                " << this->configs.use_zupt << std::endl;
+    if (this->configs.use_zupt)
+    {
+        std::cout << "ZUPT parameters: " << std::endl;
+        std::cout << "\tzupt_max_velocity:      " << this->configs.zupt_max_velocity << std::endl;
+        std::cout << "\tzupt_only_at_beginning: " << this->configs.zupt_only_at_beginning << std::endl;
+        std::cout << "\tzupt_noise_multiplier:  " << this->configs.zupt_noise_multiplier << std::endl;
+        std::cout << "\tzupt_max_disparity:     " << this->configs.zupt_max_disparity << std::endl;
+    }
+    else
+    {
+        std::cout << "init_imu_thresh: " << this->configs.init_imu_thresh << std::endl;
+    }
 
     // Print the camera configs
     std::cout << std::endl;
@@ -219,9 +276,9 @@ void ConfigParser::print_configs()
         std::cout << "\t\t-image_height:                " << it->image_height << std::endl;
         std::cout << "\t\t-intrinsic_focal_point:       (" << it->intrinsic_focal_point[0] << "," << it->intrinsic_focal_point[1]  << ")"  << std::endl;
         std::cout << "\t\t-intrinsic_principal_point:   (" << it->intrinsic_principal_point[0] << "," << it->intrinsic_principal_point[1]  << ")"  << std::endl;
-        std::cout << "\t\t-intrinsic_distortion_coeefs: [" << it->intrinsic_distortion_coeefs[0] << "," << it->intrinsic_distortion_coeefs[1] << "," << it->intrinsic_distortion_coeefs[2] << "," << it->intrinsic_distortion_coeefs[3]  << "]"  << std::endl;
-        std::cout << "\t\t-extrinsic_quaternion:        [" << it->extrinsics_cam_to_imu.block(0,0,4,1).transpose()  << std::endl;
-        std::cout << "\t\t-extrinsic_translation:       [" << it->extrinsics_cam_to_imu.block(4,0,3,1).transpose()  << std::endl;
+        std::cout << "\t\t-intrinsic_distortion_coeffs: [" << it->intrinsic_distortion_coeffs[0] << "," << it->intrinsic_distortion_coeffs[1] << "," << it->intrinsic_distortion_coeffs[2] << "," << it->intrinsic_distortion_coeffs[3]  << "]"  << std::endl;
+        std::cout << "\t\t-extrinsic_quaternion:        [" << it->extrinsics_cam_to_imu.block(0, 0, 4, 1).transpose()  << std::endl;
+        std::cout << "\t\t-extrinsic_translation:       [" << it->extrinsics_cam_to_imu.block(4, 0, 3, 1).transpose()  << std::endl;
     }
 
 
@@ -238,7 +295,6 @@ ov_msckf::VioManagerOptions ConfigParser::generate_open_vins_manager_options()
     // Create the VIO Manager Options (aka the settings for the manager)
     ov_msckf::VioManagerOptions vio_manager_options;
 
-
     // Setting this doesnt matter since we will be feeding in mono images and the trackers
     // will automatically use mono images if mono is passed in but we should set this
     // to false for consistency
@@ -250,38 +306,39 @@ ov_msckf::VioManagerOptions ConfigParser::generate_open_vins_manager_options()
     // No need for multi-threading for this
     vio_manager_options.use_multi_threading = false;
 
-    // Downsampling the cameras are not needed, minimal cpu savings so dont do this 
-    vio_manager_options.downsample_cameras = false;
-
     // Load the configs that were read from the config file
     vio_manager_options.dt_slam_delay = this->configs.dt_slam_delay_after_initing;
     vio_manager_options.state_options.do_calib_camera_pose = this->configs.online_camera_to_imu_pose_calibration;
     vio_manager_options.state_options.do_calib_camera_intrinsics = this->configs.online_camera_intrinsics_calibration;
     vio_manager_options.state_options.do_calib_camera_timeoffset = this->configs.online_camera_imu_timestamp_calibration;
+    vio_manager_options.downsample_cameras = this->configs.downsample_cameras;
+    vio_manager_options.num_pts = this->configs.number_of_features_to_track;
+    vio_manager_options.state_options.max_clone_size = this->configs.max_clone_size;
 
-    // Init with zero velocity
-    vio_manager_options.try_zupt = true;
-    vio_manager_options.zupt_max_velocity = 0.1;
-    vio_manager_options.zupt_only_at_beginning = true;
-    vio_manager_options.zupt_noise_multiplier = 50;
-    vio_manager_options.zupt_max_disparity = 0.5;
-
-
-    // vio_manager_options.init_imu_thresh = 0.3;
-
-    vio_manager_options.num_pts = 80;
-    vio_manager_options.state_options.max_clone_size = 5;
+    // Init with zero velocity and if so then use the correct parameters
+    vio_manager_options.try_zupt = this->configs.use_zupt;
+    if (this->configs.use_zupt)
+    {
+        vio_manager_options.zupt_max_velocity = this->configs.zupt_max_velocity;
+        vio_manager_options.zupt_only_at_beginning = this->configs.zupt_only_at_beginning;
+        vio_manager_options.zupt_noise_multiplier = this->configs.zupt_noise_multiplier;
+        vio_manager_options.zupt_max_disparity = this->configs.zupt_max_disparity;
+    }
+    else
+    {
+        vio_manager_options.init_imu_thresh = this->configs.init_imu_thresh;
+    }
 
     // Load the camera configs
-    for(size_t i = 0; i < this->configs.camera_configs.size();i++)
+    for (size_t i = 0; i < this->configs.camera_configs.size(); i++)
     {
         // Extract the specific camera configs for this camera for convenience
         CameraConfigs &camera_config = this->configs.camera_configs[i];
 
         // Set the camera type
-        if(camera_config.camera_type == CameraType::TRACKING)
+        if (camera_config.camera_type == CameraType::TRACKING)
         {
-            vio_manager_options.camera_fisheye[camera_config.camera_id] = true;            
+            vio_manager_options.camera_fisheye[camera_config.camera_id] = true;
         }
         else
         {
@@ -298,34 +355,18 @@ ov_msckf::VioManagerOptions ConfigParser::generate_open_vins_manager_options()
         cam_calib_intrinsic(1, 0) = camera_config.intrinsic_focal_point[1]; // k1 fy
         cam_calib_intrinsic(2, 0) = camera_config.intrinsic_principal_point[0]; // k2 x0
         cam_calib_intrinsic(3, 0) = camera_config.intrinsic_principal_point[1]; // k3 y0
-        cam_calib_intrinsic(4, 0) = camera_config.intrinsic_distortion_coeefs[0]; // d0
-        cam_calib_intrinsic(5, 0) = camera_config.intrinsic_distortion_coeefs[1]; // d1
-        cam_calib_intrinsic(6, 0) = camera_config.intrinsic_distortion_coeefs[2]; // d2
-        cam_calib_intrinsic(7, 0) = camera_config.intrinsic_distortion_coeefs[3]; // d3
+        cam_calib_intrinsic(4, 0) = camera_config.intrinsic_distortion_coeffs[0]; // d0
+        cam_calib_intrinsic(5, 0) = camera_config.intrinsic_distortion_coeffs[1]; // d1
+        cam_calib_intrinsic(6, 0) = camera_config.intrinsic_distortion_coeffs[2]; // d2
+        cam_calib_intrinsic(7, 0) = camera_config.intrinsic_distortion_coeffs[3]; // d3
         vio_manager_options.camera_intrinsics[camera_config.camera_id] = cam_calib_intrinsic;
 
         // The camera extrinsics
         vio_manager_options.camera_extrinsics[camera_config.camera_id] = camera_config.extrinsics_cam_to_imu;
     }
 
-
     return vio_manager_options;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 std::string ConfigParser::parse_string(cJSON* json_root, const std::string& node_name)
 {
@@ -347,7 +388,6 @@ std::string ConfigParser::parse_string(cJSON* json_root, const std::string& node
     // Convert to C++ for easy use!
     return std::string(buffer);
 }
-
 
 std::string ConfigParser::parse_string_with_default(cJSON* json_root, const std::string& node_name, const std::string& const_value)
 {
@@ -379,7 +419,7 @@ bool ConfigParser::parse_bool_with_default(cJSON* json_root, const std::string& 
     return (bool_value > 0);
 }
 
-std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSON* json_root, const std::string& imu_name)
+std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSON* json_root, const std::string& imu_name, bool& json_was_modified)
 {
     std::vector<ConfigParser::CameraConfigs> parsed_configs;
 
@@ -418,7 +458,7 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         distortion_coeefs_default_values[2]       = 0.010173;
         distortion_coeefs_default_values[3]       = -0.003329;
         cJSON* distortion_coeefs_array = cJSON_CreateDoubleArray(distortion_coeefs_default_values, 4);
-        cJSON_AddItemToObject(new_camera_object, "intrinsic_distortion_coeefs", distortion_coeefs_array);
+        cJSON_AddItemToObject(new_camera_object, "intrinsic_distortion_coeffs", distortion_coeefs_array);
 
         // Add it to the JSON list
         cJSON_AddItemToArray(cameras_root, new_camera_object);
@@ -427,6 +467,11 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         cameras_root = json_fetch_array_of_objects(json_root, "cameras", &number_of_cameras);
     }
 
+    /* Sigh....... 
+     * We need to do this here because the modalai JSON library uses GLOBAL VARIABLES....
+     * So whenever we load a JSON file, the internal state of the library is reset which is not cool!
+     */
+    json_was_modified = json_get_modified_flag();
 
     // Extract the camera-imu extrinsic
     vcc_extrinsic_t all_extrinsics[VCC_MAX_EXTRINSICS_IN_CONFIG];
@@ -436,7 +481,6 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         std::cerr << "Could not open file: " << VCC_EXTRINSICS_PATH << std::endl;
         throw std::runtime_error("");
     }
-
 
     // Loop through the cameras and parse out the configs
     for (int i = 0; i < number_of_cameras; i++)
@@ -480,9 +524,9 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         }
 
 
-        if (json_fetch_fixed_vector(camera_node_root, "intrinsic_distortion_coeefs", cam_config.intrinsic_distortion_coeefs, 4) != 0)
+        if (json_fetch_fixed_vector(camera_node_root, "intrinsic_distortion_coeffs", cam_config.intrinsic_distortion_coeffs, 4) != 0)
         {
-            std::cerr << "Could not parse node " << "intrinsic_distortion_coeefs" << std::endl;
+            std::cerr << "Could not parse node " << "intrinsic_distortion_coeffs" << std::endl;
             throw std::runtime_error("");
         }
 
@@ -507,10 +551,6 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
             throw std::runtime_error("");
         }
 
-        // extrinsic.RPY_parent_to_child[0] = -extrinsic.RPY_parent_to_child[0];
-        // extrinsic.RPY_parent_to_child[1] = -extrinsic.RPY_parent_to_child[1];
-        // extrinsic.RPY_parent_to_child[2] = -extrinsic.RPY_parent_to_child[2];
-
         // Convert from degrees to radians
         extrinsic.RPY_parent_to_child[0] *= M_PI / 180.0;
         extrinsic.RPY_parent_to_child[1] *= M_PI / 180.0;
@@ -519,23 +559,6 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         double q[4];
         rc_quaternion_from_tb_array(extrinsic.RPY_parent_to_child, q);
 
-
-        // // Move everything to Eigen
-        // Eigen::Matrix<double, 3, 3> rotation_matrix;
-        // rotation_matrix(0, 0) = extrinsic.R_child_to_parent[0][0];
-        // rotation_matrix(1, 0) = extrinsic.R_child_to_parent[1][0];
-        // rotation_matrix(2, 0) = extrinsic.R_child_to_parent[2][0];
-        // rotation_matrix(0, 1) = extrinsic.R_child_to_parent[0][1];
-        // rotation_matrix(1, 1) = extrinsic.R_child_to_parent[1][1];
-        // rotation_matrix(2, 1) = extrinsic.R_child_to_parent[2][1];
-        // rotation_matrix(0, 2) = extrinsic.R_child_to_parent[0][2];
-        // rotation_matrix(1, 2) = extrinsic.R_child_to_parent[1][2];
-        // rotation_matrix(2, 2) = extrinsic.R_child_to_parent[2][2];
-
-
-        // std::cout << rotation_matrix << std::endl;
-        // std::cout << "-----" << std::endl;
-
         Eigen::Matrix<double, 3, 1> translation;
         translation[0] = extrinsic.T_child_wrt_parent[0];
         translation[1] = extrinsic.T_child_wrt_parent[1];
@@ -543,15 +566,10 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
 
         // Convert to a quaternion
         Eigen::Matrix<double, 4, 1> quaternion;//  = ov_core::rot_2_quat(rotation_matrix);
-        quaternion(0,0) = q[1];
-        quaternion(1,0) = q[2];
-        quaternion(2,0) = q[3];
-        quaternion(3,0) = q[0];
-
-        // std::cout << quaternion << std::endl;
-        // std::cout << "---------" << std::endl;
-
-
+        quaternion(0, 0) = q[1];
+        quaternion(1, 0) = q[2];
+        quaternion(2, 0) = q[3];
+        quaternion(3, 0) = q[0];
 
         // If we need to invert the transformation (aka we have A->B but we want B->A)
         if (needs_inverse_transformation)
@@ -571,7 +589,6 @@ std::vector<ConfigParser::CameraConfigs> ConfigParser::parse_camera_configs(cJSO
         // Add it to the list of cameras
         parsed_configs.push_back(cam_config);
     }
-
 
     return parsed_configs;
 }

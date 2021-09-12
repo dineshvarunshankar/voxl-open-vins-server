@@ -88,7 +88,7 @@ public:
          */
         double intrinsic_focal_point[2];
         double intrinsic_principal_point[2];
-        double intrinsic_distortion_coeefs[4]; 
+        double intrinsic_distortion_coeffs[4]; 
 
         /** The extrinsic for this this camera and the IMU (CAM->IMU)
          */
@@ -115,6 +115,33 @@ public:
          *  This is so you can put the drone down if you were doing an "initting sequence".
          */
         double dt_slam_delay_after_initing{0};
+
+        /** If the cameras should be downsized to half resolution
+         */
+        bool downsample_cameras{false};
+
+        /** The number of features to track
+         */
+        int number_of_features_to_track{80};
+
+        /** The max clone size to use for the msckf
+         */
+        int max_clone_size{5};
+
+        /** If we should use zero velocity detection in the estimator
+         */
+        bool use_zupt{false};
+
+        /** The parameters to use if we are doing zupt
+         */
+        double zupt_max_velocity{0.1};
+        bool zupt_only_at_beginning{false};
+        double zupt_noise_multiplier{50.0};
+        double zupt_max_disparity{0.5};
+
+        /** If we are not using zupt then we need this
+         */
+        double init_imu_thresh{0.3};
 
         /** The configs for all the different cameras that we will be using
          */
@@ -190,10 +217,11 @@ private:
      *  
      * @param json_root The root node of the json object that we will be parsing from
      * @param imu_name The name of the IM
+     * @param return boolean for if the json was modified
      * @return A vector of the parsed configs
      * @throws std::runtime_error If an error occurs 
      */
-    static std::vector<CameraConfigs> parse_camera_configs(cJSON* json_root, const std::string& imu_name);
+    static std::vector<CameraConfigs> parse_camera_configs(cJSON* json_root, const std::string& imu_name, bool& json_was_modified);
 
     /** Convert a string value to a CameraType enum
      * 

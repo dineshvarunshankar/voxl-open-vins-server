@@ -91,17 +91,17 @@
             // // Alex 
             // "intrinsic_focal_point": [277.0, 321.0],
             // "intrinsic_principal_point":    [277.0, 234.75],
-            // "intrinsic_distortion_coeefs":  [0.024357218, -0.061811482, 0.103913029, -0.053147654]
+            // "intrinsic_distortion_coeffs":  [0.024357218, -0.061811482, 0.103913029, -0.053147654]
 
             // // Default
 			"intrinsic_focal_point":	[275.078, 274.931],
 			"intrinsic_principal_point":	[319.625, 243.144],
-			"intrinsic_distortion_coeefs":	[0.003908, -0.009574, 0.010173, -0.003329]
+			"intrinsic_distortion_coeffs":	[0.003908, -0.009574, 0.010173, -0.003329]
 
             // // Alex Fixed??
             // "intrinsic_focal_point": [277.0, 277.0],
             // "intrinsic_principal_point":    [321.0, 234.75],
-            // "intrinsic_distortion_coeefs":  [0.024357218, -0.061811482, 0.103913029, -0.053147654]
+            // "intrinsic_distortion_coeffs":  [0.024357218, -0.061811482, 0.103913029, -0.053147654]
 
 
 
