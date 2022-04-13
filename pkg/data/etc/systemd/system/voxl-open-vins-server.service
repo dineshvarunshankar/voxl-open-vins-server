@@ -1,0 +1,17 @@
+#
+# Copyright (c) 2021 ModalAI, Inc.
+#
+
+[Unit]
+Description=voxl-open-vins-server
+SourcePath=/usr/bin/voxl-open-vins-server
+
+[Service]
+User=root
+Type=simple
+PIDFile=/run/voxl-open-vins-server.pid
+ExecStart=/usr/bin/voxl-open-vins-server
+
+[Install]
+WantedBy=multi-user.target
+

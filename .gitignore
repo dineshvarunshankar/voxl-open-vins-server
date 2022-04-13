@@ -1,3 +1,6 @@
 build
 build64
 .bash_history
+.vscode
+*.deb
+*.ipk

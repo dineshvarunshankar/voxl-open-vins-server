@@ -32,7 +32,7 @@
  ******************************************************************************/
 
 // Project Includes
-#include "config_parser.h"
+#include "config_file.h"
 
 // Includes from open_vins
 #include <core/VioManagerOptions.h>
@@ -65,7 +65,7 @@
  *  application gets data from).
  */
 #define IMU_CH                 (0)
-#define IMU_BUFFER_LEN         (40 * 10)
+// #define IMU_BUFFER_LEN         (500 * sizeof(imu_data_t))
 #define CAMERA_CH_START_OFFSET (1)
 
 /** The non-configurable (aka hard-coded) pipe information for the server pipes (aka the pipes this 
@@ -74,10 +74,6 @@
 #define SIMPLE_OUTPUT_CH (1)
 #define VIO_SIMPLE_NAME        "open-vins"
 #define VIO_SIMPLE_LOCATION    MODAL_PIPE_DEFAULT_BASE_DIR VIO_SIMPLE_NAME "/"
-
-/** The configs of the system that are loaded from the config file
- */
-ConfigParser::VIOConfigs configs;
 
 /** The VIO Manager that we will be using for the VIO estimation
  */
@@ -107,8 +103,9 @@ std::mutex imu_data_mutex;
  */
 float last_angular_velocity_data[3];
 
-/** The variables we need for computing the initial gyro bias
- */
+// ??????????
+// /** The variables we need for computing the initial gyro bias
+//  */
 #define GYRO_BIAS_COUNTER_THRESHOLD (100)
 int initial_gyro_bias_counter{0};
 double initial_gyro_bias[3];
@@ -144,12 +141,15 @@ static void _new_imu_data_handler(int ch, char* data, int bytes, void* context)
     int n_packets;
     imu_data_t* unpacked_imu_data = pipe_validate_imu_data_t(data, bytes, &n_packets);
 
+    // fprintf(stderr, "n packets: %d\n", n_packets);
+
     // If there is no data to unpack
     if(unpacked_imu_data == nullptr)
     {
         return;
     }
 
+    // ??????????
     // If the gyros are not calibrated for initial bias then do that first before ingesting data
     if(!gyro_calibrated)
     {
@@ -238,14 +238,15 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         return;
     }
 
+    // ?????
     // Do nothing until we have calibrated the gyro
     if(!gyro_calibrated)
     {
         return;
     }
 
-    // Extract the camera configs
-    ConfigParser::CameraConfigs camera_configs = configs.camera_configs[camera_index];
+    // // Extract the camera configs
+    // ConfigParser::CameraConfigs camera_configs = configs.camera_configs[camera_index];
 
     // Unpack the data into an opencv image Mat
     cv::Mat img(meta.height, meta.width, CV_8UC1);
@@ -260,7 +261,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
      */
     ov_core::CameraData vio_manager_data;
     vio_manager_data.timestamp = static_cast<double>(meta.timestamp_ns) / 1000000000.0;
-    vio_manager_data.sensor_ids.push_back(camera_configs.camera_id);
+    vio_manager_data.sensor_ids.push_back(0);
     vio_manager_data.images.push_back(img);
     vio_manager_data.masks.push_back(mask);
 
@@ -546,15 +547,15 @@ static void create_server_pipes(void)
         _quit(-1);
     }
 
-    // add in optional fields to the info JSON file
-    cJSON* json = pipe_server_get_info_json_ptr(SIMPLE_OUTPUT_CH);
-    cJSON_AddStringToObject(json, "imu", configs.imu_name.c_str());
-    for(size_t i = 0; i < configs.camera_configs.size();i++)
-    {
-        std::string key = "cam" + std::to_string(i);
-        cJSON_AddStringToObject(json, key.c_str(), configs.camera_configs[i].camera_name.c_str());
-    }
-    pipe_server_update_info(SIMPLE_OUTPUT_CH);
+    // // add in optional fields to the info JSON file
+    // cJSON* json = pipe_server_get_info_json_ptr(SIMPLE_OUTPUT_CH);
+    // cJSON_AddStringToObject(json, "imu", configs.imu_name.c_str());
+    // for(size_t i = 0; i < configs.camera_configs.size();i++)
+    // {
+    //     std::string key = "cam" + std::to_string(i);
+    //     cJSON_AddStringToObject(json, key.c_str(), configs.camera_configs[i].camera_name.c_str());
+    // }
+    // pipe_server_update_info(SIMPLE_OUTPUT_CH);
     // pipe_server_set_available_control_commands(SIMPLE_OUTPUT_CH, CONTROL_COMMANDS);
 }
 
@@ -566,24 +567,99 @@ static void connect_client_pipes(void)
     {
         pipe_client_set_simple_helper_cb(IMU_CH, _new_imu_data_handler, NULL);
         int flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
-        if (pipe_client_open(IMU_CH, configs.imu_name.c_str(), PROCESS_NAME, flags, IMU_BUFFER_LEN) != 0)
+        if (pipe_client_open(IMU_CH, imu_pipe, PROCESS_NAME, flags, VIO_RECOMMENDED_READ_BUF_SIZE) != 0)
         {
             exit(0);
         }
     }
 
     // Connect to all the camera pipes
-    for(size_t i = 0; i < configs.camera_configs.size();i++)
+    for(size_t i = 0; i < 1; i++)
     {
         int channel_number = CAMERA_CH_START_OFFSET + i;
 
         pipe_client_set_camera_helper_cb(channel_number, _new_camera_data_handler, NULL);
         int flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-        if (pipe_client_open(channel_number, configs.camera_configs[i].camera_name.c_str(), PROCESS_NAME, flags, 0) != 0)
+        if (pipe_client_open(channel_number, cam0_pipe, PROCESS_NAME, flags, 1024*1024*32) != 0)
         {
             exit(0);
         }
     }
+}
+
+static ov_msckf::VioManagerOptions generate_open_vins_manager_options(){
+    // Create the VIO Manager Options (aka the settings for the manager)
+    ov_msckf::VioManagerOptions vio_manager_options;
+
+    // Setting this doesnt matter since we will be feeding in mono images and the trackers
+    // will automatically use mono images if mono is passed in but we should set this
+    // to false for consistency
+    vio_manager_options.use_stereo = false;
+
+    // We did not compile in aruco so disable it
+    vio_manager_options.use_aruco = false;
+
+    // No need for multi-threading for this YET
+    vio_manager_options.use_multi_threading = false;
+
+    // Load the configs that were read from the config file
+    vio_manager_options.dt_slam_delay = delay_after_init;
+    vio_manager_options.state_options.do_calib_camera_pose = camera_to_imu_pose_calibration;
+    vio_manager_options.state_options.do_calib_camera_intrinsics = camera_intrinsics_calibration;
+    vio_manager_options.state_options.do_calib_camera_timeoffset = camera_imu_timestamp_calibration;
+    vio_manager_options.downsample_cameras = downsample_cams;
+    vio_manager_options.num_pts = 80;
+    vio_manager_options.state_options.max_clone_size = max_clone_size;
+
+    // Init with zero velocity and if so then use the correct parameters
+    vio_manager_options.try_zupt = use_zupt;
+    if (use_zupt)
+    {
+        vio_manager_options.zupt_max_velocity = zupt_max_velocity;
+        vio_manager_options.zupt_only_at_beginning = zupt_only_at_beginning;
+        vio_manager_options.zupt_noise_multiplier = zupt_noise_multiplier;
+        vio_manager_options.zupt_max_disparity = zupt_max_disparity;
+    }
+    else
+    {
+        vio_manager_options.init_imu_thresh = init_imu_thresh;
+    }
+
+    // Load the camera configs
+    for (size_t i = 0; i < 1; i++)
+    {
+        // Set the camera type
+        // if (camera_config.camera_type == CameraType::TRACKING)
+        // {
+        vio_manager_options.camera_fisheye[0] = true;
+        // }
+        // else
+        // {
+            // std::cerr << "Camera type not supported in \"generate_open_vins_manager_options(...)\"" << std::endl;
+            // exit(0);
+        // }
+
+
+        // Set the dims, if stereo then this would be the size of 1 image not both
+        vio_manager_options.camera_wh[0] = std::make_pair(640, 480);
+
+        // The camera intrinsics
+        Eigen::Matrix<double, 8, 1> cam_calib_intrinsic = cam0_calib_intrinsic;
+        // cam_calib_intrinsic(0, 0) = 275.078; // k0 fx
+        // cam_calib_intrinsic(1, 0) =  274.931; // k1 fy
+        // cam_calib_intrinsic(2, 0) = 319.625; // k2 x0
+        // cam_calib_intrinsic(3, 0) = 243.144; // k3 y0
+        // cam_calib_intrinsic(4, 0) = 0.003908; // d0
+        // cam_calib_intrinsic(5, 0) = -0.009574; // d1
+        // cam_calib_intrinsic(6, 0) = 0.010173; // d2
+        // cam_calib_intrinsic(7, 0) = -0.003329; // d3
+        vio_manager_options.camera_intrinsics[0] = cam_calib_intrinsic;
+
+        // The camera extrinsics
+        vio_manager_options.camera_extrinsics[0] = cam0_wrt_imu;
+    }
+
+    return vio_manager_options;
 }
 
 /** The main function
@@ -664,24 +740,24 @@ int main(int argc, char *argv[])
     make_pid_file(PROCESS_NAME);
 
     // Load the config file
-    ConfigParser config_parser(config_file_to_load);
-    if(!config_parser.parse_file())
-    {
-        std::cerr << "ERROR: Could not load config file." << std::endl;
-        _quit(-1);
-    }
+	printf("Loading our own config file\n");
+    if(config_file_read()) return -1;
 
-    configs = config_parser.get_configs();
+    printf("Loading extrinsics config file\n");
+	if(load_extrinsics_file()) return -1;
+
+    printf("Loading intrinsics config file\n");
+    if(load_intrinsics_file()) return -1;
 
     // Create the VIO Manager
-    ov_msckf::VioManagerOptions vio_manager_options = config_parser.generate_open_vins_manager_options();
+    ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
     vio_manager = std::unique_ptr<ov_msckf::VioManager>(new ov_msckf::VioManager(vio_manager_options));
 
     // If we are in config only mode then we are done here (after the files have been loaded)
     if(config_only)
     {
         // Print the configs only
-        config_parser.print_configs();
+        config_file_print();
         _quit(0);
     }
 

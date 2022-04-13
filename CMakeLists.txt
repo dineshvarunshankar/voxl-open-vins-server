@@ -11,7 +11,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # Set the RPATH
 set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;/usr/local/lib64;/usr/local/lib")
 
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a")
 
 
 # option(BUILD_FOR_X86 "Enable or disable building of for desktop computers" OFF)
@@ -27,3 +27,5 @@ add_subdirectory(3rd_party)
 
 # server and client binaries
 add_subdirectory(server)
+add_subdirectory(clients)
+
