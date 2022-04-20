@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.3)
 include(GNUInstallDirs)
 
 # Set the compiler flags
-# add_compile_options(-g -Wall -Wextra -Wuninitialized -Wunused-variable -Wdouble-promotion -Wmissing-declarations -Werror=undef -Wno-unused-function)
 add_compile_options(-Wall -Wextra -Wuninitialized -Wunused-variable -Wdouble-promotion -Wmissing-declarations -Wno-unused-function)
 
 

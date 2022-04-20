@@ -45,34 +45,24 @@
 #include <vector>
 
 
-#define CHAR_BUF_SIZE 64
+#define CHAR_BUF_SIZE 128
 #define CONFIG_FILE "/etc/modalai/voxl-open-vins-server.conf"
+#define CONFIG_FILE_HEADER \
+    "\
+/**\n\
+ * This file contains configuration that's specific to voxl-open-vins-server.\n\
+ */\n"
+#define MAX_CAMERAS 4
 
-extern char cam0_pipe[CHAR_BUF_SIZE];
-extern bool cam0_enable;
-extern char cam0_extrinsics_name[CHAR_BUF_SIZE];
-extern Eigen::Matrix<double, 7, 1> cam0_wrt_imu;
-extern Eigen::Matrix<double, 8, 1> cam0_calib_intrinsic;
+typedef struct camera_info {
+    bool enable;
+    char name[CHAR_BUF_SIZE];
+    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
+    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
+    bool is_fisheye;   
+} camera_info;
 
-extern char cam1_pipe[CHAR_BUF_SIZE];
-extern bool cam1_enable;
-extern char cam1_extrinsics_name[CHAR_BUF_SIZE];
-extern Eigen::Matrix<double, 7, 1> cam1_wrt_imu;
-extern Eigen::Matrix<double, 8, 1> cam1_calib_intrinsic;
-
-extern char cam2_pipe[CHAR_BUF_SIZE];
-extern bool cam2_enable;
-extern char cam2_extrinsics_name[CHAR_BUF_SIZE];
-extern Eigen::Matrix<double, 7, 1> cam2_wrt_imu;
-extern Eigen::Matrix<double, 8, 1> cam2_calib_intrinsic;
-
-extern char cam3_pipe[CHAR_BUF_SIZE];
-extern bool cam3_enable;
-extern char cam3_extrinsics_name[CHAR_BUF_SIZE];
-extern Eigen::Matrix<double, 7, 1> cam3_wrt_imu;
-extern Eigen::Matrix<double, 8, 1> cam3_calib_intrinsic;
-
-extern char imu_pipe[CHAR_BUF_SIZE];
+extern std::vector<camera_info> cam_info_vec;
 extern char imu_name[CHAR_BUF_SIZE];
 
 // online calibration? think that just means it adjusts and tries to converge on these vals?

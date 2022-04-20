@@ -1,9 +1,0 @@
-Package: voxl-open-vins-server
-Version: 0.1.0
-Section: base
-Priority: optional
-Architecture: arm64
-Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-boost, voxl-opencv
-Conflicts:
-Maintainer: ali.younis@modalai.com
-Description: Publishes VIO (from open_vins) data over named pipe interface. 

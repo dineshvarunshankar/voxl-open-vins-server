@@ -184,7 +184,7 @@ static void _print_data(vio_data_t d)
 	printf("%8.2f%8.2f%8.2f|", (double)d.T_imu_wrt_vio[0], (double)d.T_imu_wrt_vio[1], (double)d.T_imu_wrt_vio[2]);
 	float roll, pitch, yaw;
 	_rotation_to_tait_bryan(d.R_imu_to_vio, &roll, &pitch, &yaw);
-	printf("%6.1f %6.1f %6.1f|", (double)roll*RAD_TO_DEG, (double)pitch*RAD_TO_DEG, (double)yaw*RAD_TO_DEG);
+	printf("%6.1f %6.1f %6.1f|", (double)roll, (double)pitch, (double)yaw);
 
 	if(en_vel_imu_wrt_vio){
 		printf("%6.2f %6.2f %6.2f|", (double)d.vel_imu_wrt_vio[0], (double)d.vel_imu_wrt_vio[1], (double)d.vel_imu_wrt_vio[2]);
@@ -215,7 +215,7 @@ static void _print_data(vio_data_t d)
 		printf("%10.5f|", (double)d.quality);
 	}
 	if(en_timestamp_ns){
-		printf("%15lld |", d.timestamp_ns);
+		printf("%15ld |", d.timestamp_ns);
 	}
 	if(en_state){
 		printf(" ");
