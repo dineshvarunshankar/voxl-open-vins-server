@@ -31,12 +31,14 @@
  * POSSIBILITY OF SUCH DAMAGE.
  ******************************************************************************/
 
-// Includes from open_vins
 #include <core/VioManagerOptions.h>
+
 #include <modal_json.h>
 #include <rc_math.h>
 #include <stdio.h>
 #include <voxl_common_config.h>
+
+#include <string>
 
 #include <iostream>
 #include <opencv2/calib3d/calib3d.hpp>
@@ -52,24 +54,92 @@ using namespace std;
 // define all the externs from config_file.h
 std::vector<camera_info> cam_info_vec(MAX_CAMERAS);
 char imu_name[CHAR_BUF_SIZE];
+float odr_hz;
 
-// online calibration? think that just means it adjusts and tries to converge on these vals?
-bool camera_to_imu_pose_calibration;
-bool camera_intrinsics_calibration;
-bool camera_imu_timestamp_calibration;
+/// STATE OPTIONS ///
+bool do_fej;
+bool imu_avg;
+bool use_rk4_integration;
 
-double delay_after_init;
-bool downsample_cams;
-int num_features_to_track;
+bool cam_to_imu_refinement;
+bool cam_intrins_refinement;
+bool cam_imu_ts_refinement;
+
 int max_clone_size;
+int max_slam_features;
+int max_slam_in_update;
+int max_msckf_in_update;
 
-bool use_zupt;
+ov_type::LandmarkRepresentation::Representation feat_rep_msckf;
+ov_type::LandmarkRepresentation::Representation feat_rep_slam;
+
+double cam_imu_time_offset;
+double slam_delay;
+
+/// INERTIAL INITIALIZER OPTIONS ///
+double gravity_mag;
+double init_window_time;
+double init_imu_thresh;
+
+/// IMU NOISE OPTIONS ///
+double imu_sigma_w;
+double imu_sigma_wb;
+double imu_sigma_a;
+double imu_sigma_ab;
+double imu_sigma_w_2;
+double imu_sigma_wb_2;
+double imu_sigma_a_2;
+double imu_sigma_ab_2;
+
+/// FEATURE OPTIONS ///
+double msckf_chi2_multiplier;
+double msckf_sigma_px;
+double msckf_sigma_px_sq;
+
+double slam_chi2_multiplier;
+double slam_sigma_px;
+double slam_sigma_px_sq;
+
+double zupt_chi2_multiplier;
+double zupt_sigma_px;
+double zupt_sigma_px_sq;
+
+bool use_stereo;
+
+/// ZUPT OPTIONS ///
+bool try_zupt;
 double zupt_max_velocity;
 bool zupt_only_at_beginning;
 double zupt_noise_multiplier;
 double zupt_max_disparity;
-double init_imu_thresh;
 
+/// TRACKER + EXTRACTOR OPTIONS ///
+bool use_klt;
+int num_pts;
+int fast_threshold;
+int grid_x;
+int grid_y;
+int min_px_dist;
+double knn_ratio;
+bool downsample_cams;
+bool use_multithreading;
+bool use_mask;
+
+static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
+      return "GLOBAL_3D";
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_FULL_INVERSE_DEPTH)
+      return "GLOBAL_FULL_INVERSE_DEPTH";
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_3D)
+      return "ANCHORED_3D";
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_FULL_INVERSE_DEPTH)
+      return "ANCHORED_FULL_INVERSE_DEPTH";
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
+      return "ANCHORED_MSCKF_INVERSE_DEPTH";
+    if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_INVERSE_DEPTH_SINGLE)
+      return "ANCHORED_INVERSE_DEPTH_SINGLE";
+    return "UNKNOWN";
+  }
 
 static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double, 7, 1> &cam_wrt_imu, bool needs_inverse){
     // read in our rotation
@@ -79,13 +149,10 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
             rotation_ch_wrt_par(i, j) = extrins.R_child_to_parent[i][j];
         }
     }
-
     // reverse our rotation. this gives us parent->child, same as using the RPY vector would have
     Eigen::Matrix<double, 3, 3> rotation_par_wrt_ch = rotation_ch_wrt_par.transpose();
-
     // create our quaternion
     Eigen::Matrix<double, 4, 1> quaternion;
-
     // open_vins jpl creator from rotation matrix, using correct rotation based on needs_inverse relation
     quaternion = rot_2_quat(needs_inverse ? rotation_par_wrt_ch : rotation_ch_wrt_par);
 
@@ -126,7 +193,10 @@ int load_extrinsics_file() {
             strcpy(ext_name, cam_info_vec[i].name);
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
-            if (strstr(ext_name, "stereo") != NULL) strcat(ext_name, "_l");
+            if (strstr(ext_name, "stereo") != NULL){
+                use_stereo = true;
+                strcat(ext_name, "_l");
+            }
 
             if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
                 needs_inverse_transform = false;
@@ -153,14 +223,14 @@ int load_intrinsics_file() {
     for (int i = 0; i < MAX_CAMERAS; i++){
         if (cam_info_vec[i].enable){
             memset(intrinsics_path, '\0', CHAR_BUF_SIZE);
-            // opencv_cam_name_intrinsics.yml
-            strcpy(intrinsics_path, "opencv_");
+            // opencv_cam_name_intrinsics.ymls
+            strcpy(intrinsics_path, "/data/modalai/opencv_");
             strcat(intrinsics_path, cam_info_vec[i].name);
             strcat(intrinsics_path, "_intrinsics.yml");
 
             FileStorage fs(intrinsics_path, FileStorage::READ);
             if(!fs.isOpened()){
-                fprintf(stderr, "Failed to load intrinsicss file %s\n", intrinsics_path);
+                fprintf(stderr, "Failed to load intrinsics file %s\n", intrinsics_path);
                 return -1;
             }
 
@@ -283,35 +353,76 @@ int config_file_print(void) {
     printf("enable:                           %s\n", cam_info_vec[3].enable ? "true" : "false");
     printf("name:                             %s\n", cam_info_vec[3].name);
     printf("=================================================================\n");
-    printf("===========================IMU====================================\n");
+    printf("============================IMU==================================\n");
     printf("imu pipe:                         %s\n", imu_name);
+	printf("odr_hz:                           %6.3f\n", (double)odr_hz);
     printf("=================================================================\n");
-    printf("==========================GENERAL=================================\n");
-    printf("camera_to_imu_pose_calibration:   %s\n", camera_to_imu_pose_calibration ? "true" : "false");
-    printf("camera_intrinsics_calibration:    %s\n", camera_intrinsics_calibration ? "true" : "false");
-    printf("camera_imu_timestamp_calibration: %s\n", camera_imu_timestamp_calibration ? "true" : "false");
-    printf("delay after init(seconds):        %6.5f\n", delay_after_init);
-    printf("downsample cams:                  %s\n", downsample_cams ? "true" : "false");
-    printf("features to track:                %d\n", num_features_to_track);
+    printf("===========================STATE=================================\n");
+    printf("do fej:                           %s\n", do_fej ? "true" : "false");
+    printf("imu avg:                          %s\n", imu_avg ? "true" : "false");
+    printf("use rk4 integration:              %s\n", use_rk4_integration ? "true" : "false");
+    printf("cam to imu refinement:            %s\n", cam_to_imu_refinement ? "true" : "false");
+    printf("cam intrins refinement:           %s\n", cam_intrins_refinement ? "true" : "false");
+    printf("cam imu ts refinement:            %s\n", cam_imu_ts_refinement ? "true" : "false");
     printf("max clone size:                   %d\n", max_clone_size);
-    printf("use zupt:                         %s\n", use_zupt ? "true" : "false");
-    if (use_zupt) {
-        printf("zupt max velocity:                %6.5f\n", zupt_max_velocity);
-        printf("use zupt only at beginning:       %s\n", zupt_only_at_beginning ? "true" : "false");
-        printf("zupt noise multiplier:            %6.5f\n", zupt_noise_multiplier);
-        printf("zupt max disparity:               %6.5f\n", zupt_max_disparity);
-    } else
-        printf("init imu thresh:                  %6.5f\n", init_imu_thresh);
+    printf("max slam features:                %d\n", max_slam_features);
+    printf("max slam in update:               %d\n", max_slam_in_update);
+    printf("max msckf in update:              %d\n", max_msckf_in_update);
+    printf("feat rep msckf:                   %s\n", feat_set_as_string(feat_rep_msckf).c_str());
+    printf("feat rep slam:                    %s\n", feat_set_as_string(feat_rep_slam).c_str());
+    printf("cam imu time offset:              %6.5f\n", cam_imu_time_offset);
+    printf("slam delay:                       %6.5f\n", slam_delay);
+    printf("=================================================================\n");
+    printf("=====================INERTIAL INITIALIZER========================\n");
+    printf("gravity mag:                      %6.5f\n", gravity_mag);
+    printf("init window time:                 %6.5f\n", init_window_time);
+    printf("init imu thresh:                  %6.5f\n", init_imu_thresh);
+    printf("=================================================================\n");
+    printf("==========================IMU NOISE==============================\n");
+    printf("imu sigma w:                      %6.5f\n", imu_sigma_w);
+    printf("imu sigma wb:                     %6.5f\n", imu_sigma_wb);
+    printf("imu sigma a:                      %6.5f\n", imu_sigma_a);
+    printf("imu sigma ab:                     %6.5f\n", imu_sigma_ab);
+    printf("imu sigma w^2:                    %6.5f\n", imu_sigma_w_2);
+    printf("imu sigma wb^2:                   %6.5f\n", imu_sigma_wb_2);
+    printf("imu sigma a^2:                    %6.5f\n", imu_sigma_a_2);
+    printf("imu sigma ab^2:                   %6.5f\n", imu_sigma_ab_2);
+    printf("=================================================================\n");
+    printf("========================FEATURE NOISE============================\n");
+    printf("msckf chi^2 multiplier:           %6.5f\n", msckf_chi2_multiplier);
+    printf("msckf sigma px:                   %6.5f\n", msckf_sigma_px);
+    printf("msckf sigma px^2:                 %6.5f\n", msckf_sigma_px_sq);
+    printf("slam chi^2 multiplier:            %6.5f\n", slam_chi2_multiplier);
+    printf("slam sigma px:                    %6.5f\n", slam_sigma_px);
+    printf("slam sigma px^2:                  %6.5f\n", slam_sigma_px_sq);
+    printf("zupt chi^2 multiplier:            %6.5f\n", zupt_chi2_multiplier);
+    printf("zupt sigma px:                    %6.5f\n", zupt_sigma_px);
+    printf("zupt sigma px^2:                  %6.5f\n", zupt_sigma_px_sq);
+    printf("=================================================================\n");
+    printf("=============================ZUPT================================\n");
+    printf("try zupt:                         %s\n", try_zupt ? "true" : "false");
+    printf("zupt max velocity:                %6.5f\n", zupt_max_velocity);
+    printf("zupt_only_at_beginning:           %s\n", zupt_only_at_beginning ? "true" : "false");
+    printf("zupt noise multiplier:            %6.5f\n", zupt_noise_multiplier);
+    printf("zupt max disparity:               %6.5f\n", zupt_max_disparity);
+    printf("=================================================================\n");
+    printf("=======================TRACKER/EXTRACTOR=========================\n");
+    printf("use klt:                          %s\n", use_klt ? "true" : "false");
+    printf("num pts:                          %d\n", num_pts);
+    printf("fast threshold:                   %d\n", fast_threshold);
+    printf("grid x:                           %d\n", grid_x);
+    printf("grid y:                           %d\n", grid_y);
+    printf("min px dist:                      %d\n", min_px_dist);
+    printf("knn ratio:                        %6.5f\n", knn_ratio);
+    printf("downsample cams:                  %s\n", downsample_cams ? "true" : "false");
+    printf("use multithreading:               %s\n", use_multithreading ? "true" : "false");
+    printf("use mask:                         %s\n", use_mask ? "true" : "false");
+    printf("use stereo:                       %s\n", use_stereo ? "true" : "false");
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
 }
 
-/**
- * load the config file and populate the above extern variables
- *
- * @return     0 on success, -1 on failure
- */
 int config_file_read(void) {
     int ret = json_make_empty_file_with_header_if_missing(CONFIG_FILE, CONFIG_FILE_HEADER);
     if (ret < 0)
@@ -333,26 +444,73 @@ int config_file_read(void) {
     json_fetch_string_with_default(parent, "cam2_pipe", cam_info_vec[2].name, CHAR_BUF_SIZE, "stereo_rear");
 
     json_fetch_bool_with_default(parent, "cam3_enable", (int*)&cam_info_vec[3], 0);
-    json_fetch_string_with_default(parent, "cam3_pipe", cam_info_vec[3].name, CHAR_BUF_SIZE, "/run/mpa/tracking");
+    json_fetch_string_with_default(parent, "cam3_pipe", cam_info_vec[3].name, CHAR_BUF_SIZE, "hires");
 
-    json_fetch_string_with_default(parent, "imu_name", imu_name, CHAR_BUF_SIZE, "imu0");
+    json_fetch_string_with_default(parent, "imu_name", imu_name, CHAR_BUF_SIZE, "imu_apps");
+	json_fetch_float_with_default(parent, "odr_hz", &odr_hz, 30);
 
-    json_fetch_bool_with_default(parent, "camera_to_imu_pose_calibration", (int*)&camera_to_imu_pose_calibration, 1);
-    json_fetch_bool_with_default(parent, "camera_intrinsics_calibration", (int*)&camera_intrinsics_calibration, 1);
-    json_fetch_bool_with_default(parent, "camera_imu_timestamp_calibration", (int*)&camera_imu_timestamp_calibration, 1);
+    json_fetch_bool_with_default(parent, "do_fej", (int*)&do_fej, 1);
+    json_fetch_bool_with_default(parent, "imu_avg", (int*)&imu_avg, 1);
+    json_fetch_bool_with_default(parent, "use_rk4_integration", (int*)&use_rk4_integration, 1);
 
-    json_fetch_double_with_default(parent, "delay_after_init", &delay_after_init, 0.0);
-    json_fetch_bool_with_default(parent, "downsample_cams", (int*)&downsample_cams, 0);
-    json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 80);
-    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 5);
+    json_fetch_bool_with_default(parent, "cam_to_imu_refinement", (int*)&cam_to_imu_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int*)&cam_intrins_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int*)&cam_imu_ts_refinement, 1);
 
-    json_fetch_bool_with_default(parent, "use_zupt", (int*)&use_zupt, 0);
+    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 25);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 40);
+
+    json_fetch_int_with_default(parent, "feat_rep_msckf", (int*)&feat_rep_msckf, 0);
+    json_fetch_int_with_default(parent, "feat_rep_slam", (int*)&feat_rep_slam, 4);
+
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, -0.002);
+    json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
+
+    json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.81);
+    json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 2.0);
+    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.5);
+
+    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 1.6968e-02);
+    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.9393e-02);
+    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 2.0000e-2);
+    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 3.0000e-02);
+    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, pow(1.6968e-02, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, pow(1.9393e-02, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, pow(2.0000e-2, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, pow(3.0000e-02, 2));
+
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 0.1);
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 5.0);
+    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 25.0);
+
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 0.1);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 5.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 25.0);
+
+    json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
+    json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
+    json_fetch_double_with_default(parent, "zupt_sigma_px_sq", &zupt_sigma_px_sq, 1.0);
+
+    json_fetch_bool_with_default(parent, "try_zupt", (int*)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
-    json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int*)&zupt_only_at_beginning, 0);
+    json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int*)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 50.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 0.5);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
 
-    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 0.3);
+    json_fetch_bool_with_default(parent, "use_klt", (int*)&use_klt, 1);
+    json_fetch_int_with_default(parent, "num_pts", &num_pts, 80);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
+    json_fetch_int_with_default(parent, "grid_x", &grid_x, 20);
+    json_fetch_int_with_default(parent, "grid_y", &grid_y, 16);
+    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
+    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
+    json_fetch_bool_with_default(parent, "downsample_cams", (int*)&downsample_cams, 0);
+    json_fetch_bool_with_default(parent, "use_multithreading", (int*)&use_multithreading, 0);
+    json_fetch_bool_with_default(parent, "use_mask", (int*)&use_mask, 0);
+    json_fetch_bool_with_default(parent, "use_stereo", (int*)&use_stereo, 0);
+
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
