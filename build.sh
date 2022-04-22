@@ -10,7 +10,7 @@ TOOLCHAIN_QRB5165="/opt/cross_toolchain/aarch64-gnu-7.toolchain.cmake"
 EXTRA_OPTS=""
 
 ## this list is just for tab-completion
-AVAILABLE_PLATFORMS="qrb5165 apq8096 native"
+AVAILABLE_PLATFORMS="qrb5165 native"
 
 
 print_usage(){
@@ -30,6 +30,12 @@ print_usage(){
 	echo ""
 	echo ""
 }
+
+# apply patches
+echo "Applying MAI Patches"
+patch -uN 3rd_party/open_vins/ov_core/src/init/InertialInitializer.cpp -i patches/inertial_initializer_debug_prints.patch
+patch -uN 3rd_party/open_vins/ov_msckf/src/core/VioManager.cpp -i patches/vio_manager_cam_ids.patch
+echo "Done Applying Patches"
 
 
 case "$1" in

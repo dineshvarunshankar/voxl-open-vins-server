@@ -1,0 +1,32 @@
+--- VioManager.orig.cpp	2022-04-22 16:12:40.049970067 -0700
++++ VioManager.cpp	2022-04-22 16:12:51.669944303 -0700
+@@ -165,14 +165,26 @@
+   // Count how many unique image streams
+   std::vector<int> unique_cam_ids;
+   for (const auto &cam_msg : camera_queue) {
+-    if (std::find(unique_cam_ids.begin(), unique_cam_ids.end(), cam_msg.sensor_ids.at(0)) != unique_cam_ids.end())
+-      continue;
++    if (cam_msg.sensor_ids.size() == 1){
++      if (std::find(unique_cam_ids.begin(), unique_cam_ids.end(), cam_msg.sensor_ids.at(0)) != unique_cam_ids.end())
++        continue;
++    }
++    else {
++      if (std::find(unique_cam_ids.begin(), unique_cam_ids.end(), cam_msg.sensor_ids.at(0)) != unique_cam_ids.end())
++        goto next_id;
++    }
+     unique_cam_ids.push_back(cam_msg.sensor_ids.at(0));
++next_id:
++    if (cam_msg.sensor_ids.size() > 1){
++      if (std::find(unique_cam_ids.begin(), unique_cam_ids.end(), cam_msg.sensor_ids.at(1)) != unique_cam_ids.end())
++        continue;
++      unique_cam_ids.push_back(cam_msg.sensor_ids.at(1));
++    }
+   }
+ 
+   // If we do not have enough unique cameras then we need to wait
+   // We should wait till we have one of each camera to ensure we propagate in the correct order
+-  size_t num_unique_cameras = (params.state_options.num_cameras == 2) ? 1 : params.state_options.num_cameras;
++  size_t num_unique_cameras = params.state_options.num_cameras;
+   if (unique_cam_ids.size() != num_unique_cameras)
+     return;
+ 

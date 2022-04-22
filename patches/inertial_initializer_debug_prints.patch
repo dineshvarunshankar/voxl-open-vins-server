@@ -1,0 +1,29 @@
+--- InertialInitializer.orig.cpp	2022-04-22 16:14:12.633760640 -0700
++++ InertialInitializer.cpp	2022-04-22 16:14:28.961722784 -0700
+@@ -51,7 +51,7 @@
+ 
+   // Return if we don't have enough for two windows
+   if (newesttime - oldesttime < 2 * _window_length) {
+-    // PRINT_DEBUG(YELLOW "[INIT-IMU]: unable to select window of IMU readings, not enough readings\n" RESET);
++    PRINT_DEBUG(YELLOW "[INIT-IMU]: unable to select window of IMU readings, not enough readings\n" RESET);
+     return false;
+   }
+ 
+@@ -68,7 +68,7 @@
+ 
+   // Return if both of these failed
+   if (window_1to0.empty() || window_2to1.empty()) {
+-    // PRINT_DEBUG(YELLOW "[INIT-IMU]: unable to select window of IMU readings, not enough readings\n" RESET);
++    PRINT_DEBUG(YELLOW "[INIT-IMU]: unable to select window of IMU readings, not enough readings\n" RESET);
+     return false;
+   }
+ 
+@@ -98,7 +98,7 @@
+     a_var_2to1 += (data.am - a_avg_2to1).dot(data.am - a_avg_2to1);
+   }
+   a_var_2to1 = std::sqrt(a_var_2to1 / ((int)window_2to1.size() - 1));
+-  // PRINT_DEBUG(BOLDGREEN "[INIT-IMU]: IMU excitation, %.4f,%.4f\n" RESET, a_var_1to0, a_var_2to1);
++  PRINT_DEBUG(BOLDGREEN "[INIT-IMU]: IMU excitation, %.4f,%.4f\n" RESET, a_var_1to0, a_var_2to1);
+ 
+   // If it is below the threshold and we want to wait till we detect a jerk
+   if (a_var_1to0 < _imu_excite_threshold && wait_for_jerk) {
