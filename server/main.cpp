@@ -124,7 +124,6 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
 
         rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], (int64_t)data_array[i].timestamp_ns};
         rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
-        // fprintf(stderr, "imu handler\n");
 
         vio_manager->feed_measurement_imu(vio_manager_data);
 
@@ -140,6 +139,8 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     if (!vio_manager) return;
     if (!main_running) return;
 
+    static int64_t last_cam_ts = meta.timestamp_ns;
+
     int64_t cam_timestamp_ns = meta.timestamp_ns;
     cam_timestamp_ns += meta.exposure_ns / 2;
 
@@ -147,6 +148,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         fprintf(stderr, "dropping old frame older than 3 seconds\n");
         return;
     }
+    if (cam_timestamp_ns < last_cam_ts) return;
 
     // flag that camera data is active, skip frame is imu is disconnected
     is_cam_connected = 1;
@@ -172,20 +174,25 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 
     vio_manager_data.timestamp = cam_timestamp_ns / 1000000000.0;
     vio_manager_data.sensor_ids.push_back(camera_index);
+    // fprintf(stderr, "camera index %d\n", camera_index);
 
     if (meta.format == IMAGE_FORMAT_RAW8){
+        fprintf(stderr, "last tracking timestamp: %ld\n", meta.timestamp_ns);
         // Unpack the data into an opencv image Mat
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
         // Create a mask for the ingestion.  We want the full image to be ingested
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-// vec.insert(vec.begin() + i, 7);
         vio_manager_data.images.push_back(img);
         vio_manager_data.masks.push_back(mask);
     }
     else if (meta.format == IMAGE_FORMAT_STEREO_RAW8){
+        fprintf(stderr, "last stereo timestamp: %ld\n", meta.timestamp_ns);
         // i have no idea if the pair shares an id or not, but all these vecs need to be the same size
         // same index fails, maybe + 1?
+        // vio_manager_data.sensor_ids.clear();
+        // vio_manager_data.sensor_ids.push_back(camera_index);
         vio_manager_data.sensor_ids.push_back(camera_index+1);
+        // fprintf(stderr, "camera index r: %d\n", camera_index+1);
 
         // Unpack the data into opencv image Mats
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
@@ -195,11 +202,16 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
         cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
-        vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index, img);
-        vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index+1, img2);
+        vio_manager_data.images.push_back(img);
+        vio_manager_data.masks.push_back(mask);
+        vio_manager_data.images.push_back(img2);
+        vio_manager_data.masks.push_back(mask2);
 
-        vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index, mask);
-        vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index+1, mask2);
+        // vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index, img);
+        // vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index+1, img2);
+
+        // vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index, mask);
+        // vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index+1, mask2);
     }
     // fprintf(stderr, "camera index: %d\n", camera_index);
 
@@ -208,6 +220,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     std::lock_guard<std::mutex> lg2(vio_manager_mutex);
     vio_manager->feed_measurement_camera(vio_manager_data);
     last_cam_timestamp_ns = cam_timestamp_ns;
+    last_cam_ts = cam_timestamp_ns;
 
     return;
 }
@@ -562,6 +575,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
             actual_index++;
         }
     }
+    // if (use_stereo) actual_index += 1;
     vio_manager_options.state_options.num_cameras = actual_index;
     return vio_manager_options;
 }
@@ -674,7 +688,7 @@ static int connect_client_pipes(void) {
 
     // Connect to all the camera pipes
     for (size_t i = 0; i < MAX_CAMERAS; i++) {
-        if (cam_info_vec[i].enable) {
+        if (cam_info_vec[i].enable && cam_info_vec[i].name[0] != '\0') {
             memset(full_pipe, '\0', CHAR_BUF_SIZE);
             int channel_number = CAMERA_CH_START_OFFSET + i;
             if (pipe_expand_location_string(cam_info_vec[i].name, full_pipe) < 0) {
