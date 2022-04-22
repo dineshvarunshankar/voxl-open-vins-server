@@ -104,9 +104,8 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     if (data_array == NULL) return;
     if (n_packets <= 0) return;
 
-    is_imu_connected = 1;
     global_error_codes &= ~ERROR_CODE_IMU_MISSING;
-    if (!is_cam_connected) return;
+    // if (!is_cam_connected) return;
 
     std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
@@ -125,18 +124,18 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
 
         rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], (int64_t)data_array[i].timestamp_ns};
         rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
+        // fprintf(stderr, "imu handler\n");
 
         vio_manager->feed_measurement_imu(vio_manager_data);
 
         last_imu_timestamp_ns = data_array[i].timestamp_ns;
+        is_imu_connected = 1;
     }
     return;
 }
 
 static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
     int camera_index = ch - CAMERA_CH_START_OFFSET;
-
-    // fprintf(stderr, "camera index: %d\n", camera_index);
 
     if (!vio_manager) return;
     if (!main_running) return;
@@ -158,7 +157,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     // if cam-imu alignment is POSITIVE that means the camera timestamp is early
     // and the image was actually taken after the reported timestamp
     // need a way to get the cam imu dif
-    while (last_imu_timestamp_ns < (cam_timestamp_ns + last_time_alignment_ns)) {
+    while (last_imu_timestamp_ns < (cam_timestamp_ns)){ // + last_time_alignment_ns)) {
         // don't get stuck here forever
         if (!main_running) return;
         if (!is_imu_connected) return;
@@ -169,20 +168,40 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         usleep(5000);
     }
 
-    // Unpack the data into an opencv image Mat
-    cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-    // Create a mask for the ingestion.  We want the full image to be ingested
-    cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-
-    /* Create the data struct that we will use for ingesting data into the vio manager
-     * Note: If multiple images are added in the same struct, they are treated as pairwise stereo images
-     * and so will need hardware image capture synchronization
-     */
     ov_core::CameraData vio_manager_data;
+
     vio_manager_data.timestamp = cam_timestamp_ns / 1000000000.0;
     vio_manager_data.sensor_ids.push_back(camera_index);
-    vio_manager_data.images.push_back(img);
-    vio_manager_data.masks.push_back(mask);
+
+    if (meta.format == IMAGE_FORMAT_RAW8){
+        // Unpack the data into an opencv image Mat
+        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
+        // Create a mask for the ingestion.  We want the full image to be ingested
+        cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+// vec.insert(vec.begin() + i, 7);
+        vio_manager_data.images.push_back(img);
+        vio_manager_data.masks.push_back(mask);
+    }
+    else if (meta.format == IMAGE_FORMAT_STEREO_RAW8){
+        // i have no idea if the pair shares an id or not, but all these vecs need to be the same size
+        // same index fails, maybe + 1?
+        vio_manager_data.sensor_ids.push_back(camera_index+1);
+
+        // Unpack the data into opencv image Mats
+        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
+        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height));
+
+        // Create masks for the ingestion. We want both full images to be ingested
+        cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+
+        vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index, img);
+        vio_manager_data.images.insert(vio_manager_data.images.begin() + camera_index+1, img2);
+
+        vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index, mask);
+        vio_manager_data.masks.insert(vio_manager_data.masks.begin() + camera_index+1, mask2);
+    }
+    // fprintf(stderr, "camera index: %d\n", camera_index);
 
     // Ingest the data
     std::lock_guard<std::mutex> lg(cam_mutex);
@@ -233,6 +252,7 @@ static void _publish_vio_data() {
 
         // Load the data into the struct that we will be publishing
         {
+
             std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
             // check the latest image that its using
@@ -263,7 +283,7 @@ static void _publish_vio_data() {
             Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
 
             rc_ov_t closest_imu_packet;
-            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, vio_data.timestamp_ns, &closest_imu_packet);
+            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
             if (ret < 0) {
                 fprintf(stderr, "ERROR fetching from ringbuffer\n");
                 if (ret == -2) {
@@ -278,19 +298,16 @@ static void _publish_vio_data() {
                 continue;
             }
 
+            if (vio_data.state == VIO_STATE_OK){
+                // update our last time_alignments, need to convert back down to nanoseconds
+                last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
+                fprintf(stderr, "time align update: %ld\n", last_time_alignment_ns);
+            }
+
             // Add the angular velocities as the IMU data with estimated biases subtracted
             vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
             vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
             vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
-
-            // update our last time_alignments, need to convert back down to seconds
-            int actual_index = 0;
-            for (int i = 0; i < MAX_CAMERAS; i++) {
-                if (cam_info_vec[i].enable) {
-                    last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0);
-                    actual_index++;
-                }
-            }
         }
         pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
     }
@@ -324,10 +341,6 @@ static void _print_usage(void) {
 static void _quit(int ret) {
     // Signal for threads to shudown
     main_running = false;
-
-    // // Close all the open pipe connections
-    // pipe_server_close_all();
-    // pipe_client_close_all();
 
     // Make sure all the threads shutdown before moving on
     if (publish_vio_data_thread.joinable()) {
@@ -738,6 +751,8 @@ int main(int argc, char* argv[]) {
 
     // Start the read and publish thread
     publish_vio_data_thread = std::thread(_publish_vio_data);
+
+    fprintf(stderr, "started vio thread\n");
 
     // run until start/stop module catches a signal and changes main_running to 0
     while (main_running) usleep(5000000);

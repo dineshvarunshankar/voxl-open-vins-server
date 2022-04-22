@@ -50,6 +50,7 @@ using namespace cv;
 using namespace std;
 
 #include "config_file.h"
+#include "rc_transform.h"
 
 // define all the externs from config_file.h
 std::vector<camera_info> cam_info_vec(MAX_CAMERAS);
@@ -198,12 +199,57 @@ int load_extrinsics_file() {
                 strcat(ext_name, "_l");
             }
 
+            // AS OF WRITING, only tracking has direct imu relation in extriniscs file
+            // so if it doesnt have tracking, we need to find the body to cam relation, and combine that with the body to imu relation
+            #define EXTRINS_BODY "body"
+
             if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
                 needs_inverse_transform = false;
             } else if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 // translation is from cam -> imu, need translation from imu -> cam
                 fprintf(stderr, "creating inverse transform\n");
                 needs_inverse_transform = true;
+            } else if (!vcc_find_extrinsic_in_array(EXTRINS_BODY, imu_name, t, n_extrinsics, &extrins_holder)){
+                rc_tf_t body_to_imu, cam_to_body;
+                int i,j;
+                for(i=0;i<3;i++){
+                    // this is imu -> body, and we need body -> imu
+                    // this logic is okay for ONLY imu_apps, okay for testing
+                    body_to_imu.d[i][3] = -extrins_holder.T_child_wrt_parent[i];
+                    for(j=0;j<3;j++){
+                        // identity matrix
+                        body_to_imu.d[i][j] = extrins_holder.R_child_to_parent[i][j];
+                    }
+                }
+                // need to invert this one to get cam to body instead
+                if (!vcc_find_extrinsic_in_array(EXTRINS_BODY, ext_name, t, n_extrinsics, &extrins_holder)){
+                   // i have 
+                    for(i=0;i<3;i++){
+                        cam_to_body.d[i][3] = extrins_holder.T_child_wrt_parent[i];
+                        for(j=0;j<3;j++){
+                            cam_to_body.d[i][j] = extrins_holder.R_child_to_parent[i][j];
+                        }
+                    }
+                
+                    rc_tf_t cam_to_imu;
+                    rc_tf_combine_two(body_to_imu, cam_to_body, &cam_to_imu);
+
+                    // now we have the cam -> imu relation, so we need the inverse
+                    fprintf(stderr, "creating inverse transform\n");
+                    needs_inverse_transform = true;
+
+                    // fill the extrins holder back in so the rest of our function prevails
+                    for(i=0;i<3;i++){
+                        extrins_holder.T_child_wrt_parent[i] = cam_to_imu.d[i][3];
+                        for(j=0;j<3;j++){
+                            extrins_holder.R_child_to_parent[i][j] = cam_to_imu.d[i][j];
+                        }
+                    }
+                }
+                else {
+                    fprintf(stderr, "ERROR: %s missing %s to %s transform\n", VCC_EXTRINSICS_PATH, EXTRINS_BODY, ext_name);
+                    return -1;
+                }
             } else {
                 fprintf(stderr, "ERROR: %s missing %s to %s transform\n", VCC_EXTRINSICS_PATH, imu_name, ext_name);
                 return -1;
