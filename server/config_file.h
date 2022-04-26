@@ -39,8 +39,8 @@
 #include <types/LandmarkRepresentation.h>
 #include <vector>
 
-
-#define MAX_CAMERAS 8 // testing 8, since I THINK a stereo pair is treated as two seperate cameras // 4
+// cameras are enumerated individually, so a stereo pair counts as two
+#define MAX_CAMERAS 12
 #define CHAR_BUF_SIZE 128
 #define CONFIG_FILE "/etc/modalai/voxl-open-vins-server.conf"
 #define CONFIG_FILE_HEADER \
@@ -52,7 +52,7 @@
  * \n\
  * Per camera that is enabled, we only need the name of the phsycial pipe \n\
  * i.e. tracking, NOT /run/mpa/tracking\n\
- * Imu is the same, just need the name (typically imu0/imu1)\n\
+ * Imu is the same, just need the name (typically imu_apps/imu_px4/imu0/imu1)\n\
  * odr_hz: Output data date is independent from the camera frame rate so you can\n\
  * choose the desired output data rate. Note that voxl-imu-server defaults to\n\
  * 500hz imu sampling but new data is received by voxl-open-vins-server at 100hz by\n\
@@ -131,6 +131,7 @@ typedef struct camera_info {
     Eigen::Matrix<double, 7, 1> cam_wrt_imu;
     Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
     bool is_fisheye;
+    bool is_stereo;
 } camera_info;
 
 extern std::vector<camera_info> cam_info_vec;

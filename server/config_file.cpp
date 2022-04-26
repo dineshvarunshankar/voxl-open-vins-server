@@ -32,19 +32,17 @@
  ******************************************************************************/
 
 #include <core/VioManagerOptions.h>
-
 #include <modal_json.h>
 #include <rc_math.h>
 #include <stdio.h>
 #include <voxl_common_config.h>
-
-#include <string>
 
 #include <iostream>
 #include <opencv2/calib3d/calib3d.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/stereo.hpp>
+#include <string>
 
 using namespace cv;
 using namespace std;
@@ -128,24 +126,21 @@ bool use_mask;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
-      return "GLOBAL_3D";
+        return "GLOBAL_3D";
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_FULL_INVERSE_DEPTH)
-      return "GLOBAL_FULL_INVERSE_DEPTH";
+        return "GLOBAL_FULL_INVERSE_DEPTH";
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_3D)
-      return "ANCHORED_3D";
+        return "ANCHORED_3D";
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_FULL_INVERSE_DEPTH)
-      return "ANCHORED_FULL_INVERSE_DEPTH";
+        return "ANCHORED_FULL_INVERSE_DEPTH";
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
-      return "ANCHORED_MSCKF_INVERSE_DEPTH";
+        return "ANCHORED_MSCKF_INVERSE_DEPTH";
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_INVERSE_DEPTH_SINGLE)
-      return "ANCHORED_INVERSE_DEPTH_SINGLE";
+        return "ANCHORED_INVERSE_DEPTH_SINGLE";
     return "UNKNOWN";
-  }
+}
 
-static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> &cam_wrt_imu, bool needs_inverse){
-    // read in our rotation
-    // double d[3][4];	// Rotation and translation [R|T] in row-major format.
-    
+static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> &cam_wrt_imu, bool needs_inverse) {
     Eigen::Matrix<double, 3, 3> rotation_ch_wrt_par;
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
@@ -176,7 +171,7 @@ static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> 
     return;
 }
 
-static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double, 7, 1> &cam_wrt_imu, bool needs_inverse){
+static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double, 7, 1> &cam_wrt_imu, bool needs_inverse) {
     // read in our rotation
     Eigen::Matrix<double, 3, 3> rotation_ch_wrt_par;
     for (int i = 0; i < 3; i++) {
@@ -208,6 +203,53 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
     return;
 }
 
+// this may need to be expanded in the future
+static int load_opencv_stereo_extrinsics_file(rc_tf_t* cam_l_to_cam_r, int index){
+    if (cam_l_to_cam_r == nullptr){
+        fprintf(stderr, "Received nulllptr for cam_l_to_cam_r\n");
+        return -1;
+    }
+
+    char cv_extrinsics_path[CHAR_BUF_SIZE];
+
+    strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
+    strcat(cv_extrinsics_path, cam_info_vec[index].name);
+    strcat(cv_extrinsics_path, "_extrinsics.yml");
+
+    FileStorage fs(cv_extrinsics_path, FileStorage::READ);
+    if (!fs.isOpened()) {
+        fprintf(stderr, "Failed to load extrinsics file %s\n", cv_extrinsics_path);
+        return -1;
+    }
+
+    FileNode n;
+    Mat R;
+    Mat T;
+
+    n = fs["R"];
+    if (n.type() != FileNode::NONE) {
+        n >> R;
+    }
+    n = fs["T"];
+    if (n.type() != FileNode::NONE) {
+        n >> T;
+    }
+
+    fs.release();
+
+    // fill in cam_l_to_cam_r relation from opencv cal file
+    for (int j = 0; j < 3; j++) {
+        cam_l_to_cam_r->d[j][3] = T.at<double>(j, 0);
+        for (int k = 0; k < 3; k++) {
+            cam_l_to_cam_r->d[j][k] = R.at<double>(j, k);
+        }
+    }
+
+    return 0; 
+}
+
+#define EXTRINS_BODY "body"
+
 int load_extrinsics_file() {
     vcc_extrinsic_t t[VCC_MAX_EXTRINSICS_IN_CONFIG];
     vcc_extrinsic_t extrins_holder;
@@ -220,37 +262,39 @@ int load_extrinsics_file() {
         return -1;
     }
 
+    // open vins requires the imu to cam relation, and then internally constructs the cam to imu relation that is used
     bool needs_inverse_transform = false;
+    // if we are parsing a stereo pair, there is a bit more logic that needs to happen
     bool needs_wonky_stereo_setup = false;
-    for (int i = 0; i < MAX_CAMERAS; i++){
-        if (cam_info_vec[i].enable){
+
+    for (int i = 0; i < MAX_CAMERAS; i++) {
+        // fprintf(stderr, "cam %d enabled: %d\n", i, cam_info_vec[i].enable);
+        if (cam_info_vec[i].enable) {
             // create a copy of the camera name
             memset(ext_name, '\0', CHAR_BUF_SIZE);
             strcpy(ext_name, cam_info_vec[i].name);
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
-            if (strstr(ext_name, "stereo") != NULL){
+            if (strstr(ext_name, "stereo") != NULL) {
                 use_stereo = true;
                 strcat(ext_name, "_l");
                 // here we go
                 needs_wonky_stereo_setup = true;
             }
-
-            // AS OF WRITING, only tracking has direct imu relation in extriniscs file
-            // so if it doesnt have tracking, we need to find the body to cam relation, and combine that with the body to imu relation
-            #define EXTRINS_BODY "body"
-
+            // this is the relation open vins wants, i.e. imu to cam
             if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
                 needs_inverse_transform = false;
             } else if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
-                // translation is from cam -> imu, need translation from imu -> cam
+                // relation is from cam to imu, need relation from imu to cam
                 fprintf(stderr, "creating inverse transform\n");
                 needs_inverse_transform = true;
-            } else if (needs_wonky_stereo_setup){
+            } else if (needs_wonky_stereo_setup) {
+                // fprintf(stderr, "creating stereo transform %s\n", ext_name);
+
                 // we got a stereo pair that needs to be setup for ov
                 // ov requires T_imu_to_cam per individual cam in the pair and constructs the T_cam_to_imu relation internally
                 // steps to get this correctly configured:
-                // 1. parse imu -> body, and invert it
+                // 1. parse imu -> body, and invert it, giving us body -> imu
                 // 2. parse stereo_l -> body
                 // 3. combine the above two tfs into one from cam -> imu, then invert it again. this gives us imu -> cam_l
                 // 4. parse opencv_stereo_extrinsics file, populate cam_l -> cam_r tf and invert it
@@ -261,23 +305,22 @@ int load_extrinsics_file() {
                 // grab the imu -> body relation. if unparseable, fail nicely
                 if (vcc_find_extrinsic_in_array(EXTRINS_BODY, imu_name, t, n_extrinsics, &extrins_holder)) goto failure;
 
-                int j,k;
-                for(j=0;j<3;j++){
+                int j, k;
+                for (j = 0; j < 3; j++) {
                     imu_to_body.d[j][3] = extrins_holder.T_child_wrt_parent[j];
-                    for(k=0;k<3;k++){
+                    for (k = 0; k < 3; k++) {
                         imu_to_body.d[j][k] = extrins_holder.R_child_to_parent[j][k];
                     }
                 }
                 // this is imu -> body, and we need body -> imu
                 rc_tf_invert(&imu_to_body, &body_to_imu);
-                // step 1 complete
 
                 // grab the cam -> body relation. if unparseable, fail nicely
                 if (vcc_find_extrinsic_in_array(EXTRINS_BODY, ext_name, t, n_extrinsics, &extrins_holder)) goto failure;
 
-                for(j=0;j<3;j++){
+                for (j = 0; j < 3; j++) {
                     cam_l_to_body.d[j][3] = extrins_holder.T_child_wrt_parent[j];
-                    for(k=0;k<3;k++){
+                    for (k = 0; k < 3; k++) {
                         cam_l_to_body.d[j][k] = extrins_holder.R_child_to_parent[j][k];
                     }
                 }
@@ -286,51 +329,9 @@ int load_extrinsics_file() {
 
                 // invert it to get the imu to cam_l relation
                 rc_tf_invert(&cam_l_to_imu, &imu_to_cam_l);
-                // step 3 complete
 
-                char cv_extrinsics_path[CHAR_BUF_SIZE];
-
-                strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
-                strcat(cv_extrinsics_path, cam_info_vec[i].name);
-                strcat(cv_extrinsics_path, "_extrinsics.yml");
-
-                FileStorage fs(cv_extrinsics_path, FileStorage::READ);
-                if(!fs.isOpened()){
-                    fprintf(stderr, "Failed to load extrinsics file %s\n", cv_extrinsics_path);
-                    goto failure;
-                }
-
-                FileNode n;
-                Mat R;
-                Mat T;
-
-                n = fs["R"];
-                if (n.type() != FileNode::NONE) {
-                    n >> R;
-                }
-                n = fs["T"];
-                if (n.type() != FileNode::NONE) {
-                    n >> T;
-                }
-
-                // std::cout << R << std::endl;
-                // std::cout << T << std::endl;
-
-                
-                fs.release();
-                // 4. parse opencv_stereo_extrinsics file, populate cam_l -> cam_r tf and invert it
-                // 5. combine cam_r -> cam_l with cam_l -> imu, giving us cam_r -> imu!
-                // 6. push these badboys into our camera config block
-                for(j=0;j<3;j++){
-                    cam_l_to_cam_r.d[j][3] = T.at<double>(j,0);
-                    // std::cout << T.at<double>(j,0) << std::endl;
-                    
-                    for(k=0;k<3;k++){
-                        cam_l_to_cam_r.d[j][k] = R.at<double>(j,k);
-                        // std::cout << R.at<double>(j,k) << std::endl;
-
-                    }
-                }
+                // grab our opencv cam_l to cam_r relation from the extrinsics conf file, fail nicely otherwise
+                if (load_opencv_stereo_extrinsics_file(&cam_l_to_cam_r, i) < 0)  goto failure;
 
                 // invert it to get the cam_r->cam_l relation
                 rc_tf_invert(&cam_l_to_cam_r, &cam_r_to_cam_l);
@@ -342,82 +343,36 @@ int load_extrinsics_file() {
                 rc_tf_invert(&cam_r_to_imu, &imu_to_cam_r);
 
                 // now we have: imu_to_ BOTH CAMERAS
-                // fill em up
                 create_ov_extrinsics(imu_to_cam_l, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
-                i+=1;
+                // before we iterate to the next camera, flag this one as cam0 in stereo pair
+                cam_info_vec[i].is_stereo = true;
+                i += 1;
                 create_ov_extrinsics(imu_to_cam_r, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
+
                 continue;
             }
-            // } else if (!vcc_find_extrinsic_in_array(EXTRINS_BODY, imu_name, t, n_extrinsics, &extrins_holder)){
-            //     // so this will only give us the properties for the LEFT STEREO CAMERA
-            //     rc_tf_t body_to_imu, cam_to_body;
-            //     int i,j;
-            //     for(i=0;i<3;i++){
-            //         // this is imu -> body, and we need body -> imu
-            //         // this logic is okay for ONLY imu_apps, okay for testing
-            //         body_to_imu.d[i][3] = -extrins_holder.T_child_wrt_parent[i];
-            //         for(j=0;j<3;j++){
-            //             // identity matrix
-            //             body_to_imu.d[i][j] = extrins_holder.R_child_to_parent[i][j];
-            //         }
-            //     }
-            //     // need to invert this one to get cam to body instead
-            //     if (!vcc_find_extrinsic_in_array(EXTRINS_BODY, ext_name, t, n_extrinsics, &extrins_holder)){
-            //        // i have 
-            //         for(i=0;i<3;i++){
-            //             cam_to_body.d[i][3] = extrins_holder.T_child_wrt_parent[i];
-            //             for(j=0;j<3;j++){
-            //                 cam_to_body.d[i][j] = extrins_holder.R_child_to_parent[i][j];
-            //             }
-            //         }
-                
-            //         rc_tf_t cam_to_imu;
-            //         rc_tf_combine_two(body_to_imu, cam_to_body, &cam_to_imu);
-
-            //         // now we have the cam -> imu relation, so we need the inverse
-            //         fprintf(stderr, "creating inverse transform\n");
-            //         needs_inverse_transform = true;
-
-            //         // so in order to get the imu -> stereo right camera, we need to read in the opencv extrinsics file ON TOP OF THIS GARBAGE
-
-
-            //         // fill the extrins holder back in so the rest of our function prevails
-            //         for(i=0;i<3;i++){
-            //             extrins_holder.T_child_wrt_parent[i] = cam_to_imu.d[i][3];
-            //             for(j=0;j<3;j++){
-            //                 extrins_holder.R_child_to_parent[i][j] = cam_to_imu.d[i][j];
-            //             }
-            //         }
-            //     }
-            //     else {
-            //         fprintf(stderr, "ERROR: %s missing %s to %s transform\n", VCC_EXTRINSICS_PATH, EXTRINS_BODY, ext_name);
-            //         return -1;
-            //     }
-            // } 
             else {
-failure:
+            failure:
                 fprintf(stderr, "ERROR: %s missing %s to %s transform\n", VCC_EXTRINSICS_PATH, imu_name, ext_name);
                 return -1;
             }
             create_ov_extrinsics(extrins_holder, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
             needs_inverse_transform = false;
             needs_wonky_stereo_setup = false;
-            i+=1;
+            i += 1;
         }
     }
     return 0;
 }
 
-// int load_opencv_extrinsics_file(){
-// 
-// }
-
 int load_intrinsics_file() {
     char intrinsics_path[CHAR_BUF_SIZE];
+
+    // this is here again because if 
     bool needs_wonky_stereo_setup = false;
 
-    for (int i = 0; i < MAX_CAMERAS; i++){
-        if (cam_info_vec[i].enable){
+    for (int i = 0; i < MAX_CAMERAS; i++) {
+        if (cam_info_vec[i].enable) {
             memset(intrinsics_path, '\0', CHAR_BUF_SIZE);
             // opencv_cam_name_intrinsics.ymls
             strcpy(intrinsics_path, "/data/modalai/opencv_");
@@ -425,26 +380,25 @@ int load_intrinsics_file() {
             strcat(intrinsics_path, "_intrinsics.yml");
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
-            if (strstr(cam_info_vec[i].name, "stereo") != NULL){
+            if (strstr(cam_info_vec[i].name, "stereo") != NULL) {
                 // here we go
                 needs_wonky_stereo_setup = true;
             }
 
             FileStorage fs(intrinsics_path, FileStorage::READ);
-            if(!fs.isOpened()){
+            if (!fs.isOpened()) {
                 fprintf(stderr, "Failed to load intrinsics file %s\n", intrinsics_path);
                 return -1;
             }
 
-            if (needs_wonky_stereo_setup){
+            if (needs_wonky_stereo_setup) {
                 FileNode n;
                 Mat camMatrix;
                 Mat distCoeffs;
                 Mat camMatrix2;
                 Mat distCoeffs2;
-                // can't have a stereo pair with one fisheye right?
-                int is_fisheye = 0;
 
+                int is_fisheye = 0;
                 int w, h;
                 int has_m = 0;
                 int has_d = 0;
@@ -454,24 +408,24 @@ int load_intrinsics_file() {
                 // opencv cal files don't have consistent names for matrices, so try a few
                 // name for stereo left
                 n = fs["M1"];
-                if(n.type() != FileNode::NONE){
+                if (n.type() != FileNode::NONE) {
                     n >> camMatrix;
                     has_m = 1;
                 }
                 n = fs["D1"];
-                if(n.type() != FileNode::NONE){
+                if (n.type() != FileNode::NONE) {
                     n >> distCoeffs;
                     has_d = 1;
                 }
 
                 // name for stereo right
                 n = fs["M2"];
-                if(n.type() != FileNode::NONE){
+                if (n.type() != FileNode::NONE) {
                     n >> camMatrix2;
                     has_m = 1;
                 }
                 n = fs["D2"];
-                if(n.type() != FileNode::NONE){
+                if (n.type() != FileNode::NONE) {
                     n >> distCoeffs2;
                     has_d = 1;
                 }
@@ -529,7 +483,7 @@ int load_intrinsics_file() {
                 if (has_w) cam_info_vec[i].cam_calib_intrinsic(8, 0) = w;
                 if (has_h) cam_info_vec[i].cam_calib_intrinsic(9, 0) = h;
                 cam_info_vec[i].is_fisheye = is_fisheye;
-                i+=1;
+                i += 1;
                 cam_info_vec[i].cam_calib_intrinsic(0, 0) = camMatrix2.at<double>(0, 0);
                 cam_info_vec[i].cam_calib_intrinsic(1, 0) = camMatrix2.at<double>(1, 1);
                 cam_info_vec[i].cam_calib_intrinsic(2, 0) = camMatrix2.at<double>(0, 2);
@@ -570,24 +524,24 @@ int load_intrinsics_file() {
             }
             // name for stereo left
             n = fs["M1"];
-            if(n.type() != FileNode::NONE){
+            if (n.type() != FileNode::NONE) {
                 n >> camMatrix;
                 has_m = 1;
             }
             n = fs["D1"];
-            if(n.type() != FileNode::NONE){
+            if (n.type() != FileNode::NONE) {
                 n >> distCoeffs;
                 has_d = 1;
             }
 
             // name used in aruco example
             n = fs["camera_matrix"];
-            if(n.type() != FileNode::NONE){
+            if (n.type() != FileNode::NONE) {
                 n >> camMatrix;
                 has_m = 1;
             }
             n = fs["distortion_coefficients"];
-            if(n.type() != FileNode::NONE){
+            if (n.type() != FileNode::NONE) {
                 n >> distCoeffs;
                 has_d = 1;
             }
@@ -655,7 +609,7 @@ int config_file_print(void) {
     printf("==========================CAMERA 0================================\n");
     printf("enable:                           %s\n", cam_info_vec[0].enable ? "true" : "false");
     printf("name:                             %s\n", cam_info_vec[0].name);
-    printf("==========================CAMERA 2================================\n"); 
+    printf("==========================CAMERA 2================================\n");
     printf("enable:                           %s\n", cam_info_vec[2].enable ? "true" : "false");
     printf("name:                             %s\n", cam_info_vec[2].name);
     printf("==========================CAMERA 3================================\n");
@@ -667,7 +621,7 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("============================IMU==================================\n");
     printf("imu pipe:                         %s\n", imu_name);
-	printf("odr_hz:                           %6.3f\n", (double)odr_hz);
+    printf("odr_hz:                           %6.3f\n", (double)odr_hz);
     printf("=================================================================\n");
     printf("===========================STATE=================================\n");
     printf("do fej:                           %s\n", do_fej ? "true" : "false");
@@ -742,40 +696,40 @@ int config_file_read(void) {
     else if (ret > 0)
         fprintf(stderr, "Creating new config file: %s\n", CONFIG_FILE);
 
-    cJSON* parent = json_read_file(CONFIG_FILE);
+    cJSON *parent = json_read_file(CONFIG_FILE);
     if (parent == NULL) return -1;
 
     // actually parse values
-    json_fetch_bool_with_default(parent, "cam0_enable", (int*)&cam_info_vec[0].enable, 1);
+    json_fetch_bool_with_default(parent, "cam0_enable", (int *)&cam_info_vec[0].enable, 1);
     json_fetch_string_with_default(parent, "cam0_name", cam_info_vec[0].name, CHAR_BUF_SIZE, "tracking");
-    
-    json_fetch_bool_with_default(parent, "cam1_enable", (int*)&cam_info_vec[2].enable, 0);
+
+    json_fetch_bool_with_default(parent, "cam1_enable", (int *)&cam_info_vec[2].enable, 0);
     json_fetch_string_with_default(parent, "cam1_pipe", cam_info_vec[2].name, CHAR_BUF_SIZE, "stereo_front");
 
-    json_fetch_bool_with_default(parent, "cam2_enable", (int*)&cam_info_vec[3].enable, 0);
-    json_fetch_string_with_default(parent, "cam2_pipe", cam_info_vec[3].name, CHAR_BUF_SIZE, "stereo_rear");
+    json_fetch_bool_with_default(parent, "cam2_enable", (int *)&cam_info_vec[4].enable, 0);
+    json_fetch_string_with_default(parent, "cam2_pipe", cam_info_vec[4].name, CHAR_BUF_SIZE, "stereo_rear");
 
-    json_fetch_bool_with_default(parent, "cam3_enable", (int*)&cam_info_vec[4], 0);
-    json_fetch_string_with_default(parent, "cam3_pipe", cam_info_vec[4].name, CHAR_BUF_SIZE, "hires");
+    json_fetch_bool_with_default(parent, "cam3_enable", (int *)&cam_info_vec[6], 0);
+    json_fetch_string_with_default(parent, "cam3_pipe", cam_info_vec[6].name, CHAR_BUF_SIZE, "hires");
 
     json_fetch_string_with_default(parent, "imu_name", imu_name, CHAR_BUF_SIZE, "imu_apps");
-	json_fetch_float_with_default(parent, "odr_hz", &odr_hz, 30);
+    json_fetch_float_with_default(parent, "odr_hz", &odr_hz, 30);
 
-    json_fetch_bool_with_default(parent, "do_fej", (int*)&do_fej, 1);
-    json_fetch_bool_with_default(parent, "imu_avg", (int*)&imu_avg, 1);
-    json_fetch_bool_with_default(parent, "use_rk4_integration", (int*)&use_rk4_integration, 1);
+    json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
+    json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
+    json_fetch_bool_with_default(parent, "use_rk4_integration", (int *)&use_rk4_integration, 1);
 
-    json_fetch_bool_with_default(parent, "cam_to_imu_refinement", (int*)&cam_to_imu_refinement, 1);
-    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int*)&cam_intrins_refinement, 1);
-    json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int*)&cam_imu_ts_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_to_imu_refinement", (int *)&cam_to_imu_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 25);
     json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
     json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
     json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 40);
 
-    json_fetch_int_with_default(parent, "feat_rep_msckf", (int*)&feat_rep_msckf, 0);
-    json_fetch_int_with_default(parent, "feat_rep_slam", (int*)&feat_rep_slam, 4);
+    json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 0);
+    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
 
     json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, -0.002);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
@@ -805,24 +759,23 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px_sq", &zupt_sigma_px_sq, 1.0);
 
-    json_fetch_bool_with_default(parent, "try_zupt", (int*)&try_zupt, 1);
+    json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
-    json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int*)&zupt_only_at_beginning, 1);
+    json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 50.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
 
-    json_fetch_bool_with_default(parent, "use_klt", (int*)&use_klt, 1);
+    json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
     json_fetch_int_with_default(parent, "num_pts", &num_pts, 80);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
     json_fetch_int_with_default(parent, "grid_x", &grid_x, 20);
     json_fetch_int_with_default(parent, "grid_y", &grid_y, 16);
     json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
-    json_fetch_bool_with_default(parent, "downsample_cams", (int*)&downsample_cams, 0);
-    json_fetch_bool_with_default(parent, "use_multithreading", (int*)&use_multithreading, 0);
-    json_fetch_bool_with_default(parent, "use_mask", (int*)&use_mask, 0);
-    json_fetch_bool_with_default(parent, "use_stereo", (int*)&use_stereo, 0);
-
+    json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
+    json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 0);
+    json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
+    json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

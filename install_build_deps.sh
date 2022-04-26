@@ -1,8 +1,4 @@
 #!/bin/bash
-
-# list all your dependencies here
-DEPS="libmodal_pipe libmodal_json voxl-mpa-tools voxl-opencv"
-#!/bin/bash
 ################################################################################
 # Copyright (c) 2022 ModalAI, Inc. All rights reserved.
 ################################################################################
@@ -25,7 +21,8 @@ libmodal-pipe
 voxl-mpa-tools
 voxl-opencv
 "
-
+# voxl-boost, eigen3 need to be dealt with
+# eigen3 is used by other projects, may be packaged up somewhere already
 
 ## this list is just for tab-completion
 ## it's not an exhaustive list of platforms available.
@@ -98,7 +95,7 @@ if [ "$MODE" == "DEB" ]; then
 
 	sudo apt update
 	echo "installing: eigen3 and boost"
-	sudo apt install libeigen3-dev 
+	sudo apt install libeigen3-dev:arm64
 	sudo apt install ./tmp_pkgs/voxl-boost_1.65.0_arm64.deb
 
 # install IPK packages with opkg
@@ -135,10 +132,4 @@ fi
 echo ""
 echo "Done installing dependencies"
 echo ""
-exit 0
-# Install Eigen3
-# sudo apt install libeigen3-dev
-
-
-
 exit 0
