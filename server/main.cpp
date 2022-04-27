@@ -259,7 +259,7 @@ static void _publish_vio_data() {
             // check the latest image that its using
             cv::Mat tester_im = vio_manager->get_historical_viz_image();
 
-            if (tester_im.cols > 1280){
+            if (tester_im.cols > 640){
                 cv::resize(tester_im, tester_im, cv::Size(), 0.5, 0.5);
             }
 
@@ -473,14 +473,14 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_imu_thresh = init_imu_thresh;
 
     /// IMU NOISE OPTIONS ///
-    // vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
-    // vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
-    // vio_manager_options.imu_noises.sigma_a = imu_sigma_a;
-    // vio_manager_options.imu_noises.sigma_ab = imu_sigma_ab;
-    // vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
-    // vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
-    // vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
-    // vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
+    vio_manager_options.imu_noises.sigma_w *= 25; //imu_sigma_w;
+    vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
+    vio_manager_options.imu_noises.sigma_a *= 25; //imu_sigma_a;
+    vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
+    vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
+    vio_manager_options.imu_noises.sigma_wb_2 *= 50; //imu_sigma_wb_2;
+    vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
+    vio_manager_options.imu_noises.sigma_ab_2 *= 50; //imu_sigma_ab_2;
     // NOTE - JAMES ONLY BUMP COVARIANCE (i.e _2 stats) NOT HZ? -> didn't help much in initial tests. need both dialed wayyyy up
 
     // TOYED WITH, EXTRA NOISY BUT WORKS BETTER
@@ -494,23 +494,23 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     // vio_manager_options.imu_noises.sigma_ab_2 = pow(3.0000e-01, 2);
 
     // DEFAULTS
-    vio_manager_options.imu_noises.sigma_w = 1.6968e-04 * 20;
+    // vio_manager_options.imu_noises.sigma_w = 1.6968e-04 * 20;
     // vio_manager_options.imu_noises.sigma_w_2 = pow(1.6968e-04, 2);
-    vio_manager_options.imu_noises.sigma_wb = 1.9393e-05 * 20;
+    // vio_manager_options.imu_noises.sigma_wb = 1.9393e-05 * 20;
     // vio_manager_options.imu_noises.sigma_wb_2 = pow(1.9393e-05, 2);
-    vio_manager_options.imu_noises.sigma_a = 2.0000e-3 * 20;
+    // vio_manager_options.imu_noises.sigma_a = 2.0000e-3 * 20;
     // vio_manager_options.imu_noises.sigma_a_2 = pow(2.0000e-3, 2);
-    vio_manager_options.imu_noises.sigma_ab = 3.0000e-03 * 20;
+    // vio_manager_options.imu_noises.sigma_ab = 3.0000e-03 * 20;
 
     /// FEATURE OPTIONS - all use the same struct, can be dif per feature set ///
     // msckf
-    vio_manager_options.msckf_options.chi2_multipler = msckf_chi2_multiplier;
-    vio_manager_options.msckf_options.sigma_pix = msckf_sigma_px;
-    vio_manager_options.msckf_options.sigma_pix_sq = msckf_sigma_px_sq;
+    vio_manager_options.msckf_options.chi2_multipler *=  5; //msckf_chi2_multiplier;
+    // vio_manager_options.msckf_options.sigma_pix *= 10; //msckf_sigma_px;
+    // vio_manager_options.msckf_options.sigma_pix_sq *= 10; // msckf_sigma_px_sq;
     // slam
-    vio_manager_options.slam_options.chi2_multipler = slam_chi2_multiplier;
-    vio_manager_options.slam_options.sigma_pix = slam_sigma_px;
-    vio_manager_options.slam_options.sigma_pix_sq = slam_sigma_px_sq;
+    vio_manager_options.slam_options.chi2_multipler *= 5; //slam_chi2_multiplier;
+    // vio_manager_options.slam_options.sigma_pix *= 10; //slam_sigma_px;
+    // vio_manager_options.slam_options.sigma_pix_sq *= 10; //slam_sigma_px_sq;
     // zupt
     vio_manager_options.zupt_options.chi2_multipler = zupt_chi2_multiplier;  // set to 0 for only display based zupt
     vio_manager_options.zupt_options.sigma_pix = zupt_sigma_px;

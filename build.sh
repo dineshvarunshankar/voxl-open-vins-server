@@ -57,7 +57,7 @@ case "$1" in
 	native)
 		mkdir -p build
 		cd build
-		cmake ${EXTRA_OPTS} ../
+		cmake ${EXTRA_OPTS}  -DCMAKE_BUILD_TYPE=Release ../
 		make -j$(nproc)
 		cd ../
 		;;
