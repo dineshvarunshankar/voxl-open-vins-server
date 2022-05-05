@@ -50,8 +50,20 @@
 #define VIO_SIMPLE_NAME "open-vins"
 #define VIO_SIMPLE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR VIO_SIMPLE_NAME "/"
 
-#define OVERLAY_OUTPUT_CH (2)
+#define SIMPLE_EVAL_CH (2)
+#define SIMPLE_EVAL_NAME "open-vins-eval"
+#define SIMPLE_EVAL_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR SIMPLE_EVAL_NAME "/"
+
+#define OVERLAY_OUTPUT_CH (3)
 #define CAM_READ_BUF_SIZE (1024 * 1024 * 64)
+
+// this is our struct for the ov_eval expected data
+typedef struct ov_eval_data {
+    int64_t timestamp_ns;
+    uint32_t magic_number;      ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+    double T_imu_wrt_vio[3];     ///< Translation of the IMU with respect to VIO frame in meters, ordered x,y,z
+    double q[4];                 ///< Quaternion with orientation data, ordered qx, qy, qz, qw
+} ov_eval_data;
 
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
 std::mutex vio_manager_mutex;
@@ -62,6 +74,7 @@ std::atomic<bool> is_imu_connected{false};
 std::atomic<bool> is_cam_connected{false};
 
 bool en_debug = false;
+bool en_eval = false;
 int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 
 // these are the last timestamps that have completely passed into
@@ -232,6 +245,7 @@ static void _publish_vio_data() {
 
         //  We want to fill in the data
         vio_data_t vio_data;
+        
         vio_data.magic_number = VIO_MAGIC_NUMBER;
         vio_data.error_code = global_error_codes;
 
@@ -243,6 +257,10 @@ static void _publish_vio_data() {
         // Set the quality to be fixed to a positive number
         vio_data.quality = 1;
 
+        ov_eval_data eval_packet;
+
+        eval_packet.magic_number = VIO_MAGIC_NUMBER;
+
         // @todo Figure out a way to set the bad VIO state
         if (vio_manager->initialized()) {
             vio_data.state = VIO_STATE_OK;
@@ -251,14 +269,15 @@ static void _publish_vio_data() {
             pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
             continue;
         }
+        cv::Mat tester_im;
 
         // Load the data into the struct that we will be publishing
         {
             std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
             // check the latest image that its using
-            cv::Mat tester_im = vio_manager->get_historical_viz_image();
-
+            tester_im = vio_manager->get_historical_viz_image();
+        }
             if (tester_im.cols > 640){
                 cv::resize(tester_im, tester_im, cv::Size(), 0.5, 0.5);
             }
@@ -272,36 +291,67 @@ static void _publish_vio_data() {
             meta_.stride = meta_.width * 3;
             meta_.format = IMAGE_FORMAT_RGB;
 
-            pipe_server_write_camera_frame(SIMPLE_OUTPUT_CH + 1, meta_, (char*)tester_im.data);
+            pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)tester_im.data);
 
+            std::shared_ptr<ov_msckf::State> current_state = {nullptr};
+        {
+            
+            std::lock_guard<std::mutex> lg(vio_manager_mutex);
+
+            current_state = vio_manager->get_state();
+        }
             // Grab the current state
-            std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state();
+            // std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state();
 
+        if (en_eval){
+            eval_packet.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+            // fprintf(stderr, "first ts: %ld\n", eval_packet.timestamp_ns);
+
+            // TEMPORARY ALIGNMENT
+            eval_packet.T_imu_wrt_vio[0] = current_state->_imu->pos()[0];
+            eval_packet.T_imu_wrt_vio[1] = -current_state->_imu->pos()[1];
+            eval_packet.T_imu_wrt_vio[2] = -current_state->_imu->pos()[2];
+            eval_packet.q[0] = current_state->_imu->quat()[0];
+            eval_packet.q[1] = current_state->_imu->quat()[1];
+            eval_packet.q[2] = current_state->_imu->quat()[2];
+            eval_packet.q[3] = current_state->_imu->quat()[3];
+
+            // Eigen::MatrixXf::Map(eval_packet.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
+            // Eigen::MatrixXf::Map(eval_packet.q, 4, 1) = current_state->_imu->quat();            
+            pipe_server_write(SIMPLE_EVAL_CH, (char*)&eval_packet, sizeof(ov_eval_data));
+        }
+        else {
             vio_data.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
             Eigen::MatrixXf::Map(vio_data.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
+
+            // TEMPORARY ALIGNMENT
+            vio_data.T_imu_wrt_vio[1] = -vio_data.T_imu_wrt_vio[1];
+            vio_data.T_imu_wrt_vio[2] = -vio_data.T_imu_wrt_vio[2];
+
+
             Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot().cast<float>();
-            Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
-            Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
-            Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
-            vio_data.n_feature_points = current_state->_features_SLAM.size();
+            // Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
+            // Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
+            // Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
+            // vio_data.n_feature_points = current_state->_features_SLAM.size();
 
-            Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
+            // Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
 
-            rc_ov_t closest_imu_packet;
-            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
-            if (ret < 0) {
-                fprintf(stderr, "ERROR fetching from ringbuffer\n");
-                if (ret == -2) {
-                    printf("there wasn't sufficient data in the buffer\n");
-                }
-                if (ret == -3) {
-                    printf("the requested timestamp was too new\n");
-                }
-                if (ret == -4) {
-                    printf("the requested timestamp was too old\n");
-                }
-                continue;
-            }
+            // rc_ov_t closest_imu_packet;
+            // int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
+            // if (ret < 0) {
+            //     fprintf(stderr, "ERROR fetching from ringbuffer\n");
+            //     if (ret == -2) {
+            //         printf("there wasn't sufficient data in the buffer\n");
+            //     }
+            //     if (ret == -3) {
+            //         printf("the requested timestamp was too new\n");
+            //     }
+            //     if (ret == -4) {
+            //         printf("the requested timestamp was too old\n");
+            //     }
+            //     continue;
+            // }
 
             if (vio_data.state == VIO_STATE_OK){
                 // update our last time_alignments, need to convert back down to nanoseconds
@@ -310,11 +360,12 @@ static void _publish_vio_data() {
             }
 
             // Add the angular velocities as the IMU data with estimated biases subtracted
-            vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
-            vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
-            vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
+            // vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
+            // vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
+            // vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
+            pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
+
         }
-        pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
     }
 }
 
@@ -338,6 +389,7 @@ static void _print_usage(void) {
     std::cout << "                                    3 - WARNING" << std::endl;
     std::cout << "                                    4 - ERROR" << std::endl;
     std::cout << "                                    5 - SILENT" << std::endl;
+    std::cout << "-e, --eval                       run in eval mode, outputs abbreviated data" << std::endl;
     std::cout << "-h, --help               print this help message" << std::endl;
     std::cout << std::endl;
     return;
@@ -378,13 +430,14 @@ static bool _parse_opts(int argc, char* argv[]) {
         {
             {"config", no_argument, 0, 'c'},
             {"debug", no_argument, 0, 'd'},
+            {"eval", no_argument, 0, 'e'},
             {"help", no_argument, 0, 'h'},
             {"verbose", required_argument, 0, 'v'},
             {0, 0, 0, 0}};
     ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::SILENT);
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "cdhsv:", long_options, &option_index);
+        int c = getopt_long(argc, argv, "cdehsv:", long_options, &option_index);
 
         // Detect the end of the options.
         if (c == -1) {
@@ -406,6 +459,11 @@ static bool _parse_opts(int argc, char* argv[]) {
             case 'd':
                 std::cout << "Enabling debug mode" << std::endl;
                 en_debug = true;
+                break;
+            
+            case 'e':
+                std::cout << "Enabling eval mode" << std::endl;
+                en_eval = true;
                 break;
 
             case 'h':
@@ -473,14 +531,14 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_imu_thresh = init_imu_thresh;
 
     /// IMU NOISE OPTIONS ///
-    vio_manager_options.imu_noises.sigma_w *= 25; //imu_sigma_w;
+    vio_manager_options.imu_noises.sigma_w *= 50; //imu_sigma_w;
     vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
-    vio_manager_options.imu_noises.sigma_a *= 25; //imu_sigma_a;
+    vio_manager_options.imu_noises.sigma_a *= 50; //imu_sigma_a;
     vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
-    vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
-    vio_manager_options.imu_noises.sigma_wb_2 *= 50; //imu_sigma_wb_2;
-    vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
-    vio_manager_options.imu_noises.sigma_ab_2 *= 50; //imu_sigma_ab_2;
+    // vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
+    // vio_manager_options.imu_noises.sigma_wb_2 *= 25; //imu_sigma_wb_2;
+    // vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
+    // vio_manager_options.imu_noises.sigma_ab_2 *= 25; //imu_sigma_ab_2;
     // NOTE - JAMES ONLY BUMP COVARIANCE (i.e _2 stats) NOT HZ? -> didn't help much in initial tests. need both dialed wayyyy up
 
     // TOYED WITH, EXTRA NOISY BUT WORKS BETTER
@@ -505,12 +563,12 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     /// FEATURE OPTIONS - all use the same struct, can be dif per feature set ///
     // msckf
     vio_manager_options.msckf_options.chi2_multipler *=  5; //msckf_chi2_multiplier;
-    // vio_manager_options.msckf_options.sigma_pix *= 10; //msckf_sigma_px;
-    // vio_manager_options.msckf_options.sigma_pix_sq *= 10; // msckf_sigma_px_sq;
+    // vio_manager_options.msckf_options.sigma_pix *= 5; //msckf_sigma_px;
+    // vio_manager_options.msckf_options.sigma_pix_sq *= 5; // msckf_sigma_px_sq;
     // slam
     vio_manager_options.slam_options.chi2_multipler *= 5; //slam_chi2_multiplier;
-    // vio_manager_options.slam_options.sigma_pix *= 10; //slam_sigma_px;
-    // vio_manager_options.slam_options.sigma_pix_sq *= 10; //slam_sigma_px_sq;
+    // vio_manager_options.slam_options.sigma_pix *= 5; //slam_sigma_px;
+    // vio_manager_options.slam_options.sigma_pix_sq *= 5; //slam_sigma_px_sq;
     // zupt
     vio_manager_options.zupt_options.chi2_multipler = zupt_chi2_multiplier;  // set to 0 for only display based zupt
     vio_manager_options.zupt_options.sigma_pix = zupt_sigma_px;
@@ -623,18 +681,36 @@ static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
 static int create_server_pipes(void) {
     int flags = SERVER_FLAG_EN_CONTROL_PIPE;
 
-    pipe_info_t info =
+    if (!en_eval){
+        pipe_info_t info =
+            {
+                VIO_SIMPLE_NAME,            // name
+                VIO_SIMPLE_LOCATION,        // location
+                "vio_data_t",               // type
+                PROCESS_NAME,               // server_name
+                VIO_RECOMMENDED_PIPE_SIZE,  // size_bytes
+                0                           // server_pid
+            };
+
+        if (pipe_server_create(SIMPLE_OUTPUT_CH, info, flags)) {
+            return -1;
+        }
+    }
+
+    if (en_eval){
+        pipe_info_t info2 =
         {
-            VIO_SIMPLE_NAME,            // name
-            VIO_SIMPLE_LOCATION,        // location
-            "vio_data_t",               // type
+            SIMPLE_EVAL_NAME,            // name
+            SIMPLE_EVAL_LOCATION,        // location
+            "ov_eval_data_t",               // type
             PROCESS_NAME,               // server_name
             VIO_RECOMMENDED_PIPE_SIZE,  // size_bytes
             0                           // server_pid
         };
 
-    if (pipe_server_create(SIMPLE_OUTPUT_CH, info, flags)) {
-        return -1;
+        if (pipe_server_create(SIMPLE_EVAL_CH, info2, flags)) {
+            return -1;
+        }
     }
 
     // add in optional fields to the info JSON file
@@ -655,7 +731,7 @@ static int create_server_pipes(void) {
             0                                  // server_pid
         };
 
-    if (pipe_server_create(SIMPLE_OUTPUT_CH + 1, info_, flags)) {
+    if (pipe_server_create(OVERLAY_OUTPUT_CH, info_, flags)) {
         return -1;
     }
 

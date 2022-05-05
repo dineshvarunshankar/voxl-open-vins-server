@@ -734,7 +734,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, -0.002);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
-    json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.81);
+    json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
     json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 2.0);
     json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.5);
 
