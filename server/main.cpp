@@ -295,29 +295,21 @@ static void _publish_vio_data() {
 
             std::shared_ptr<ov_msckf::State> current_state = {nullptr};
         {
-            
             std::lock_guard<std::mutex> lg(vio_manager_mutex);
-
             current_state = vio_manager->get_state();
         }
-            // Grab the current state
-            // std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state();
 
         if (en_eval){
             eval_packet.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
-            // fprintf(stderr, "first ts: %ld\n", eval_packet.timestamp_ns);
 
-            // TEMPORARY ALIGNMENT
+            // TEMPORARY ALIGNMENT, Z AND Y AXES FLIPPED
             eval_packet.T_imu_wrt_vio[0] = current_state->_imu->pos()[0];
             eval_packet.T_imu_wrt_vio[1] = -current_state->_imu->pos()[1];
             eval_packet.T_imu_wrt_vio[2] = -current_state->_imu->pos()[2];
             eval_packet.q[0] = current_state->_imu->quat()[0];
             eval_packet.q[1] = current_state->_imu->quat()[1];
             eval_packet.q[2] = current_state->_imu->quat()[2];
-            eval_packet.q[3] = current_state->_imu->quat()[3];
-
-            // Eigen::MatrixXf::Map(eval_packet.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
-            // Eigen::MatrixXf::Map(eval_packet.q, 4, 1) = current_state->_imu->quat();            
+            eval_packet.q[3] = current_state->_imu->quat()[3];  
             pipe_server_write(SIMPLE_EVAL_CH, (char*)&eval_packet, sizeof(ov_eval_data));
         }
         else {
@@ -330,28 +322,26 @@ static void _publish_vio_data() {
 
 
             Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot().cast<float>();
-            // Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
-            // Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
-            // Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
-            // vio_data.n_feature_points = current_state->_features_SLAM.size();
+            Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
+            Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
+            Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
+            vio_data.n_feature_points = current_state->_features_SLAM.size();
 
-            // Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
-
-            // rc_ov_t closest_imu_packet;
-            // int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
-            // if (ret < 0) {
-            //     fprintf(stderr, "ERROR fetching from ringbuffer\n");
-            //     if (ret == -2) {
-            //         printf("there wasn't sufficient data in the buffer\n");
-            //     }
-            //     if (ret == -3) {
-            //         printf("the requested timestamp was too new\n");
-            //     }
-            //     if (ret == -4) {
-            //         printf("the requested timestamp was too old\n");
-            //     }
-            //     continue;
-            // }
+            rc_ov_t closest_imu_packet;
+            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
+            if (ret < 0) {
+                fprintf(stderr, "ERROR fetching from ringbuffer\n");
+                if (ret == -2) {
+                    printf("there wasn't sufficient data in the buffer\n");
+                }
+                if (ret == -3) {
+                    printf("the requested timestamp was too new\n");
+                }
+                if (ret == -4) {
+                    printf("the requested timestamp was too old\n");
+                }
+                continue;
+            }
 
             if (vio_data.state == VIO_STATE_OK){
                 // update our last time_alignments, need to convert back down to nanoseconds
@@ -360,11 +350,10 @@ static void _publish_vio_data() {
             }
 
             // Add the angular velocities as the IMU data with estimated biases subtracted
-            // vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
-            // vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
-            // vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
+            vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
+            vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
+            vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
             pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
-
         }
     }
 }
@@ -409,7 +398,6 @@ static void _quit(int ret) {
     }
 
     // Delete the vio manager so we can close cleanly and quickly
-    // braces here to set scope, lock guard returned after scope eds
     {
         std::lock_guard<std::mutex> lg(cam_mutex);
         std::lock_guard<std::mutex> lg2(vio_manager_mutex);
@@ -531,10 +519,19 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_imu_thresh = init_imu_thresh;
 
     /// IMU NOISE OPTIONS ///
-    vio_manager_options.imu_noises.sigma_w *= 50; //imu_sigma_w;
-    vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
-    vio_manager_options.imu_noises.sigma_a *= 50; //imu_sigma_a;
-    vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
+    vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
+    vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
+    vio_manager_options.imu_noises.sigma_a = imu_sigma_a;
+    vio_manager_options.imu_noises.sigma_ab = imu_sigma_ab;
+    vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
+    vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
+    vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
+    vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
+
+    // vio_manager_options.imu_noises.sigma_w *= 50; //imu_sigma_w;
+    // vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
+    // vio_manager_options.imu_noises.sigma_a *= 50; //imu_sigma_a;
+    // vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
     // vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
     // vio_manager_options.imu_noises.sigma_wb_2 *= 25; //imu_sigma_wb_2;
     // vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
@@ -551,38 +548,23 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     // vio_manager_options.imu_noises.sigma_a_2 = pow(2.0000e-1, 2);
     // vio_manager_options.imu_noises.sigma_ab_2 = pow(3.0000e-01, 2);
 
-    // DEFAULTS
-    // vio_manager_options.imu_noises.sigma_w = 1.6968e-04 * 20;
-    // vio_manager_options.imu_noises.sigma_w_2 = pow(1.6968e-04, 2);
-    // vio_manager_options.imu_noises.sigma_wb = 1.9393e-05 * 20;
-    // vio_manager_options.imu_noises.sigma_wb_2 = pow(1.9393e-05, 2);
-    // vio_manager_options.imu_noises.sigma_a = 2.0000e-3 * 20;
-    // vio_manager_options.imu_noises.sigma_a_2 = pow(2.0000e-3, 2);
-    // vio_manager_options.imu_noises.sigma_ab = 3.0000e-03 * 20;
-
     /// FEATURE OPTIONS - all use the same struct, can be dif per feature set ///
     // msckf
-    vio_manager_options.msckf_options.chi2_multipler *=  5; //msckf_chi2_multiplier;
+    vio_manager_options.msckf_options.chi2_multipler = msckf_chi2_multiplier;
+    vio_manager_options.msckf_options.sigma_pix = msckf_sigma_px;
+    vio_manager_options.msckf_options.sigma_pix_sq = msckf_sigma_px_sq;
+    // vio_manager_options.msckf_options.chi2_multipler *=  5; //msckf_chi2_multiplier;
     // vio_manager_options.msckf_options.sigma_pix *= 5; //msckf_sigma_px;
     // vio_manager_options.msckf_options.sigma_pix_sq *= 5; // msckf_sigma_px_sq;
+
     // slam
-    vio_manager_options.slam_options.chi2_multipler *= 5; //slam_chi2_multiplier;
-    // vio_manager_options.slam_options.sigma_pix *= 5; //slam_sigma_px;
-    // vio_manager_options.slam_options.sigma_pix_sq *= 5; //slam_sigma_px_sq;
+    vio_manager_options.slam_options.chi2_multipler = slam_chi2_multiplier;
+    vio_manager_options.slam_options.sigma_pix = slam_sigma_px;
+    vio_manager_options.slam_options.sigma_pix_sq = slam_sigma_px_sq;
     // zupt
     vio_manager_options.zupt_options.chi2_multipler = zupt_chi2_multiplier;  // set to 0 for only display based zupt
     vio_manager_options.zupt_options.sigma_pix = zupt_sigma_px;
     vio_manager_options.zupt_options.sigma_pix_sq = zupt_sigma_px_sq;
-
-    // TOYED WITH -> cranked way up for everything, lets way more features "through"
-    // // msckf
-    // vio_manager_options.msckf_options.chi2_multipler = 0.10;
-    // vio_manager_options.msckf_options.sigma_pix = 5;
-    // vio_manager_options.msckf_options.sigma_pix_sq = 25;
-    // // slam
-    // vio_manager_options.slam_options.chi2_multipler = 0.10;
-    // vio_manager_options.slam_options.sigma_pix = 5;
-    // vio_manager_options.slam_options.sigma_pix_sq = 25;
 
     /// ZUPT OPTIONS ///
     vio_manager_options.try_zupt = try_zupt;
@@ -843,8 +825,6 @@ int main(int argc, char* argv[]) {
 
     // Start the read and publish thread
     publish_vio_data_thread = std::thread(_publish_vio_data);
-
-    // fprintf(stderr, "started vio thread\n");
 
     // run until start/stop module catches a signal and changes main_running to 0
     while (main_running) usleep(5000000);

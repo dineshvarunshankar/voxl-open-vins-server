@@ -289,8 +289,6 @@ int load_extrinsics_file() {
                 fprintf(stderr, "creating inverse transform\n");
                 needs_inverse_transform = true;
             } else if (needs_wonky_stereo_setup) {
-                // fprintf(stderr, "creating stereo transform %s\n", ext_name);
-
                 // we got a stereo pair that needs to be setup for ov
                 // ov requires T_imu_to_cam per individual cam in the pair and constructs the T_cam_to_imu relation internally
                 // steps to get this correctly configured:
@@ -738,22 +736,22 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 2.0);
     json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.5);
 
-    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 1.6968e-02);
-    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.9393e-02);
-    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 2.0000e-2);
-    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 3.0000e-02);
-    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, pow(1.6968e-02, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, pow(1.9393e-02, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, pow(2.0000e-2, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, pow(3.0000e-02, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 1.6968e-04);
+    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.9393e-05);
+    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 2.0000e-3);
+    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 3.0000e-03);
+    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, pow(1.6968e-04, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, pow(1.9393e-05, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, pow(2.0000e-3, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, pow(3.0000e-03, 2));
 
-    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 0.1);
-    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 5.0);
-    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 25.0);
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 5.0);
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.0);
+    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 1.0);
 
-    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 0.1);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 5.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 25.0);
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 5.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 1.0);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
@@ -766,10 +764,10 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
 
     json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
-    json_fetch_int_with_default(parent, "num_pts", &num_pts, 80);
+    json_fetch_int_with_default(parent, "num_pts", &num_pts, 45);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
-    json_fetch_int_with_default(parent, "grid_x", &grid_x, 20);
-    json_fetch_int_with_default(parent, "grid_y", &grid_y, 16);
+    json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
+    json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
     json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
     json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
