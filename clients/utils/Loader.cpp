@@ -106,9 +106,10 @@ void Loader::load_data(std::string path_traj, std::vector<double> &times, std::v
   // PRINT_DEBUG("[LOAD]: loaded %d poses from %s\n",(int)poses.size(),base_filename.c_str());
 }
 
-void Loader::load_data_csv(std::string path_traj, std::vector<double> &times, std::vector<Eigen::Matrix<double, 7, 1>> &poses,
+int64_t Loader::load_data_csv(std::string path_traj, std::vector<double> &times, std::vector<Eigen::Matrix<double, 7, 1>> &poses,
                            std::vector<Eigen::Matrix3d> &cov_ori, std::vector<Eigen::Matrix3d> &cov_pos) {
-
+  
+  int64_t first_ts = -1;
   // Try to open our trajectory file
   std::ifstream file(path_traj);
   if (!file.is_open()) {
@@ -123,6 +124,10 @@ void Loader::load_data_csv(std::string path_traj, std::vector<double> &times, st
 
     // Skip if we start with a comment
     if (!current_line.find("#"))
+      continue;
+
+    // basic header check for MAI logs
+    if (!current_line.find("time"))
       continue;
 
     // Loop variables
@@ -145,6 +150,7 @@ void Loader::load_data_csv(std::string path_traj, std::vector<double> &times, st
     // Times are in nanoseconds -> convert to seconds
     // Our "fixed" state vector from the ETH GT format [q,p,v,bg,ba]
     if (i >= 8) {
+      if (first_ts < 0) first_ts = (int64_t)data(0);
       times.push_back(1e-9 * data(0));
       Eigen::Matrix<double, 7, 1> imustate;
       imustate(0, 0) = data(1, 0); // pos
@@ -174,6 +180,8 @@ void Loader::load_data_csv(std::string path_traj, std::vector<double> &times, st
     fprintf(stderr, "[LOAD]: %s\n" , path_traj.c_str());
     std::exit(EXIT_FAILURE);
   }
+
+  return first_ts;
 }
 
 void Loader::load_simulation(std::string path, std::vector<Eigen::VectorXd> &values) {

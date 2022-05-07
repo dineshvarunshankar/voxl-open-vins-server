@@ -31,6 +31,7 @@
 #include "utils/Colors.h"
 #include "utils/Math.h"
 
+#define MIN_PACKETS_FOR_ALIGNMENT 3
 namespace ov_eval {
 
 /**

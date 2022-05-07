@@ -58,7 +58,7 @@ public:
    * @param cov_ori Vector of orientation covariances at each timestep (empty if we can't load)
    * @param cov_pos Vector of position covariances at each timestep (empty if we can't load)
    */
-  static void load_data_csv(std::string path_traj, std::vector<double> &times, std::vector<Eigen::Matrix<double, 7, 1>> &poses,
+  static int64_t load_data_csv(std::string path_traj, std::vector<double> &times, std::vector<Eigen::Matrix<double, 7, 1>> &poses,
                             std::vector<Eigen::Matrix3d> &cov_ori, std::vector<Eigen::Matrix3d> &cov_pos);
 
   /**

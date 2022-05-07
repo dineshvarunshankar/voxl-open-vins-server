@@ -60,7 +60,8 @@
 // this is our struct for the ov_eval expected data
 typedef struct ov_eval_data {
     int64_t timestamp_ns;
-    uint32_t magic_number;      ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+    uint32_t magic_number;       ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+    uint8_t done;
     double T_imu_wrt_vio[3];     ///< Translation of the IMU with respect to VIO frame in meters, ordered x,y,z
     double q[4];                 ///< Quaternion with orientation data, ordered qx, qy, qz, qw
 } ov_eval_data;
@@ -260,6 +261,7 @@ static void _publish_vio_data() {
         ov_eval_data eval_packet;
 
         eval_packet.magic_number = VIO_MAGIC_NUMBER;
+        eval_packet.done = !is_cam_connected || !is_imu_connected;
 
         // @todo Figure out a way to set the bad VIO state
         if (vio_manager->initialized()) {
@@ -636,6 +638,15 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string, int b
 
 static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
     fprintf(stderr, "WARNING: disconnected from camera server, resetting VIO\n");
+
+    if (en_eval){
+        ov_eval_data error_packet;
+        error_packet.done = 1;
+        error_packet.magic_number = VIO_MAGIC_NUMBER;
+        error_packet.timestamp_ns = _apps_time_monotonic_ns();
+        pipe_server_write(SIMPLE_EVAL_CH, (char*)&error_packet, sizeof(ov_eval_data));
+    }
+
     global_error_codes |= ERROR_CODE_CAM_MISSING;
     last_cam_timestamp_ns = 0;
     is_cam_connected = 0;
@@ -649,6 +660,15 @@ static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
 
 static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
     fprintf(stderr, "WARNING: disconnected from imu server, resetting VIO\n");
+
+    if (en_eval){
+        ov_eval_data error_packet;
+        error_packet.done = 1;
+        error_packet.magic_number = VIO_MAGIC_NUMBER;
+        error_packet.timestamp_ns = _apps_time_monotonic_ns();
+        pipe_server_write(SIMPLE_EVAL_CH, (char*)&error_packet, sizeof(ov_eval_data));
+    }
+
     global_error_codes |= ERROR_CODE_IMU_MISSING;
     last_imu_timestamp_ns = 0;
     is_imu_connected = 0;

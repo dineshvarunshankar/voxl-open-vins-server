@@ -170,7 +170,7 @@ void AlignUtils::perform_association(double offset, double max_difference, std::
   }
 
   // Ensure that we have enough associations
-  if (est_times.size() < 3) {
+  if (est_times.size() < MIN_PACKETS_FOR_ALIGNMENT) {
     fprintf(stderr,  "[ALIGN]: Was unable to associate groundtruth and estimate trajectories\n");
     fprintf(stderr,  "[ALIGN]: %d total matches....\n", (int)est_times.size());
     fprintf(stderr,  "[ALIGN]: Do the time of the files match??\n");
