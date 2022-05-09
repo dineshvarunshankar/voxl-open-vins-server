@@ -124,6 +124,9 @@ bool downsample_cams;
 bool use_multithreading;
 bool use_mask;
 
+extern bool en_eval;
+extern std::string log_path;
+
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
         return "GLOBAL_3D";
@@ -209,12 +212,20 @@ static int load_opencv_stereo_extrinsics_file(rc_tf_t* cam_l_to_cam_r, int index
         fprintf(stderr, "Received nulllptr for cam_l_to_cam_r\n");
         return -1;
     }
+    char cv_extrinsics_path[CHAR_BUF_SIZE*2];
 
-    char cv_extrinsics_path[CHAR_BUF_SIZE];
+    fprintf(stderr, "LOG_PATH: %s\n", log_path.data());
 
-    strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
+    if (en_eval) {
+        strcpy(cv_extrinsics_path, log_path.data());
+        strcat(cv_extrinsics_path, "/data/modalai/opencv_");
+    }
+    else strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
     strcat(cv_extrinsics_path, cam_info_vec[index].name);
     strcat(cv_extrinsics_path, "_extrinsics.yml");
+
+    fprintf(stderr, "LOADING STEREO FROM: %s\n", cv_extrinsics_path);
+
 
     FileStorage fs(cv_extrinsics_path, FileStorage::READ);
     if (!fs.isOpened()) {
@@ -364,7 +375,7 @@ int load_extrinsics_file() {
 }
 
 int load_intrinsics_file() {
-    char intrinsics_path[CHAR_BUF_SIZE];
+    char intrinsics_path[CHAR_BUF_SIZE*2];
 
     // this is here again because if 
     bool needs_wonky_stereo_setup = false;
@@ -373,7 +384,11 @@ int load_intrinsics_file() {
         if (cam_info_vec[i].enable) {
             memset(intrinsics_path, '\0', CHAR_BUF_SIZE);
             // opencv_cam_name_intrinsics.ymls
-            strcpy(intrinsics_path, "/data/modalai/opencv_");
+            if (en_eval) {
+                strcpy(intrinsics_path, log_path.data());
+                strcat(intrinsics_path, "/data/modalai/opencv_");
+            }
+            else strcpy(intrinsics_path, "/data/modalai/opencv_");
             strcat(intrinsics_path, cam_info_vec[i].name);
             strcat(intrinsics_path, "_intrinsics.yml");
 

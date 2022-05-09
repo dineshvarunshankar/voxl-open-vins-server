@@ -95,8 +95,10 @@ if [ "$MODE" == "DEB" ]; then
 
 	sudo apt update
 	echo "installing: eigen3 and boost"
-	sudo apt install libeigen3-dev:arm64
-	sudo apt install ./tmp_pkgs/voxl-boost_1.65.0_arm64.deb
+	sudo apt install -y libeigen3-dev:arm64
+	sudo apt install -y libboost-filesystem-dev:arm64
+	sudo apt install -y libboost-thread-dev:arm64
+	sudo apt install -y libboost-date-time-dev:arm64
 
 # install IPK packages with opkg
 else

@@ -29,7 +29,6 @@
 #include <vector>
 
 #include "AlignUtils.h"
-#include "utils/Colors.h"
 
 namespace ov_eval {
 

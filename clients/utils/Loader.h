@@ -29,8 +29,6 @@
 #include <Eigen/Eigen>
 #include <boost/filesystem.hpp>
 
-#include "Colors.h"
-
 namespace ov_eval {
 
 /**

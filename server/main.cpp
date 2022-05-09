@@ -57,6 +57,8 @@
 #define OVERLAY_OUTPUT_CH (3)
 #define CAM_READ_BUF_SIZE (1024 * 1024 * 64)
 
+std::string log_path = "";
+
 // this is our struct for the ov_eval expected data
 typedef struct ov_eval_data {
     int64_t timestamp_ns;
@@ -380,7 +382,9 @@ static void _print_usage(void) {
     std::cout << "                                    3 - WARNING" << std::endl;
     std::cout << "                                    4 - ERROR" << std::endl;
     std::cout << "                                    5 - SILENT" << std::endl;
-    std::cout << "-e, --eval                       run in eval mode, outputs abbreviated data" << std::endl;
+    std::cout << "-e <log_path>, --eval <log_path> run in eval mode, outputs abbreviated data" << std::endl;
+    std::cout << "                                    log path should be an absoulute path to the start of the directory," << std::endl;
+    std::cout << "                                    i.e. /data/voxl-logger/log0001 (with or w/out last /)" << std::endl;
     std::cout << "-h, --help               print this help message" << std::endl;
     std::cout << std::endl;
     return;
@@ -420,14 +424,14 @@ static bool _parse_opts(int argc, char* argv[]) {
         {
             {"config", no_argument, 0, 'c'},
             {"debug", no_argument, 0, 'd'},
-            {"eval", no_argument, 0, 'e'},
+            {"eval", required_argument, 0, 'e'},
             {"help", no_argument, 0, 'h'},
             {"verbose", required_argument, 0, 'v'},
             {0, 0, 0, 0}};
     ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::SILENT);
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "cdehsv:", long_options, &option_index);
+        int c = getopt_long(argc, argv, "cde:hsv:", long_options, &option_index);
 
         // Detect the end of the options.
         if (c == -1) {
@@ -447,13 +451,16 @@ static bool _parse_opts(int argc, char* argv[]) {
                 break;
 
             case 'd':
-                std::cout << "Enabling debug mode" << std::endl;
+                fprintf(stderr, "Enabling debug mode\n");
                 en_debug = true;
                 break;
             
             case 'e':
-                std::cout << "Enabling eval mode" << std::endl;
+                fprintf(stderr, "Enabling eval mode\n");
                 en_eval = true;
+                log_path.assign(optarg);
+                if (log_path.back() == '/') log_path.pop_back();
+                fprintf(stderr, "Using log path of: %s\n", log_path.data());
                 break;
 
             case 'h':
@@ -482,7 +489,7 @@ static bool _parse_opts(int argc, char* argv[]) {
                         ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::SILENT);
                         break;
                     default:
-                        std::cerr << "Unknown Print Level." << std::endl;
+                        fprintf(stderr, "Unknown debug level\n");
                         _print_usage();
                         _quit(-1);
                 }

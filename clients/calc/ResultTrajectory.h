@@ -33,7 +33,6 @@
 #include <Eigen/StdVector>
 
 #include "alignment/AlignTrajectory.h"
-#include "utils/Colors.h"
 #include "utils/Loader.h"
 #include "utils/Math.h"
 #include "utils/Statistics.h"
