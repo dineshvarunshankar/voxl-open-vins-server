@@ -210,18 +210,22 @@ int write_results_to_csv(ov_eval::Statistics error_pos, std::map<double, std::pa
         return -1;
     }
 
-    char ch;
-    if (fscanf(file, "%c", &ch) == EOF) {
-        // if the file is empty, lets write out a header
-        fprintf(file, "rmse_pos, std_pos, rpe_median_pos_seg0, rpe_median_pos_seg1, rpe_median_pos_seg2, rpe_median_pos_seg3, rpe_median_pos_seg4\n");
-    }
+    // char ch;
+    // if (fscanf(file, "%c", &ch) == EOF) {
+    //     // if the file is empty, lets write out a header
+    //     fprintf(file, "rmse_pos, std_pos, rpe_median_pos_seg0, rpe_median_pos_seg1, rpe_median_pos_seg2, rpe_median_pos_seg3, rpe_median_pos_seg4\n");
+    // }
+    
+    // regardless of file contents, throw in a newline and write our header
+    fprintf(file, "\nrmse_pos, std_pos, rpe_median_pos_seg0, rpe_median_pos_seg1, rpe_median_pos_seg2, rpe_median_pos_seg3, rpe_median_pos_seg4\n");
 
     // write out only relevant data here
     fprintf(file, "%6.5f,%6.5f", error_pos.rmse, error_pos.std);
     for (const auto& seg : error_rpe) {
         fprintf(file, ",%6.5f", seg.second.second.median);
     }
-    fprintf(file, "\n");
+    // close it out with a couple newlines, make it easier to see distinct run results
+    fprintf(file, "\n\n");
     fclose(file);
 }
 
@@ -575,6 +579,8 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
         pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
         usleep(75000);
     }
+
+    main_running = false;
 
     return;
 }
