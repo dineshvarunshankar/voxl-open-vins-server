@@ -263,7 +263,7 @@ static void _publish_vio_data() {
         ov_eval_data eval_packet;
 
         eval_packet.magic_number = VIO_MAGIC_NUMBER;
-        eval_packet.done = !is_cam_connected || !is_imu_connected;
+        eval_packet.done = 0;
 
         // @todo Figure out a way to set the bad VIO state
         if (vio_manager->initialized()) {
@@ -726,7 +726,7 @@ static int create_server_pipes(void) {
     // cJSON* json = pipe_server_get_info_json_ptr(SIMPLE_OUTPUT_CH);
     // cJSON_AddStringToObject(json, "imu", imu_name);
     // cJSON_AddStringToObject(json, "cam", cam_pipe_location);
-    pipe_server_update_info(SIMPLE_OUTPUT_CH);
+    // pipe_server_update_info(SIMPLE_OUTPUT_CH);
     pipe_server_set_control_cb(SIMPLE_OUTPUT_CH, _control_pipe_cb, NULL);
     pipe_server_set_available_control_commands(SIMPLE_OUTPUT_CH, CONTROL_COMMANDS);
 

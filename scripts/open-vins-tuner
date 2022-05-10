@@ -9,25 +9,29 @@ NAME="voxl-open-vins-server"
 CONFIG_FILE="/etc/modalai/${NAME}.conf"
 GROUND_TRUTH_SUFFIX="/run/mpa/qvio/data.csv"
 
-## all dummy values for now
 ## raw noise
-SIGMA_W=(0 1 2 3)
-SIGMA_WB=(0 1 2 3)
-SIGMA_A=(0 1 2 3)
-SIGMA_AB=(0 1 2 3)
+# these are the values settled on after first round of testing
+SIGMA_W=(1.6968e-03)
+SIGMA_WB=(1.9393e-04)
+SIGMA_A=(2.0000e-2)
+SIGMA_AB=(3.0000e-02)
 
 ## covariances
-SIGMA_W_2=(0 1 2 3)
-SIGMA_WB_2=(0 1 2 3)
-SIGMA_A_2=(0 1 2 3)
-SIGMA_AB_2=(0 1 2 3)
+# these are defaults, and proved better after first round of testing
+SIGMA_W_2=(2.87913024e-08)
+SIGMA_WB_2=(3.76088449e-10)
+SIGMA_A_2=(4.0000e-6)
+SIGMA_AB_2=(9.0000e-06)
+
+# NEED to test the other way, decreasing the covariance as well
 
 ## features
-CHI2_MULT=(0 1 2 3)
+# settled on these after first round of testing
+CHI2_MULT=(15)
 # noise per pixel
-SIGMA_PIX=(0 1 2 3)
+SIGMA_PIX=(10)
 # covariance per pixel
-SIGMA_PIX_2=(0 1 2 3)
+SIGMA_PIX_2=(16)
 
 curr_paramlist=()
 
@@ -82,34 +86,38 @@ construct_curr_paramlist () {
     index=$1
     # clear param list
     curr_paramlist=()
-    echo ${SIGMA_W[$index]}
-    curr_paramlist+=(${SIGMA_W[$index]})
-    curr_paramlist+=(${SIGMA_W_2[$index]})
-    curr_paramlist+=(${SIGMA_WB[$index]})
-    curr_paramlist+=(${SIGMA_WB_2[$index]})
-    curr_paramlist+=(${SIGMA_A[$index]})
-    curr_paramlist+=(${SIGMA_A_2[$index]})
-    curr_paramlist+=(${SIGMA_AB[$index]})
-    curr_paramlist+=(${SIGMA_AB_2[$index]})
+    # echo ${SIGMA_W[$index]}
+    # curr_paramlist+=(${SIGMA_W[$index]})
+    # curr_paramlist+=(${SIGMA_W_2[$index]})
+    # curr_paramlist+=(${SIGMA_WB[$index]})
+    # curr_paramlist+=(${SIGMA_WB_2[$index]})
+    # curr_paramlist+=(${SIGMA_A[$index]})
+    # curr_paramlist+=(${SIGMA_A_2[$index]})
+    # curr_paramlist+=(${SIGMA_AB[$index]})
+    # curr_paramlist+=(${SIGMA_AB_2[$index]})
+
+    curr_paramlist+=(${CHI2_MULT[$index]})
+    curr_paramlist+=(${SIGMA_PIX[$index]})
+    curr_paramlist+=(${SIGMA_PIX_2[$index]})
 }
 
 set_ov_params_from_list () {
-    set_param imu_sigma_w ${curr_paramlist[0]}
-    set_param imu_sigma_w_2 ${curr_paramlist[1]}
-    set_param imu_sigma_wb ${curr_paramlist[2]}
-    set_param imu_sigma_wb_2 ${curr_paramlist[3]}
-    set_param imu_sigma_a ${curr_paramlist[4]}
-    set_param imu_sigma_a_2 ${curr_paramlist[5]}
-    set_param imu_sigma_ab ${curr_paramlist[6]}
-    set_param imu_sigma_ab_2 ${curr_paramlist[7]}
+    # set_param imu_sigma_w ${curr_paramlist[0]}
+    # set_param imu_sigma_w_2 ${curr_paramlist[0]}
+    # set_param imu_sigma_wb ${curr_paramlist[1]}
+    # set_param imu_sigma_wb_2 ${curr_paramlist[1]}
+    # set_param imu_sigma_a ${curr_paramlist[2]}
+    # set_param imu_sigma_a_2 ${curr_paramlist[2]}
+    # set_param imu_sigma_ab ${curr_paramlist[3]}
+    # set_param imu_sigma_ab_2 ${curr_paramlist[3]}
 
-    set_param msckf_chi2_multiplier ${curr_paramlist[8]}
-    set_param msckf_sigma_px ${curr_paramlist[9]}
-    set_param msckf_sigma_px_sq ${curr_paramlist[10]}
+    set_param msckf_chi2_multiplier ${curr_paramlist[0]}
+    set_param msckf_sigma_px ${curr_paramlist[1]}
+    set_param msckf_sigma_px_sq ${curr_paramlist[2]}
 
-    set_param slam_chi2_multiplier ${curr_paramlist[8]}
-    set_param slam_sigma_px ${curr_paramlist[9]}
-    set_param slam_sigma_px_sq ${curr_paramlist[10]}
+    set_param slam_chi2_multiplier ${curr_paramlist[0]}
+    set_param slam_sigma_px ${curr_paramlist[1]}
+    set_param slam_sigma_px_sq ${curr_paramlist[2]}
 }
 
 print_usage(){
@@ -131,9 +139,9 @@ dirlist=(`ls ${LOG_DIR}`)
 dirlist_len=${#dirlist[@]}
 
 ## get some helper vars
-paramlist_len=${#SIGMA_W[@]}
+# paramlist_len=${#SIGMA_W[@]}
 # paramlist_len=${#SIGMA_W_2[@]}
-# paramlist_len=${#CHI2_MULT[@]}
+paramlist_len=${#CHI2_MULT[@]}
 
 
 ## also will need "iterations" here, so we can change parameters within the same log
@@ -147,7 +155,11 @@ do
         # construct the list of parameters we are going to test out
         construct_curr_paramlist $j
         # need to write into the file a "header" with all ov params in use
-        echo "sigma_w,sigma_w_2,sigma_wb,sigma_wb_2,sigma_a,sigma_a_2,sigma_ab,sigma_ab_2,chi2_mult,sigma_pix,sigma_pix_2" >> ${results_csv}
+        # echo "sigma_w,sigma_w_2,sigma_wb,sigma_wb_2,sigma_a,sigma_a_2,sigma_ab,sigma_ab_2,chi2_mult,sigma_pix,sigma_pix_2" >> ${results_csv}
+        # echo "sigma_w,sigma_wb,sigma_a,sigma_ab" >> ${results_csv}
+        # echo "sigma_w_2,sigma_wb_2,sigma_a_2,sigma_ab_2" >> ${results_csv}
+        echo "chi2,sigma_pix,sigma_pix_2" >> ${results_csv}
+
         printf "%s," "${curr_paramlist[@]}" >> ${results_csv}
         sed -i '$ s/.$//' ${results_csv}
         printf "\n" >> ${results_csv}
@@ -157,16 +169,23 @@ do
 
         # now, fire up the evaluate-vio process
         ground_truth="${LOG_DIR}${dirlist[$i]}${GROUND_TRUTH_SUFFIX}"
-        voxl-evaluate-vio -f ${results_csv} -g ${GROUND_TRUTH_SUFFIX} &
+        voxl-evaluate-vio -f ${results_csv} -g ${ground_truth} &
         eval_pid=$!
 
+        sleep 0.5   
+
         # next, fire up the open vins process
-        voxl-open-vins-server -e ${LOG_DIR}${dirlist[$i]} &
+        voxl-open-vins-server -e ${LOG_DIR}${dirlist[$i]}/ &
         ov_pid=$!
 
+        sleep 0.5
+
+
         # finally, start the log
-        voxl-replay -p ${LOG_DIR}${dirlist[$i]} &
+        voxl-replay -p ${LOG_DIR}${dirlist[$i]}/ &
         replay_pid=$!
+
+        sleep 0.5
 
         while ps -p $eval_pid > /dev/null
         do
@@ -178,5 +197,6 @@ do
         # kill everything else just in case
         sudo kill -9 ${replay_pid}
         sudo kill -9 ${ov_pid}
+        sudo kill -9 ${eval_pid}
     done
 done

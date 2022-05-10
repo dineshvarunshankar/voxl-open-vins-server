@@ -204,7 +204,7 @@ static int create_server_pipes(void) {
 
 int write_results_to_csv(ov_eval::Statistics error_pos, std::map<double, std::pair<ov_eval::Statistics, ov_eval::Statistics>> error_rpe) {
     if (file_to_log == "") return -1;
-    FILE* file = fopen(file_to_log.c_str(), "wb");
+    FILE* file = fopen(file_to_log.c_str(), "a");
     if (!file) {
         fprintf(stderr, "Failed to open log file %s.\n", file_to_log.c_str());
         return -1;
@@ -217,7 +217,7 @@ int write_results_to_csv(ov_eval::Statistics error_pos, std::map<double, std::pa
     // }
     
     // regardless of file contents, throw in a newline and write our header
-    fprintf(file, "\nrmse_pos, std_pos, rpe_median_pos_seg0, rpe_median_pos_seg1, rpe_median_pos_seg2, rpe_median_pos_seg3, rpe_median_pos_seg4\n");
+    fprintf(file, "\nrmse_pos,std_pos,rpe_median_pos_seg0,rpe_median_pos_seg1,rpe_median_pos_seg2,rpe_median_pos_seg3,rpe_median_pos_seg4\n");
 
     // write out only relevant data here
     fprintf(file, "%6.5f,%6.5f", error_pos.rmse, error_pos.std);
@@ -575,9 +575,9 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
             }
         }
         pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
-        usleep(75000);
+        usleep(25000);
         pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
-        usleep(75000);
+        usleep(25000);
     }
 
     main_running = false;
@@ -709,9 +709,9 @@ static void _live_align_helper_cb(__attribute__((unused)) int ch, char* data, in
             }
         }
         pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
-        usleep(75000);
+        usleep(25000);
         pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
-        usleep(75000);
+        usleep(25000);
     }
     queue_of_packets.clear();
 
@@ -787,6 +787,7 @@ int main(int argc, char* argv[]) {
     // all done, signal pipe read threads to stop
     printf("\nclosing and exiting\n");
     pipe_client_close_all();
+    pipe_server_close_all();
 
     return 0;
 }
