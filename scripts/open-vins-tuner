@@ -172,7 +172,7 @@ do
         voxl-evaluate-vio -f ${results_csv} -g ${ground_truth} &
         eval_pid=$!
 
-        sleep 0.5   
+        sleep 0.5
 
         # next, fire up the open vins process
         voxl-open-vins-server -e ${LOG_DIR}${dirlist[$i]}/ &

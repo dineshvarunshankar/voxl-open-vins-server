@@ -124,7 +124,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     if (!vio_manager) return;
     if (!main_running) return;
 
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
+    // std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
     for (int i = 0; i < n_packets; i++) {
         // Create the data struct that we will use for ingesting data into the vio manager
@@ -142,6 +142,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
         rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], (int64_t)data_array[i].timestamp_ns};
         rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
 
+        std::lock_guard<std::mutex> lg(vio_manager_mutex);
         vio_manager->feed_measurement_imu(vio_manager_data);
 
         last_imu_timestamp_ns = data_array[i].timestamp_ns;
@@ -277,29 +278,30 @@ static void _publish_vio_data() {
 
         // Load the data into the struct that we will be publishing
         {
-            std::lock_guard<std::mutex> lg(vio_manager_mutex);
+            // std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
             // check the latest image that its using
             tester_im = vio_manager->get_historical_viz_image();
         }
-            if (tester_im.cols > 640){
-                cv::resize(tester_im, tester_im, cv::Size(), 0.5, 0.5);
-            }
 
-            camera_image_metadata_t meta_;
-            meta_.timestamp_ns = _apps_time_monotonic_ns();
-            meta_.width = tester_im.cols;
-            meta_.height = tester_im.rows;
-            // known to be rgb image regardless of input
-            meta_.size_bytes = meta_.width * meta_.height * 3;
-            meta_.stride = meta_.width * 3;
-            meta_.format = IMAGE_FORMAT_RGB;
+        if (tester_im.cols > 640){
+            cv::resize(tester_im, tester_im, cv::Size(), 0.5, 0.5);
+        }
 
-            pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)tester_im.data);
+        camera_image_metadata_t meta_;
+        meta_.timestamp_ns = _apps_time_monotonic_ns();
+        meta_.width = tester_im.cols;
+        meta_.height = tester_im.rows;
+        // known to be rgb image regardless of input
+        meta_.size_bytes = meta_.width * meta_.height * 3;
+        meta_.stride = meta_.width * 3;
+        meta_.format = IMAGE_FORMAT_RGB;
+
+        pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)tester_im.data);
 
             std::shared_ptr<ov_msckf::State> current_state = {nullptr};
         {
-            std::lock_guard<std::mutex> lg(vio_manager_mutex);
+            // std::lock_guard<std::mutex> lg(vio_manager_mutex);
             current_state = vio_manager->get_state();
         }
 
@@ -313,7 +315,7 @@ static void _publish_vio_data() {
             eval_packet.q[0] = current_state->_imu->quat()[0];
             eval_packet.q[1] = current_state->_imu->quat()[1];
             eval_packet.q[2] = current_state->_imu->quat()[2];
-            eval_packet.q[3] = current_state->_imu->quat()[3];  
+            eval_packet.q[3] = current_state->_imu->quat()[3];
             pipe_server_write(SIMPLE_EVAL_CH, (char*)&eval_packet, sizeof(ov_eval_data));
         }
         else {
@@ -324,7 +326,6 @@ static void _publish_vio_data() {
             vio_data.T_imu_wrt_vio[1] = -vio_data.T_imu_wrt_vio[1];
             vio_data.T_imu_wrt_vio[2] = -vio_data.T_imu_wrt_vio[2];
 
-
             Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot().cast<float>();
             Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
             Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
@@ -332,7 +333,7 @@ static void _publish_vio_data() {
             vio_data.n_feature_points = current_state->_features_SLAM.size();
 
             rc_ov_t closest_imu_packet;
-            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, meta_.timestamp_ns, &closest_imu_packet);
+            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, vio_data.timestamp_ns, &closest_imu_packet);
             if (ret < 0) {
                 fprintf(stderr, "ERROR fetching from ringbuffer\n");
                 if (ret == -2) {
