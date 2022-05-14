@@ -32,6 +32,8 @@
  ******************************************************************************/
 
 #include <core/VioManagerOptions.h>
+#include <utils/quat_ops.h>
+
 #include <modal_json.h>
 #include <rc_math.h>
 #include <stdio.h>
@@ -155,7 +157,7 @@ static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> 
     // create our quaternion
     Eigen::Matrix<double, 4, 1> quaternion;
     // open_vins jpl creator from rotation matrix, using correct rotation based on needs_inverse relation
-    quaternion = rot_2_quat(needs_inverse ? rotation_par_wrt_ch : rotation_ch_wrt_par);
+    quaternion = ov_core::rot_2_quat(needs_inverse ? rotation_par_wrt_ch : rotation_ch_wrt_par);
 
     // create our translation vec
     Eigen::Matrix<double, 3, 1> translation;
@@ -187,7 +189,7 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
     // create our quaternion
     Eigen::Matrix<double, 4, 1> quaternion;
     // open_vins jpl creator from rotation matrix, using correct rotation based on needs_inverse relation
-    quaternion = rot_2_quat(needs_inverse ? rotation_par_wrt_ch : rotation_ch_wrt_par);
+    quaternion = ov_core::rot_2_quat(needs_inverse ? rotation_par_wrt_ch : rotation_ch_wrt_par);
 
     // create our translation vec
     Eigen::Matrix<double, 3, 1> translation;

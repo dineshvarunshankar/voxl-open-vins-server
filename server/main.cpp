@@ -62,10 +62,10 @@ std::string log_path = "";
 // this is our struct for the ov_eval expected data
 typedef struct ov_eval_data {
     int64_t timestamp_ns;
-    uint32_t magic_number;       ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+    uint32_t magic_number;  ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
     uint8_t done;
-    double T_imu_wrt_vio[3];     ///< Translation of the IMU with respect to VIO frame in meters, ordered x,y,z
-    double q[4];                 ///< Quaternion with orientation data, ordered qx, qy, qz, qw
+    double T_imu_wrt_vio[3];  ///< Translation of the IMU with respect to VIO frame in meters, ordered x,y,z
+    double q[4];              ///< Quaternion with orientation data, ordered qx, qy, qz, qw
 } ov_eval_data;
 
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
@@ -84,6 +84,8 @@ int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT
 static volatile int64_t last_imu_timestamp_ns = 0;
 static volatile int64_t last_cam_timestamp_ns = 0;
 static int64_t last_time_alignment_ns = 0;
+
+static std::vector<int64_t> last_cam_timestamps;
 
 static uint32_t global_error_codes = 0;
 std::mutex cam_mutex;
@@ -139,34 +141,44 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
         vio_manager_data.am(1, 0) = data_array[i].accl_ms2[1];
         vio_manager_data.am(2, 0) = data_array[i].accl_ms2[2];
 
-        rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], (int64_t)data_array[i].timestamp_ns};
+        rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], data_array[i].timestamp_ns};
         rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
 
-        std::lock_guard<std::mutex> lg(vio_manager_mutex);
+        // std::lock_guard<std::mutex> lg(vio_manager_mutex);
         vio_manager->feed_measurement_imu(vio_manager_data);
 
         last_imu_timestamp_ns = data_array[i].timestamp_ns;
+        // fprintf(stderr, "imu feed\n");
     }
     return;
 }
 
 static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
+    int64_t start_time = _apps_time_monotonic_ns();
+
     int camera_index = ch - CAMERA_CH_START_OFFSET;
 
     // fprintf(stderr, "cam index: %d\n", camera_index);
     if (!vio_manager) return;
     if (!main_running) return;
 
-    static int64_t last_cam_ts = meta.timestamp_ns;
+    // static int64_t last_cam_ts = meta.timestamp_ns;
+    if (last_cam_timestamps[camera_index] == 0) last_cam_timestamps[camera_index] = meta.timestamp_ns + (meta.exposure_ns / 2);
 
     int64_t cam_timestamp_ns = meta.timestamp_ns;
     cam_timestamp_ns += meta.exposure_ns / 2;
 
-    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 3000000000)) {
-        fprintf(stderr, "dropping old frame older than 3 seconds\n");
-        return;
-    }
-    if (cam_timestamp_ns < last_cam_ts) return;
+    // if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 3000000000)) {
+    //     fprintf(stderr, "dropping id %d old frame older than 3 seconds\n", camera_index);
+    //     return;
+    // }
+    if (cam_timestamp_ns < last_cam_timestamps[camera_index]) return;
+
+    // fprintf(stderr, "cam %d: %ld\n", camera_index, cam_timestamp_ns);
+    // fprintf(stderr, "imu: %ld\n", last_imu_timestamp_ns);
+
+    // if (cam_timestamp_ns < last_imu_timestamp_ns) return;
+
 
     // flag that camera data is active, skip frame is imu is disconnected
     is_cam_connected = 1;
@@ -177,23 +189,24 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     // if cam-imu alignment is POSITIVE that means the camera timestamp is early
     // and the image was actually taken after the reported timestamp
     // need a way to get the cam imu dif
-    while (last_imu_timestamp_ns < (cam_timestamp_ns)){ // + last_time_alignment_ns)) {
-        // don't get stuck here forever
-        if (!main_running) return;
-        if (!is_imu_connected) return;
-        if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
-            fprintf(stderr, "ERROR waited more than 0.3 seconds for imu to catch up, dropping frame\n");
-            return;
-        }
-        usleep(5000);
-    }
+    // while (last_imu_timestamp_ns < (cam_timestamp_ns + last_time_alignment_ns)) {
+    //     // don't get stuck here forever
+    //     fprintf(stderr, "WAITING IN CAM LOOOP\n");
+    //     if (!main_running) return;
+    //     if (!is_imu_connected) return;
+    //     if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 500000000)) {
+    //         fprintf(stderr, "ERROR waited more than 0.5 seconds for imu to catch up, dropping frame\n");
+    //         return;
+    //     }
+    //     usleep(5000);
+    // }
 
     ov_core::CameraData vio_manager_data;
 
     vio_manager_data.timestamp = cam_timestamp_ns / 1000000000.0;
     vio_manager_data.sensor_ids.push_back(camera_index);
 
-    if (meta.format == IMAGE_FORMAT_RAW8){
+    if (meta.format == IMAGE_FORMAT_RAW8) {
         // fprintf(stderr, "last tracking timestamp: %ld\n", meta.timestamp_ns);
         // Unpack the data into an opencv image Mat
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
@@ -201,11 +214,10 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
         vio_manager_data.images.push_back(img);
         vio_manager_data.masks.push_back(mask);
-    }
-    else if (meta.format == IMAGE_FORMAT_STEREO_RAW8){
+    } else if (meta.format == IMAGE_FORMAT_STEREO_RAW8) {
         // fprintf(stderr, "last stereo timestamp: %ld\n", meta.timestamp_ns);
         // stereo pairs take camera_index as l_cam index, r_cam index is actual_index+1
-        vio_manager_data.sensor_ids.push_back(camera_index+1);
+        vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
         // Unpack the data into opencv image Mats
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
@@ -222,11 +234,15 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     }
 
     // Ingest the data
-    std::lock_guard<std::mutex> lg(cam_mutex);
-    std::lock_guard<std::mutex> lg2(vio_manager_mutex);
+    // std::lock_guard<std::mutex> lg(cam_mutex);
+    // if (cam_mutex.try_lock()){
+    // std::lock_guard<std::mutex> lg2(vio_manager_mutex);
     vio_manager->feed_measurement_camera(vio_manager_data);
-    last_cam_timestamp_ns = cam_timestamp_ns;
-    last_cam_ts = cam_timestamp_ns;
+    last_cam_timestamps[camera_index] = cam_timestamp_ns;
+    // last_cam_ts = cam_timestamp_ns;
+        // cam_mutex.unlock();
+    // }
+    // fprintf(stderr, "feed cam %d took %6.5fs\n", camera_index, (double)(_apps_time_monotonic_ns() - start_time)/1e9);
 
     return;
 }
@@ -234,6 +250,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 static void _publish_vio_data() {
     int64_t next_time = _apps_time_monotonic_ns() + (int64_t)(1000000000 / odr_hz);
 
+    // return;
     while (main_running) {
         // try to maintain output data rate (odr)
         int64_t current_time = _apps_time_monotonic_ns();
@@ -249,7 +266,7 @@ static void _publish_vio_data() {
 
         //  We want to fill in the data
         vio_data_t vio_data;
-        
+
         vio_data.magic_number = VIO_MAGIC_NUMBER;
         vio_data.error_code = global_error_codes;
 
@@ -276,15 +293,19 @@ static void _publish_vio_data() {
         }
         cv::Mat tester_im;
 
+        int64_t start_time = _apps_time_monotonic_ns();
+
         // Load the data into the struct that we will be publishing
         {
-            // std::lock_guard<std::mutex> lg(vio_manager_mutex);
+            double temp;
+            std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
             // check the latest image that its using
             tester_im = vio_manager->get_historical_viz_image();
+            // vio_manager->get_active_image(temp, tester_im);
         }
 
-        if (tester_im.cols > 640){
+        if (tester_im.cols > 640) {
             cv::resize(tester_im, tester_im, cv::Size(), 0.5, 0.5);
         }
 
@@ -299,67 +320,68 @@ static void _publish_vio_data() {
 
         pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)tester_im.data);
 
-            std::shared_ptr<ov_msckf::State> current_state = {nullptr};
-        {
-            // std::lock_guard<std::mutex> lg(vio_manager_mutex);
-            current_state = vio_manager->get_state();
-        }
+        // fprintf(stderr, "vis stuff took %6.5fs\n", (double)(_apps_time_monotonic_ns() - start_time)/1e9);
 
-        if (en_eval){
-            eval_packet.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+        // std::shared_ptr<ov_msckf::State> current_state = {nullptr};
+        // {
+        //     // std::lock_guard<std::mutex> lg(vio_manager_mutex);
+        //     current_state = vio_manager->get_state();
+        // }
 
-            // TEMPORARY ALIGNMENT, Z AND Y AXES FLIPPED
-            eval_packet.T_imu_wrt_vio[0] = current_state->_imu->pos()[0];
-            eval_packet.T_imu_wrt_vio[1] = -current_state->_imu->pos()[1];
-            eval_packet.T_imu_wrt_vio[2] = -current_state->_imu->pos()[2];
-            eval_packet.q[0] = current_state->_imu->quat()[0];
-            eval_packet.q[1] = current_state->_imu->quat()[1];
-            eval_packet.q[2] = current_state->_imu->quat()[2];
-            eval_packet.q[3] = current_state->_imu->quat()[3];
-            pipe_server_write(SIMPLE_EVAL_CH, (char*)&eval_packet, sizeof(ov_eval_data));
-        }
-        else {
-            vio_data.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
-            Eigen::MatrixXf::Map(vio_data.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
+        // if (en_eval) {
+        //     eval_packet.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
-            // TEMPORARY ALIGNMENT
-            vio_data.T_imu_wrt_vio[1] = -vio_data.T_imu_wrt_vio[1];
-            vio_data.T_imu_wrt_vio[2] = -vio_data.T_imu_wrt_vio[2];
+        //     // TEMPORARY ALIGNMENT, Z AND Y AXES FLIPPED
+        //     eval_packet.T_imu_wrt_vio[0] = current_state->_imu->pos()[0];
+        //     eval_packet.T_imu_wrt_vio[1] = -current_state->_imu->pos()[1];
+        //     eval_packet.T_imu_wrt_vio[2] = -current_state->_imu->pos()[2];
+        //     eval_packet.q[0] = current_state->_imu->quat()[0];
+        //     eval_packet.q[1] = current_state->_imu->quat()[1];
+        //     eval_packet.q[2] = current_state->_imu->quat()[2];
+        //     eval_packet.q[3] = current_state->_imu->quat()[3];
+        //     pipe_server_write(SIMPLE_EVAL_CH, (char*)&eval_packet, sizeof(ov_eval_data));
+        // } else {
+        //     vio_data.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+        //     Eigen::MatrixXf::Map(vio_data.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
 
-            Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot().cast<float>();
-            Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
-            Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
-            Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
-            vio_data.n_feature_points = current_state->_features_SLAM.size();
+        //     // TEMPORARY ALIGNMENT
+        //     vio_data.T_imu_wrt_vio[1] = -vio_data.T_imu_wrt_vio[1];
+        //     vio_data.T_imu_wrt_vio[2] = -vio_data.T_imu_wrt_vio[2];
 
-            rc_ov_t closest_imu_packet;
-            int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, vio_data.timestamp_ns, &closest_imu_packet);
-            if (ret < 0) {
-                fprintf(stderr, "ERROR fetching from ringbuffer\n");
-                if (ret == -2) {
-                    printf("there wasn't sufficient data in the buffer\n");
-                }
-                if (ret == -3) {
-                    printf("the requested timestamp was too new\n");
-                }
-                if (ret == -4) {
-                    printf("the requested timestamp was too old\n");
-                }
-                continue;
-            }
+        //     Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_imu_to_vio), 3, 3) = current_state->_imu->Rot().cast<float>();
+        //     Eigen::MatrixXf::Map(vio_data.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
+        //     Eigen::MatrixXf::Map(vio_data.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
+        //     Eigen::MatrixXf::Map(reinterpret_cast<float*>(vio_data.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
+        //     vio_data.n_feature_points = current_state->_features_SLAM.size();
 
-            if (vio_data.state == VIO_STATE_OK){
-                // update our last time_alignments, need to convert back down to nanoseconds
-                last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
-                // fprintf(stderr, "time align update: %ld\n", last_time_alignment_ns);
-            }
+        //     // rc_ov_t closest_imu_packet;
+        //     // int ret = rc_ov_ringbuf_get_ov_at_time(&imu_buf, vio_data.timestamp_ns, &closest_imu_packet);
+        //     // if (ret < 0) {
+        //     //     fprintf(stderr, "ERROR fetching from ringbuffer\n");
+        //     //     if (ret == -2) {
+        //     //         printf("there wasn't sufficient data in the buffer\n");
+        //     //     }
+        //     //     if (ret == -3) {
+        //     //         printf("the requested timestamp was too new\n");
+        //     //     }
+        //     //     if (ret == -4) {
+        //     //         printf("the requested timestamp was too old\n");
+        //     //     }
+        //     //     continue;
+        //     // }
 
-            // Add the angular velocities as the IMU data with estimated biases subtracted
-            vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
-            vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
-            vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
-            pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
-        }
+        //     if (vio_data.state == VIO_STATE_OK) {
+        //         // update our last time_alignments, need to convert back down to nanoseconds
+        //         last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
+        //         // fprintf(stderr, "time align update: %ld\n", last_time_alignment_ns);
+        //     }
+
+        //     // Add the angular velocities as the IMU data with estimated biases subtracted
+        //     // vio_data.imu_angular_vel[0] = closest_imu_packet.last_angular_velocity_data[0] - static_cast<float>(current_state->_imu->bias_g()(0, 0));
+        //     // vio_data.imu_angular_vel[1] = closest_imu_packet.last_angular_velocity_data[1] - static_cast<float>(current_state->_imu->bias_g()(0, 1));
+        //     // vio_data.imu_angular_vel[2] = closest_imu_packet.last_angular_velocity_data[2] - static_cast<float>(current_state->_imu->bias_g()(0, 2));
+        //     pipe_server_write(SIMPLE_OUTPUT_CH, (char*)&vio_data, sizeof(vio_data_t));
+        // }
     }
 }
 
@@ -455,7 +477,7 @@ static bool _parse_opts(int argc, char* argv[]) {
                 fprintf(stderr, "Enabling debug mode\n");
                 en_debug = true;
                 break;
-            
+
             case 'e':
                 fprintf(stderr, "Enabling eval mode\n");
                 en_eval = true;
@@ -524,28 +546,28 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.dt_slam_delay = slam_delay;
 
     /// INERTIAL INITIALIZER OPTIONS ///
-    vio_manager_options.gravity_mag = gravity_mag;
-    vio_manager_options.init_window_time = init_window_time;
-    vio_manager_options.init_imu_thresh = init_imu_thresh;
+    vio_manager_options.init_options.gravity_mag = gravity_mag;
+    vio_manager_options.init_options.init_window_time = init_window_time;
+    vio_manager_options.init_options.init_imu_thresh = init_imu_thresh;
 
-    /// IMU NOISE OPTIONS ///
-    vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
-    vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
-    vio_manager_options.imu_noises.sigma_a = imu_sigma_a;
-    vio_manager_options.imu_noises.sigma_ab = imu_sigma_ab;
-    vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
-    vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
-    vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
-    vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
+    // /// IMU NOISE OPTIONS ///
+    // vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
+    // vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
+    // vio_manager_options.imu_noises.sigma_a = imu_sigma_a;
+    // vio_manager_options.imu_noises.sigma_ab = imu_sigma_ab;
+    // vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
+    // vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
+    // vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
+    // vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
 
-    // vio_manager_options.imu_noises.sigma_w *= 50; //imu_sigma_w;
-    // vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
-    // vio_manager_options.imu_noises.sigma_a *= 50; //imu_sigma_a;
-    // vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
-    // vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
-    // vio_manager_options.imu_noises.sigma_wb_2 *= 25; //imu_sigma_wb_2;
-    // vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
-    // vio_manager_options.imu_noises.sigma_ab_2 *= 25; //imu_sigma_ab_2;
+    vio_manager_options.imu_noises.sigma_w *= 50; //imu_sigma_w;
+    vio_manager_options.imu_noises.sigma_wb *= 50; //imu_sigma_wb;
+    vio_manager_options.imu_noises.sigma_a *= 50; //imu_sigma_a;
+    vio_manager_options.imu_noises.sigma_ab *= 50; //imu_sigma_ab;
+    vio_manager_options.imu_noises.sigma_w_2 *= 25; //imu_sigma_w_2;
+    vio_manager_options.imu_noises.sigma_wb_2 *= 25; //imu_sigma_wb_2;
+    vio_manager_options.imu_noises.sigma_a_2 *= 25; //imu_sigma_a_2;
+    vio_manager_options.imu_noises.sigma_ab_2 *= 25; //imu_sigma_ab_2;
     // NOTE - JAMES ONLY BUMP COVARIANCE (i.e _2 stats) NOT HZ? -> didn't help much in initial tests. need both dialed wayyyy up
 
     // TOYED WITH, EXTRA NOISY BUT WORKS BETTER
@@ -601,22 +623,41 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
 
     /// CAMERA INTRINSICS + EXTRINSICS ///
     int actual_index = 0;
+    std::shared_ptr<ov_core::CamBase> cam_calib_intrinsic;
     for (size_t i = 0; i < MAX_CAMERAS; i++) {
         // Set the camera type
         if (cam_info_vec[i].enable) {
-            if (cam_info_vec[i].is_fisheye)
-                vio_manager_options.camera_fisheye[actual_index] = true;
-            else
-                vio_manager_options.camera_fisheye[actual_index] = false;
+            if (cam_info_vec[i].is_fisheye) {
+                cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
+            }
+            // vio_manager_options.dist_models.push_back("equidistant");
+
+            else {
+                cam_calib_intrinsic = std::make_shared<ov_core::CamRadtan>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
+            }
+            // vio_manager_options.dist_models.push_back("radtan");
+
             // Set the dims, if stereo then this would be the size of 1 image not both
-            vio_manager_options.camera_wh[actual_index] = std::make_pair(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
+            // pulled in from back of intrinsics vector
+
+            // vio_manager_options.camera_wh[actual_index] = std::make_pair(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
             // The camera intrinsics
-            Eigen::Matrix<double, 10, 1> cam_calib_intrinsic = cam_info_vec[i].cam_calib_intrinsic;
+
+            // ov_core::CamBase cam_calib_intrinsic = ov_core::CamBase(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
+            cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
+            // Eigen::Matrix<double, 10, 1> cam_calib_intrinsic = cam_info_vec[i].cam_calib_intrinsic;
             vio_manager_options.camera_intrinsics[actual_index] = cam_calib_intrinsic;
+            fprintf(stderr, "vio manager intrinsics size: %d\n", vio_manager_options.camera_intrinsics.size());
             vio_manager_options.camera_extrinsics[actual_index] = cam_info_vec[i].cam_wrt_imu;
+            last_cam_timestamps.push_back(0);
+
             actual_index++;
         }
     }
+    vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
+    vio_manager_options.init_options.camera_extrinsics = vio_manager_options.camera_extrinsics;
+    vio_manager_options.init_options.num_cameras = actual_index;
+
     vio_manager_options.state_options.num_cameras = actual_index;
     return vio_manager_options;
 }
@@ -647,7 +688,7 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string, int b
 static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
     fprintf(stderr, "WARNING: disconnected from camera server, resetting VIO\n");
 
-    if (en_eval){
+    if (en_eval) {
         ov_eval_data error_packet;
         error_packet.done = 1;
         error_packet.magic_number = VIO_MAGIC_NUMBER;
@@ -669,7 +710,7 @@ static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
 static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
     fprintf(stderr, "WARNING: disconnected from imu server, resetting VIO\n");
 
-    if (en_eval){
+    if (en_eval) {
         ov_eval_data error_packet;
         error_packet.done = 1;
         error_packet.magic_number = VIO_MAGIC_NUMBER;
@@ -691,7 +732,7 @@ static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
 static int create_server_pipes(void) {
     int flags = SERVER_FLAG_EN_CONTROL_PIPE;
 
-    if (!en_eval){
+    if (!en_eval) {
         pipe_info_t info =
             {
                 VIO_SIMPLE_NAME,            // name
@@ -707,16 +748,16 @@ static int create_server_pipes(void) {
         }
     }
 
-    if (en_eval){
+    if (en_eval) {
         pipe_info_t info2 =
-        {
-            SIMPLE_EVAL_NAME,            // name
-            SIMPLE_EVAL_LOCATION,        // location
-            "ov_eval_data_t",               // type
-            PROCESS_NAME,               // server_name
-            VIO_RECOMMENDED_PIPE_SIZE,  // size_bytes
-            0                           // server_pid
-        };
+            {
+                SIMPLE_EVAL_NAME,           // name
+                SIMPLE_EVAL_LOCATION,       // location
+                "ov_eval_data_t",           // type
+                PROCESS_NAME,               // server_name
+                VIO_RECOMMENDED_PIPE_SIZE,  // size_bytes
+                0                           // server_pid
+            };
 
         if (pipe_server_create(SIMPLE_EVAL_CH, info2, flags)) {
             return -1;
@@ -733,12 +774,12 @@ static int create_server_pipes(void) {
 
     pipe_info_t info_ =
         {
-            "open-vins-cam",                   // name
-            "/run/mpa/open-vins-cam",          // location
-            "camera_image_metadata_t",         // type
-            PROCESS_NAME,                      // server_name
-            1024*1024*64,  // size_bytes
-            0                                  // server_pid
+            "open-vins-cam",            // name
+            "/run/mpa/open-vins-cam",   // location
+            "camera_image_metadata_t",  // type
+            PROCESS_NAME,               // server_name
+            1024 * 1024 * 64,           // size_bytes
+            0                           // server_pid
         };
 
     if (pipe_server_create(OVERLAY_OUTPUT_CH, info_, flags)) {
@@ -785,12 +826,12 @@ static int connect_client_pipes(void) {
             }
 
             // if stereo, the right camera is going to use id+1 for its images, so we need to make space for that
-            if (cam_info_vec[i].is_stereo){
+            if (cam_info_vec[i].is_stereo) {
                 actual_index += 1;
                 // also need to skip the NEXT camera in the vector, since it should be the same topic, just a pair
-                i+=1;
+                i += 1;
             }
-            actual_index+=1; // regular bump
+            actual_index += 1;  // regular bump
         }
     }
     return 0;

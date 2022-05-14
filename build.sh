@@ -31,11 +31,11 @@ print_usage(){
 	echo ""
 }
 
-# apply patches
-echo "Applying MAI Patches"
-patch -uN 3rd_party/open_vins/ov_core/src/init/InertialInitializer.cpp -i patches/inertial_initializer_debug_prints.patch
-patch -uN 3rd_party/open_vins/ov_msckf/src/core/VioManager.cpp -i patches/vio_manager_cam_ids.patch
-echo "Done Applying Patches"
+# # apply patches
+# echo "Applying MAI Patches"
+# patch -uN 3rd_party/open_vins/ov_core/src/init/InertialInitializer.cpp -i patches/inertial_initializer_debug_prints.patch
+# patch -uN 3rd_party/open_vins/ov_msckf/src/core/VioManager.cpp -i patches/vio_manager_cam_ids.patch
+# echo "Done Applying Patches"
 
 
 case "$1" in

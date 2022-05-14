@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.3)
 include(GNUInstallDirs)
 
 # Set the compiler flags
-add_compile_options(-Wall -Wextra -Wuninitialized -Wunused-variable -Wdouble-promotion -Wmissing-declarations -Wno-unused-function -Wno-maybe-uninitialized)
+add_compile_options(-Wall -Wextra -Wuninitialized -Wno-unused-variable -Wno-double-promotion -Wno-unused-parameter -Wmissing-declarations -Wno-unused-function -Wno-maybe-uninitialized)
 
 
 # Find critical Packages
@@ -44,8 +44,11 @@ include_directories(
     ${OpenCV_INCLUDE_DIRS}
     ${Boost_INCLUDE_DIRS}
     ${voxl_common_config_INCLUDE_DIRS}
+    /usr/local/include/
+    /usr/include/boost
 )
 
+message(WARNING ${Boost_LIBRARIES}     ${Boost_INCLUDE_DIRS}     ${OpenCV_INCLUDE_DIRS})
 # Add the target libraries
 target_link_libraries(${SERVERNAME}
     pthread
@@ -53,9 +56,14 @@ target_link_libraries(${SERVERNAME}
     ${MODAL_PIPE_LIBRARY}
     ${LIBRC_MATH_LIBRARY}
     ${VOXL_COMMON_CONFIG_LIBRARY}
-    ov_msckf_lib
+    /usr/local/lib/libov_core_lib.so
+    /usr/local/lib/libov_msckf_lib.so
+    /usr/lib64/libceres.a
+
     ${OpenCV_LIBRARIES}
-    ${Boost_LIBRARIES}
+    boost_system
+    boost_date_time
+    boost_filesystem    # ${Boost_LIBRARIES}
 )
 
 # The stuff to install 
