@@ -537,48 +537,48 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
     // save em
     if (write_results_to_csv(error_pos, error_rpe) < 0) fprintf(stderr, "failed to save error\n");
 
-    for (size_t i = 0; i < gt_times_temp.size(); i++){
-        // Convert into the correct frame
-        int64_t timestamp = gt_times_temp.at(i) * 1e9;
-        Eigen::Matrix<double, 7, 1> pose_inGT = gt_poses_temp.at(i);
+    // for (size_t i = 0; i < gt_times_temp.size(); i++){
+    //     // Convert into the correct frame
+    //     int64_t timestamp = gt_times_temp.at(i) * 1e9;
+    //     Eigen::Matrix<double, 7, 1> pose_inGT = gt_poses_temp.at(i);
 
-        // we just need to publish the gt from above, same quat to rot function will be needed
-        vio_data_t gt_packet;
-        gt_packet.timestamp_ns = timestamp;
-        gt_packet.magic_number = VIO_MAGIC_NUMBER;
-        gt_packet.T_imu_wrt_vio[0] = pose_inGT(0);
-        gt_packet.T_imu_wrt_vio[1] = pose_inGT(1);
-        gt_packet.T_imu_wrt_vio[2] = pose_inGT(2);
+    //     // we just need to publish the gt from above, same quat to rot function will be needed
+    //     vio_data_t gt_packet;
+    //     gt_packet.timestamp_ns = timestamp;
+    //     gt_packet.magic_number = VIO_MAGIC_NUMBER;
+    //     gt_packet.T_imu_wrt_vio[0] = pose_inGT(0);
+    //     gt_packet.T_imu_wrt_vio[1] = pose_inGT(1);
+    //     gt_packet.T_imu_wrt_vio[2] = pose_inGT(2);
 
-        Eigen::Matrix<double, 3, 3> r_GT = ov_eval::Math::quat_2_Rot(pose_inGT.block(3, 0, 4, 1));
+    //     Eigen::Matrix<double, 3, 3> r_GT = ov_eval::Math::quat_2_Rot(pose_inGT.block(3, 0, 4, 1));
 
-        for (int j = 0; j < 3; j++) {
-            for (int k = 0; k < 3; k++) {
-                gt_packet.R_imu_to_vio[j][k] = r_GT(j, k);
-            }
-        }
+    //     for (int j = 0; j < 3; j++) {
+    //         for (int k = 0; k < 3; k++) {
+    //             gt_packet.R_imu_to_vio[j][k] = r_GT(j, k);
+    //         }
+    //     }
 
-        Eigen::Matrix<double, 7, 1> pose_ESTinGT = est_poses_aignedtoGT.at(i);
-        Eigen::Matrix<double, 3, 3> r_ESTtoGT = ov_eval::Math::quat_2_Rot(pose_ESTinGT.block(3, 0, 4, 1));
+    //     Eigen::Matrix<double, 7, 1> pose_ESTinGT = est_poses_aignedtoGT.at(i);
+    //     Eigen::Matrix<double, 3, 3> r_ESTtoGT = ov_eval::Math::quat_2_Rot(pose_ESTinGT.block(3, 0, 4, 1));
 
-        // Finally push back
-        vio_data_t aligned_packet;
-        aligned_packet.timestamp_ns = timestamp;
-        aligned_packet.magic_number = VIO_MAGIC_NUMBER;
-        aligned_packet.T_imu_wrt_vio[0] = pose_ESTinGT(0);
-        aligned_packet.T_imu_wrt_vio[1] = pose_ESTinGT(1);
-        aligned_packet.T_imu_wrt_vio[2] = pose_ESTinGT(2);
+    //     // Finally push back
+    //     vio_data_t aligned_packet;
+    //     aligned_packet.timestamp_ns = timestamp;
+    //     aligned_packet.magic_number = VIO_MAGIC_NUMBER;
+    //     aligned_packet.T_imu_wrt_vio[0] = pose_ESTinGT(0);
+    //     aligned_packet.T_imu_wrt_vio[1] = pose_ESTinGT(1);
+    //     aligned_packet.T_imu_wrt_vio[2] = pose_ESTinGT(2);
 
-        for (int j = 0; j < 3; j++) {
-            for (int k = 0; k < 3; k++) {
-                aligned_packet.R_imu_to_vio[j][k] = r_ESTtoGT(j, k);
-            }
-        }
-        pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
-        usleep(25000);
-        pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
-        usleep(25000);
-    }
+    //     for (int j = 0; j < 3; j++) {
+    //         for (int k = 0; k < 3; k++) {
+    //             aligned_packet.R_imu_to_vio[j][k] = r_ESTtoGT(j, k);
+    //         }
+    //     }
+    //     pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
+    //     usleep(25000);
+    //     pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
+    //     usleep(25000);
+    // }
 
     main_running = false;
 
