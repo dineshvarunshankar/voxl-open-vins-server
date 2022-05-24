@@ -9,54 +9,28 @@ NAME="voxl-open-vins-server"
 CONFIG_FILE="/etc/modalai/${NAME}.conf"
 GROUND_TRUTH_SUFFIX="/run/mpa/qvio/data.csv"
 
-## raw noise
-# these are the values settled on after first round of testing
-# SIGMA_W=(1.6968e-03)
-# SIGMA_WB=(1.9393e-04)
-# SIGMA_A=(2.0000e-2)
-# SIGMA_AB=(3.0000e-02)
+## RAW IMU NOISE - LOCKED IN FOR TRACKING ONLY
+SIGMA_W=(0.008484)
+SIGMA_WB=(0.00096965)
+SIGMA_A=(0.01)
+SIGMA_AB=(0.0015)
 
-# what do i want to happen...
-# basically, try changing the covariance only in steps of 5
-# then raw noise only in steps of 5
-# then both
+## COVARIANCES - LOCKED IN FOR TRACKING ONLY
+SIGMA_W_2=(0.000000144)  
+SIGMA_WB_2=(0.00000001)  
+SIGMA_A_2=(0.00002)      
+SIGMA_AB_2=(0.000045)    
 
-# gonna start with feature shit cranked up, then play with it from there
-SIGMA_W=(1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 1.6968e-04 0.000000271 0.000001357 0.000006787 0.000033936 1.6968e-04 0.0008484 0.004242 0.02121 0.10605 0.000000271 0.000001357 0.000006787 0.000033936 1.6968e-04 0.0008484 0.004242 0.02121 0.10605)
-SIGMA_WB=(1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 1.9393e-05 0.000000031 0.000000155 0.000000776 0.000003879 1.9393e-05 0.000096965 0.000484825 0.002424125 0.012120625 0.000000031 0.000000155 0.000000776 0.000003879 1.9393e-05 0.000096965 0.000484825 0.002424125 0.012120625)
-SIGMA_A=(2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 2.0000e-3 0.0000032 0.000016 0.00008 0.0004 2.0000e-3 0.01 0.05 0.25 1.25 0.0000032 0.000016 0.00008 0.0004 2.0000e-3 0.01 0.05 0.25 1.25)
-SIGMA_AB=(3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 3.0000e-03 0.0000048 0.000024 0.00012 0.0006 3.0000e-03 0.015 0.075 0.375 1.875 0.0000048 0.000024 0.00012 0.0006 3.0000e-03 0.015 0.075 0.375 1.875) 
-
-## covariances
-# these are defaults, and proved better after first round of testing
-# SIGMA_W_2=(2.87913024e-08)
-# SIGMA_WB_2=(3.76088449e-10)
-# SIGMA_A_2=(4.0000e-6)
-# SIGMA_AB_2=(9.0000e-06)
-
-SIGMA_W_2=(0 0 0.000000001 0.000000006 2.87913024e-08 0.000000144 0.00000072 0.000003599 0.000017995 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 2.87913024e-08 0 0 0.000000001 0.000000006 2.87913024e-08 0.000000144 0.00000072 0.000003599 0.000017995)
-SIGMA_WB_2=(0 0 0 0 3.76088449e-10 0.00000001 0.00000005 0.00000025 0.00000125 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 3.76088449e-10 0 0 0 0 3.76088449e-10 0.00000001 0.00000005 0.00000025 0.00000125)
-SIGMA_A_2=(0.0000000064 0.000000032 0.00000016 0.0000008 4.0000e-6 0.00002 0.0001 0.0005 0.0025 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 4.0000e-6 0.0000000064 0.000000032 0.00000016 0.0000008 4.0000e-6 0.00002 0.0001 0.0005 0.0025)
-SIGMA_AB_2=(0.000000014 0.000000072 0.00000036 0.0000018 9.0000e-06 0.000045 0.000225 0.001125 0.005625 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 9.0000e-06 0.000000014 0.000000072 0.00000036 0.0000018 9.0000e-06 0.000045 0.000225 0.001125 0.005625)
-
-# NEED to test the other way, decreasing the covariance as well
-
-## features
-# settled on these after first round of testing
-# CHI2_MULT=(1 5 10 15 20 25 30 35 40 1 5 10 15 20 25 30 35 40)
+## features - LOCKED IN FOR TRACKING ONLY
 CHI2_MULT=(20)
-# noise per pixel
-# SIGMA_PIX=(14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14)
 SIGMA_PIX=(14)
-# covariance per pixel
-# SIGMA_PIX_2=(20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20)
 SIGMA_PIX_2=(20)
-FEAT_REP_MSCKF=(0)
-FEAT_REP_SLAM=(0)
+
+## feature reps - TRACKING ONLY likes 00, stereo seemed better with 05
+FEAT_REP_MSCKF=(0 0 0 0 0 0 1 1 1 1 1 1 2 2 2 2 2 2 3 3 3 3 3 3 4 4 4 4 4 4 5 5 5 5 5 5)
+FEAT_REP_SLAM=(0 1 2 3 4 5 0 1 2 3 4 5 0 1 2 3 4 5 0 1 2 3 4 5 0 1 2 3 4 5 0 1 2 3 4 5)
 
 curr_paramlist=()
-
-
 
 ## set most parameters which don't have quotes in json
 set_param () {
@@ -117,37 +91,35 @@ construct_curr_paramlist () {
     # curr_paramlist+=(${SIGMA_AB[$index]})
     # curr_paramlist+=(${SIGMA_AB_2[$index]})
 
-    curr_paramlist+=(${CHI2_MULT[0]})
-    curr_paramlist+=(${SIGMA_PIX[0]})
-    curr_paramlist+=(${SIGMA_PIX_2[0]})
-
-    curr_paramlist+=(${FEAT_REP_MSCKF[0]})
-    curr_paramlist+=(${FEAT_REP_SLAM[0]})
+    # curr_paramlist+=(${CHI2_MULT[0]})
+    # curr_paramlist+=(${SIGMA_PIX[0]})
+    # curr_paramlist+=(${SIGMA_PIX_2[0]})
+# 
+    curr_paramlist+=(${FEAT_REP_MSCKF[$index]})
+    curr_paramlist+=(${FEAT_REP_SLAM[$index]})
 
 }
 
 set_ov_params_from_list () {
     # set_param imu_sigma_w ${curr_paramlist[0]}
-    # set_param imu_sigma_w_2 ${curr_paramlist[1]}
-    # set_param imu_sigma_wb ${curr_paramlist[2]}
-    # set_param imu_sigma_wb_2 ${curr_paramlist[3]}
-    # set_param imu_sigma_a ${curr_paramlist[4]}
-    # set_param imu_sigma_a_2 ${curr_paramlist[5]}
-    # set_param imu_sigma_ab ${curr_paramlist[6]}
-    # set_param imu_sigma_ab_2 ${curr_paramlist[7]}
+    # set_param imu_sigma_w_2 ${curr_paramlist[0]}
+    # set_param imu_sigma_wb ${curr_paramlist[1]}
+    # set_param imu_sigma_wb_2 ${curr_paramlist[1]}
+    # set_param imu_sigma_a ${curr_paramlist[2]}
+    # set_param imu_sigma_a_2 ${curr_paramlist[2]}
+    # set_param imu_sigma_ab ${curr_paramlist[3]}
+    # set_param imu_sigma_ab_2 ${curr_paramlist[3]}
     
-    set_param feat_rep_msckf ${curr_paramlist[3]}
-    set_param feat_rep_slam ${curr_paramlist[4]}
+    set_param feat_rep_msckf ${curr_paramlist[0]}
+    set_param feat_rep_slam ${curr_paramlist[1]}
 
-
-
-    set_param msckf_chi2_multiplier ${curr_paramlist[0]}
-    set_param msckf_sigma_px ${curr_paramlist[1]}
-    set_param msckf_sigma_px_sq ${curr_paramlist[2]}
-
-    set_param slam_chi2_multiplier ${curr_paramlist[0]}
-    set_param slam_sigma_px ${curr_paramlist[1]}
-    set_param slam_sigma_px_sq ${curr_paramlist[2]}
+    # set_param msckf_chi2_multiplier ${curr_paramlist[0]}
+    # set_param msckf_sigma_px ${curr_paramlist[1]}
+    # # set_param msckf_sigma_px_sq ${curr_paramlist[2]}
+# 
+    # # set_param slam_chi2_multiplier ${curr_paramlist[0]}
+    # set_param slam_sigma_px ${curr_paramlist[1]}
+    # set_param slam_sigma_px_sq ${curr_paramlist[2]}
 }
 
 print_usage(){
@@ -165,7 +137,7 @@ fi
 LOG_DIR=$(echo "$1" | tr '[:upper:]' '[:lower:]')
 
 ## get list of all directories within the given dir
-dirlist=(`ls ${LOG_DIR}`)
+dirlist=(`ls ${LOG_DIR} | grep -v csv`)
 dirlist_len=${#dirlist[@]}
 
 ## get some helper vars
@@ -208,20 +180,20 @@ do
         voxl-evaluate-vio -f ${results_csv} -g ${ground_truth} &
         eval_pid=$!
 
-        sleep 0.5
+        sleep 2
 
         # next, fire up the open vins process
         voxl-open-vins-server -e ${LOG_DIR}${dirlist[$i]}/ &
         ov_pid=$!
 
-        sleep 0.5
+        sleep 2
 
 
         # finally, start the log
         voxl-replay -p ${LOG_DIR}${dirlist[$i]}/ &
         replay_pid=$!
 
-        sleep 0.5
+        sleep 2
 
         while ps -p $eval_pid > /dev/null
         do
@@ -234,5 +206,7 @@ do
         sudo kill -9 ${replay_pid}
         sudo kill -9 ${ov_pid}
         sudo kill -9 ${eval_pid}
+
+        sleep 2
     done
 done

@@ -1,6 +1,11 @@
-build
-build64
 .bash_history
-.vscode
-./*.deb
+build
+build32
+build64
 *.ipk
+*.deb
+pkg/IPK
+pkg/DEB
+pkg/data
+*.core
+.vscode

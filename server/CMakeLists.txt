@@ -22,6 +22,7 @@ else()
     # Find all the modal AI packages
     find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
     find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
+    # find_library(MODAL_CV_LIBRARY modalcv REQUIRED HINTS /usr/lib64)
     find_library(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config HINTS /usr/lib64)
     find_library(LIBRC_MATH_LIBRARY NAMES librc_math.so HINTS /usr/lib /usr/lib64 )
 endif()
@@ -55,6 +56,7 @@ target_link_libraries(${SERVERNAME}
     ${MODAL_JSON_LIBRARY}
     ${MODAL_PIPE_LIBRARY}
     ${LIBRC_MATH_LIBRARY}
+    # ${MODAL_CV_LIBRARY}
     ${VOXL_COMMON_CONFIG_LIBRARY}
     /usr/local/lib/libov_core_lib.so
     /usr/local/lib/libov_msckf_lib.so

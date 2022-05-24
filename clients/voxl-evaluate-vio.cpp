@@ -80,8 +80,20 @@ static char pipe_path[MODAL_PIPE_MAX_PATH_LEN] = "/run/mpa/open-vins-eval";
 bool en_debug = false;
 bool en_timing = false;
 bool live_align = false;
+bool en_viz = false;
 
 static int64_t log_start_ns = -1;
+
+static int n_samples_collected = 0;
+
+static int64_t _apps_time_monotonic_ns() {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
+        fprintf(stderr, "ERROR calling clock_gettime\n");
+        return -1;
+    }
+    return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
+}
 
 static void _print_usage(void) {
     printf(
@@ -99,6 +111,8 @@ Alignment type will default to posyaw. Required options are:\n\
 Additional options are:\n\
 -d, --en_debug              print debug messages\n\
 -t, --en_timing             print timing messages\n\
+-z, --en_viz                output the final aligned trajectory alongside the groundtruth once aligned. For use\n\
+                            with voxl-portal to gauge drift. This behavior is default with live align enabled.\n\
 \n");
     return;
 }
@@ -113,11 +127,12 @@ static int _parse_opts(int argc, char* argv[]) {
             {"live_align", no_argument, 0, 'l'},
             {"en_debug", no_argument, 0, 'd'},
             {"en_timing", no_argument, 0, 't'},
+            {"en_viz", no_argument, 0, 'z'},
             {0, 0, 0, 0}};
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "a:cdltf:v:g:", long_options, &option_index);
+        int c = getopt_long(argc, argv, "a:cdlztf:v:g:", long_options, &option_index);
 
         if (c == -1) break;  // Detect the end of the options.
 
@@ -134,6 +149,10 @@ static int _parse_opts(int argc, char* argv[]) {
 
             case 'g':
                 path_to_gt.assign(optarg);
+                break;
+
+            case 'z':
+                en_viz = true;
                 break;
 
             case 'f':
@@ -210,12 +229,6 @@ int write_results_to_csv(ov_eval::Statistics error_pos, std::map<double, std::pa
         return -1;
     }
 
-    // char ch;
-    // if (fscanf(file, "%c", &ch) == EOF) {
-    //     // if the file is empty, lets write out a header
-    //     fprintf(file, "rmse_pos, std_pos, rpe_median_pos_seg0, rpe_median_pos_seg1, rpe_median_pos_seg2, rpe_median_pos_seg3, rpe_median_pos_seg4\n");
-    // }
-    
     // regardless of file contents, throw in a newline and write our header
     fprintf(file, "\nrmse_pos,std_pos,rpe_median_pos_seg0,rpe_median_pos_seg1,rpe_median_pos_seg2,rpe_median_pos_seg3,rpe_median_pos_seg4\n");
 
@@ -446,6 +459,7 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
             break;
         }
         queue_of_packets.push_back(data_array[i]);
+        n_samples_collected++;
     }
 
     if (queue_of_packets.size() % 50 == 0) fprintf(stderr, "collected %d samples\n", (int)queue_of_packets.size());
@@ -537,51 +551,53 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
     // save em
     if (write_results_to_csv(error_pos, error_rpe) < 0) fprintf(stderr, "failed to save error\n");
 
-    // for (size_t i = 0; i < gt_times_temp.size(); i++){
-    //     // Convert into the correct frame
-    //     int64_t timestamp = gt_times_temp.at(i) * 1e9;
-    //     Eigen::Matrix<double, 7, 1> pose_inGT = gt_poses_temp.at(i);
+    // if we want the visualization output, now we chunk through the aligned trajectories and output the lil segments
+    if (en_viz){
+        for (size_t i = 0; i < gt_times_temp.size(); i++){
+            // Convert into the correct frame
+            int64_t timestamp = gt_times_temp.at(i) * 1e9;
+            Eigen::Matrix<double, 7, 1> pose_inGT = gt_poses_temp.at(i);
 
-    //     // we just need to publish the gt from above, same quat to rot function will be needed
-    //     vio_data_t gt_packet;
-    //     gt_packet.timestamp_ns = timestamp;
-    //     gt_packet.magic_number = VIO_MAGIC_NUMBER;
-    //     gt_packet.T_imu_wrt_vio[0] = pose_inGT(0);
-    //     gt_packet.T_imu_wrt_vio[1] = pose_inGT(1);
-    //     gt_packet.T_imu_wrt_vio[2] = pose_inGT(2);
+            // we just need to publish the gt from above, same quat to rot function will be needed
+            vio_data_t gt_packet;
+            gt_packet.timestamp_ns = timestamp;
+            gt_packet.magic_number = VIO_MAGIC_NUMBER;
+            gt_packet.T_imu_wrt_vio[0] = pose_inGT(0);
+            gt_packet.T_imu_wrt_vio[1] = pose_inGT(1);
+            gt_packet.T_imu_wrt_vio[2] = pose_inGT(2);
 
-    //     Eigen::Matrix<double, 3, 3> r_GT = ov_eval::Math::quat_2_Rot(pose_inGT.block(3, 0, 4, 1));
+            Eigen::Matrix<double, 3, 3> r_GT = ov_eval::Math::quat_2_Rot(pose_inGT.block(3, 0, 4, 1));
 
-    //     for (int j = 0; j < 3; j++) {
-    //         for (int k = 0; k < 3; k++) {
-    //             gt_packet.R_imu_to_vio[j][k] = r_GT(j, k);
-    //         }
-    //     }
+            for (int j = 0; j < 3; j++) {
+                for (int k = 0; k < 3; k++) {
+                    gt_packet.R_imu_to_vio[j][k] = r_GT(j, k);
+                }
+            }
 
-    //     Eigen::Matrix<double, 7, 1> pose_ESTinGT = est_poses_aignedtoGT.at(i);
-    //     Eigen::Matrix<double, 3, 3> r_ESTtoGT = ov_eval::Math::quat_2_Rot(pose_ESTinGT.block(3, 0, 4, 1));
+            Eigen::Matrix<double, 7, 1> pose_ESTinGT = est_poses_aignedtoGT.at(i);
+            Eigen::Matrix<double, 3, 3> r_ESTtoGT = ov_eval::Math::quat_2_Rot(pose_ESTinGT.block(3, 0, 4, 1));
 
-    //     // Finally push back
-    //     vio_data_t aligned_packet;
-    //     aligned_packet.timestamp_ns = timestamp;
-    //     aligned_packet.magic_number = VIO_MAGIC_NUMBER;
-    //     aligned_packet.T_imu_wrt_vio[0] = pose_ESTinGT(0);
-    //     aligned_packet.T_imu_wrt_vio[1] = pose_ESTinGT(1);
-    //     aligned_packet.T_imu_wrt_vio[2] = pose_ESTinGT(2);
+            // Finally push back
+            vio_data_t aligned_packet;
+            aligned_packet.timestamp_ns = timestamp;
+            aligned_packet.magic_number = VIO_MAGIC_NUMBER;
+            aligned_packet.T_imu_wrt_vio[0] = pose_ESTinGT(0);
+            aligned_packet.T_imu_wrt_vio[1] = pose_ESTinGT(1);
+            aligned_packet.T_imu_wrt_vio[2] = pose_ESTinGT(2);
 
-    //     for (int j = 0; j < 3; j++) {
-    //         for (int k = 0; k < 3; k++) {
-    //             aligned_packet.R_imu_to_vio[j][k] = r_ESTtoGT(j, k);
-    //         }
-    //     }
-    //     pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
-    //     usleep(25000);
-    //     pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
-    //     usleep(25000);
-    // }
+            for (int j = 0; j < 3; j++) {
+                for (int k = 0; k < 3; k++) {
+                    aligned_packet.R_imu_to_vio[j][k] = r_ESTtoGT(j, k);
+                }
+            }
+            pipe_server_write(GT_OUTPUT_CH, (char*)&gt_packet, sizeof(vio_data_t));
+            usleep(25000);
+            pipe_server_write(ALIGNED_OUTPUT_CH, (char*)&aligned_packet, sizeof(vio_data_t));
+            usleep(25000);
+        }
+    }
 
     main_running = false;
-
     return;
 }
 
@@ -601,6 +617,7 @@ static void _live_align_helper_cb(__attribute__((unused)) int ch, char* data, in
 
     for (int i = 0; i < n_packets; i++) {
         queue_of_packets.push_back(data_array[i]);
+        n_samples_collected++;
     }
 
     if (queue_of_packets.size() < 3) return;
@@ -781,8 +798,21 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    int64_t last_insert_time = _apps_time_monotonic_ns();
+    int prev_samples_collected = n_samples_collected;
+
     // keep going until signal handler sets the running flag to 0
-    while (main_running) usleep(200000);
+    while (main_running){
+        if (n_samples_collected > prev_samples_collected){
+            last_insert_time = _apps_time_monotonic_ns();
+            prev_samples_collected = n_samples_collected;
+        }
+        else if (_apps_time_monotonic_ns() - last_insert_time > 15000000000){
+            fprintf(stderr, "HAVENT RECEIVED A DATA SAMPLE IN OVER 15 SECONDS. EXITING CLEANLY\n");
+            main_running = false;
+        }
+        usleep(200000);
+    }
 
     // all done, signal pipe read threads to stop
     printf("\nclosing and exiting\n");

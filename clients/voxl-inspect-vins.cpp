@@ -49,8 +49,6 @@
 
 static char pipe_path[MODAL_PIPE_MAX_PATH_LEN] = "/run/mpa/open-vins";
 static int en_imu_angular_vel = 0;
-// static int en_accl_gyro_bias = 0;
-static int en_time_shift_s = 0;
 static int en_error_code = 1;
 static int en_n_feature_points = 0;
 static int en_gravity_vector = 0;
@@ -153,8 +151,6 @@ static void _connect_cb(__attribute__((unused)) int ch, __attribute__((unused)) 
 	printf("Roll Pitch Yaw (deg)|");
 	if(en_vel_imu_wrt_vio)		printf("   velocity (m/s)   |");
 	if(en_imu_angular_vel)		printf(" angular_vel(deg/s) |");
-	// if(en_accl_gyro_bias)		printf("  accl bias (m/s2)  |  gyro bias (rad/s) |");
-	if(en_time_shift_s)			printf("timeshift(s)|");
 	if(en_n_feature_points)		printf("features|");
 	if(en_gravity_vector)		printf("gravity_vector(m/s2)|");
 	if(en_extrinsics)			printf(" cam_wrt_imu XYZ(m) , imu_to_cam RPY(deg)|");
@@ -193,13 +189,6 @@ static void _print_data(vio_data_t d)
 	if(en_imu_angular_vel){
 		printf("%6.1f %6.1f %6.1f|", (double)d.imu_angular_vel[0]*RAD_TO_DEG, (double)d.imu_angular_vel[1]*RAD_TO_DEG, (double)d.imu_angular_vel[2]*RAD_TO_DEG);
 	}
-	// if(en_accl_gyro_bias){
-	// 	printf("%6.3f %6.3f %6.3f|", (double)d.accl_bias[0], (double)d.accl_bias[1], (double)d.accl_bias[2]);
-	// 	printf("%6.3f %6.3f %6.3f|", (double)d.gyro_bias[0], (double)d.gyro_bias[1], (double)d.gyro_bias[2]);
-	// }
-	// if(en_time_shift_s){
-	// 	printf(" %9.5f  |", (double)d.imu_cam_time_shift_s);
-	// }
 	if(en_n_feature_points){
 		printf("  %4d  |", d.n_feature_points);
 	}
@@ -282,14 +271,6 @@ static int _parse_opts(int argc, char* argv[])
 			en_imu_angular_vel = 1;
 			break;
 
-		case 'b':
-			// en_accl_gyro_bias = 1;
-			break;
-
-		case 'c':
-			en_time_shift_s = 1;
-			break;
-
 		case 'f':
 			en_n_feature_points = 1;
 			break;
@@ -332,8 +313,6 @@ static int _parse_opts(int argc, char* argv[])
 		case 'z':
 			// print everything, keep this updated with new options!!!
 			en_imu_angular_vel = 1;
-			// en_accl_gyro_bias = 1;
-			en_time_shift_s = 1;
 			en_n_feature_points = 1;
 			en_gravity_vector = 1;
 			en_extrinsics = 1;

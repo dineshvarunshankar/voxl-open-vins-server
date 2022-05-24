@@ -103,7 +103,7 @@ if [ "$MODE" == "DEB" ]; then
 	sudo apt install -y libboost-date-time-dev:arm64
 
 	echo "installing: temporary openvins"
-	sudo apt install -y ./tmp_lib/voxl-open-vins_0.0.1_arm64.deb
+	sudo apt install -y ./tmp_lib/voxl-open-vins*
 
 	sudo apt install -y libgoogle-glog-dev
 

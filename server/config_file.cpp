@@ -203,6 +203,22 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
         // finally, invert it and we're ready to go
         translation = -translation;
     }
+
+    // HACKY GRAVUITY ALIGNMENT TESTING
+    translation[1] *= -1;
+    translation[2] *= -1;
+
+    Eigen::Matrix<double, 3, 3> imu_norm_to_imu_neg =  Eigen::MatrixXd::Identity(3,3);
+
+    imu_norm_to_imu_neg(1, 1) *= -1;
+    imu_norm_to_imu_neg(2, 2) *= -1;
+
+    Eigen::Matrix<double, 3, 3> imu_neg_to_cam = rotation_par_wrt_ch * imu_norm_to_imu_neg;
+
+    quaternion = ov_core::rot_2_quat(imu_neg_to_cam);
+
+    // END HACKY GRAV ALIGNMENT STUFF
+    
     cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
     cam_wrt_imu.block(4, 0, 3, 1) = translation;
     return;
@@ -731,20 +747,20 @@ int config_file_read(void) {
     json_fetch_float_with_default(parent, "odr_hz", &odr_hz, 30);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
-    json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
+    json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 0);
     json_fetch_bool_with_default(parent, "use_rk4_integration", (int *)&use_rk4_integration, 1);
 
     json_fetch_bool_with_default(parent, "cam_to_imu_refinement", (int *)&cam_to_imu_refinement, 1);
-    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 1);
+    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 0);
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
-    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 25);
+    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 45);
     json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 40);
     json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 40);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 0);
-    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
+    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 0);
 
     json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, -0.002);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
@@ -753,22 +769,22 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 2.0);
     json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.5);
 
-    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 1.6968e-04);
-    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.9393e-05);
-    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 2.0000e-3);
-    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 3.0000e-03);
-    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, pow(1.6968e-04, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, pow(1.9393e-05, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, pow(2.0000e-3, 2));
-    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, pow(3.0000e-03, 2));
+    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 0.008484);
+    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 0.00096965);
+    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.01);
+    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.0015);
+    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, 0.000000144);
+    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, 0.00000001);
+    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, 0.00002);
+    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, 0.000045);
 
-    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 5.0);
-    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.0);
-    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 1.0);
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 20.0);
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 14.0);
+    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 20.0);
 
-    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 5.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 1.0);
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 20.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 14.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 20.0);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
@@ -777,20 +793,20 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
-    json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 50.0);
+    json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
 
     json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
-    json_fetch_int_with_default(parent, "num_pts", &num_pts, 45);
-    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
+    json_fetch_int_with_default(parent, "num_pts", &num_pts, 50);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 20);
     json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
-    json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
-    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
-    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
+    json_fetch_int_with_default(parent, "grid_y", &grid_y, 8);
+    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 12);
+    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.80);
     json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
     json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 0);
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
-    json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
+    json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 1);
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
