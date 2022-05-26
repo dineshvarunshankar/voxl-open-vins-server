@@ -55,7 +55,7 @@
 #define SIMPLE_EVAL_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR SIMPLE_EVAL_NAME "/"
 
 #define OVERLAY_OUTPUT_CH (3)
-#define CAM_READ_BUF_SIZE (1024 * 1024 * 64)
+#define CAM_READ_BUF_SIZE (1280 * 800 * 1024)
 
 std::string log_path = "";
 
@@ -356,12 +356,12 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
             vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
             // Unpack the data into opencv image Mats
-            fprintf(stderr, "creating stereo packets\n");
+            // fprintf(stderr, "creating stereo packets\n");
             cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-            fprintf(stderr, "creating stereo packet2\n");
+            // fprintf(stderr, "creating stereo packet2\n");
 
-            cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height)); // * 3 / 2)); I think this is right, images are coming out funky in from replay
-            fprintf(stderr, "created stereo packet2\n");
+            cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
+            // fprintf(stderr, "created stereo packet2\n");
 
             // Create masks for the ingestion. We want both full images to be ingested
             cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
@@ -372,7 +372,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
             vio_manager_data.images.push_back(img2);
             vio_manager_data.masks.push_back(mask2);
 
-            fprintf(stderr, "packet created!\n");
+            // fprintf(stderr, "packet created!\n");
         // }
     }
 
@@ -384,14 +384,14 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         return;
     }
 
-    fprintf(stderr, "pushing packet!\n");
+    // fprintf(stderr, "pushing packet!\n");
 
     // Ingest the data
     std::lock_guard<std::mutex> lg(cam_mutex);
     vio_manager->feed_measurement_camera(vio_manager_data);
     last_cam_timestamps[camera_index] = cam_timestamp_ns;
 
-    fprintf(stderr, "packet pushed!\n");
+    // fprintf(stderr, "packet pushed!\n");
 
 
     return;
@@ -478,6 +478,7 @@ static void _publish_vio_data() {
         }
 
         if (!en_eval){
+            if (open_vins_overlay.empty()) continue;
             // for poor network, portal needs smaller images
             if (open_vins_overlay.cols > 640) {
                 cv::resize(open_vins_overlay, open_vins_overlay, cv::Size(), 0.5, 0.5);
@@ -485,17 +486,18 @@ static void _publish_vio_data() {
 
             camera_image_metadata_t meta_;
             meta_.timestamp_ns = _apps_time_monotonic_ns();
+            meta_.magic_number = CAMERA_MAGIC_NUMBER;
             meta_.width = open_vins_overlay.cols;
             meta_.height = open_vins_overlay.rows;
-            meta_.size_bytes = meta_.width * meta_.height;
-            meta_.stride = meta_.width;
-            meta_.format = IMAGE_FORMAT_RAW8;
+            meta_.size_bytes = meta_.width * meta_.height * 3;
+            meta_.stride = meta_.width * 3;
+            meta_.format = IMAGE_FORMAT_RGB;
 
             // don't need to send out full color images
-            cv::Mat grey_overlay;
-            cv::cvtColor(open_vins_overlay, grey_overlay, cv::COLOR_BGR2GRAY);
+            // cv::Mat grey_overlay;
+            // cv::cvtColor(open_vins_overlay, grey_overlay, cv::COLOR_BGR2GRAY);
 
-            pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)grey_overlay.data);
+            pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)open_vins_overlay.data);
         }
 
         if (en_eval) {
