@@ -548,7 +548,22 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
                seg.second.second.median, (int)seg.second.second.values.size());
     }
 
-    // save em
+    // since the open vins tuner script is dumb, if we write the results to the csv then this is considered a successful test
+    // thus, we need to make sure they are actually good results before we save
+    // metric here is ensuring we made it far enough through a given log, so the relative pose error for segments 0-2 MUST be filled
+    // the last two can be ignored for now
+
+    for (const auto& seg : error_rpe) {
+        static int seg_ind = 0;
+        if (seg_ind < 3 && seg.second.second.median == 0.0){
+            fprintf(stderr, "FATAL: data is shit\n");
+            main_running = false;
+            return;
+        }
+        seg_ind++;
+    }
+
+    // otherwise, save em
     if (write_results_to_csv(error_pos, error_rpe) < 0) fprintf(stderr, "failed to save error\n");
 
     // if we want the visualization output, now we chunk through the aligned trajectories and output the lil segments

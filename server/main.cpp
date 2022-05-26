@@ -280,10 +280,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
             vio_manager->feed_measurement_camera(child_cam_data);
             last_cam_timestamps[child_cam_data.sensor_ids[0]] = cam_timestamp_ns; // will need to be dynamic
         }
-        // else {
-            // fprintf(stderr, "MISSING CHILD\n");
-            // return;
-        // }
+
         // Unpack the data into an opencv image Mat
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
         // Create a mask for the ingestion.  We want the full image to be ingested
@@ -292,7 +289,6 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         vio_manager_data.masks.push_back(mask);
     } else if (meta.format == IMAGE_FORMAT_STEREO_RAW8) {
         // if this struct is filled with more than 1 camera, we're doing multicam
-        // thus, everything else 
         if (last_cam_timestamps.size() > 1){
             std::lock_guard<std::mutex> lg(cam_mutex);
             child_cam_data = {}; // reset
@@ -315,24 +311,69 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
             child_cam_data.masks.push_back(mask2);
         }
         else {
+            vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
+            // Unpack the data into opencv image Mats
+            cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
+            cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height));
+
+            // Create masks for the ingestion. We want both full images to be ingested
+            cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+            cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
         }
+    } else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
+        // for now, we are limited to ONLY a single pair of ov9782 cameras in a system
+        // so, if we have this format then it is known that it is the master
 
-        vio_manager_data.timestamp = cam_timestamp_ns / 1000000000.0;
-        vio_manager_data.sensor_ids.push_back(camera_index + 1);
+        // if this struct is filled with more than 1 camera, we're doing multicam
+        // if (last_cam_timestamps.size() > 1){
+        //     std::lock_guard<std::mutex> lg(cam_mutex);
+        //     child_cam_data = {}; // reset
+        //     // stereo pairs take camera_index as l_cam index, r_cam index is actual_index+1
+        //     child_cam_data.timestamp = cam_timestamp_ns / 1000000000.0;
+        //     child_cam_data.sensor_ids.push_back(camera_index);
+        //     child_cam_data.sensor_ids.push_back(camera_index + 1);
 
-        // Unpack the data into opencv image Mats
-        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height));
+        //     // Unpack the data into opencv image Mats
+        //     cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
+        //     cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2));
 
-        // Create masks for the ingestion. We want both full images to be ingested
-        cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-        cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        //     // Create masks for the ingestion. We want both full images to be ingested
+        //     cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        //     cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
-        vio_manager_data.images.push_back(img);
-        vio_manager_data.masks.push_back(mask);
-        vio_manager_data.images.push_back(img2);
-        vio_manager_data.masks.push_back(mask2);
+        //     child_cam_data.images.push_back(img);
+        //     child_cam_data.masks.push_back(mask);
+        //     child_cam_data.images.push_back(img2);
+        //     child_cam_data.masks.push_back(mask2);
+        // }
+        // else {
+            vio_manager_data.sensor_ids.push_back(camera_index + 1);
+
+            // Unpack the data into opencv image Mats
+            fprintf(stderr, "creating stereo packets\n");
+            cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
+            fprintf(stderr, "creating stereo packet2\n");
+
+            cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height)); // * 3 / 2)); I think this is right, images are coming out funky in from replay
+            fprintf(stderr, "created stereo packet2\n");
+
+            // Create masks for the ingestion. We want both full images to be ingested
+            cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+            cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
+
+            fprintf(stderr, "packet created!\n");
+        // }
     }
 
     if (master_cam_ts == 0 && camera_index == 0){
@@ -343,10 +384,15 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         return;
     }
 
+    fprintf(stderr, "pushing packet!\n");
+
     // Ingest the data
     std::lock_guard<std::mutex> lg(cam_mutex);
     vio_manager->feed_measurement_camera(vio_manager_data);
     last_cam_timestamps[camera_index] = cam_timestamp_ns;
+
+    fprintf(stderr, "packet pushed!\n");
+
 
     return;
 }
