@@ -31,7 +31,8 @@ void Loader::load_data(std::string path_traj, std::vector<double> &times, std::v
   if (!file.is_open()) {
     fprintf(stderr, "[LOAD]: Unable to open trajectory file...\n");
     fprintf(stderr, "[LOAD]: %s\n", path_traj.c_str());
-    std::exit(EXIT_FAILURE);
+    // std::exit(EXIT_FAILURE);
+    return;
   }
 
   // Loop through each line of this file
@@ -115,7 +116,8 @@ int64_t Loader::load_data_csv(std::string path_traj, std::vector<double> &times,
   if (!file.is_open()) {
     fprintf(stderr, "[LOAD]: Unable to open trajectory file...\n");
     fprintf(stderr, "[LOAD]: %s\n", path_traj.c_str());
-    std::exit(EXIT_FAILURE);
+    // std::exit(EXIT_FAILURE);
+    return 0;
   }
 
   // Loop through each line of this file

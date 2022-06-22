@@ -296,6 +296,8 @@ int load_extrinsics_file() {
     // if we are parsing a stereo pair, there is a bit more logic that needs to happen
     bool needs_wonky_stereo_setup = false;
 
+    bool needs_starling_stereo_setup = false;
+
     for (int i = 0; i < MAX_CAMERAS; i++) {
         // fprintf(stderr, "cam %d enabled: %d\n", i, cam_info_vec[i].enable);
         if (cam_info_vec[i].enable) {
@@ -305,15 +307,20 @@ int load_extrinsics_file() {
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
             if (strstr(ext_name, "stereo") != NULL) {
-                use_stereo = true;
-                strcat(ext_name, "_l");
+                // use_stereo = true;
+                // strcat(ext_name, "_l");
                 // here we go
-                needs_wonky_stereo_setup = true;
+                // needs_wonky_stereo_setup = true;
+
+                // hardcoding for starling here:
+                strcat(ext_name, "_lower");
+                needs_starling_stereo_setup = true;
             }
             // this is the relation open vins wants, i.e. imu to cam
-            if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
+            if (!needs_starling_stereo_setup && !vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
                 needs_inverse_transform = false;
-            } else if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
+                fprintf(stderr, "no inverse transform required\n");
+            } else if (!needs_starling_stereo_setup && !vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 // relation is from cam to imu, need relation from imu to cam
                 fprintf(stderr, "creating inverse transform\n");
                 needs_inverse_transform = true;
@@ -329,6 +336,7 @@ int load_extrinsics_file() {
                 // 6. push these badboys into our camera config block
 
                 rc_tf_t imu_to_body, body_to_imu, cam_l_to_body, cam_l_to_imu, imu_to_cam_l, imu_to_cam_r, cam_l_to_cam_r, cam_r_to_cam_l, cam_r_to_imu;
+
                 // grab the imu -> body relation. if unparseable, fail nicely
                 if (vcc_find_extrinsic_in_array(EXTRINS_BODY, imu_name, t, n_extrinsics, &extrins_holder)) goto failure;
 
@@ -343,7 +351,9 @@ int load_extrinsics_file() {
                 rc_tf_invert(&imu_to_body, &body_to_imu);
 
                 // grab the cam -> body relation. if unparseable, fail nicely
-                if (vcc_find_extrinsic_in_array(EXTRINS_BODY, ext_name, t, n_extrinsics, &extrins_holder)) goto failure;
+                if (vcc_find_extrinsic_in_array(EXTRINS_BODY, ext_name, t, n_extrinsics, &extrins_holder)){
+                    fprintf(stderr, "no body to %s???\n", ext_name);
+                }
 
                 for (j = 0; j < 3; j++) {
                     cam_l_to_body.d[j][3] = extrins_holder.T_child_wrt_parent[j];
@@ -377,6 +387,48 @@ int load_extrinsics_file() {
                 create_ov_extrinsics(imu_to_cam_r, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
 
                 continue;
+            }
+            else if (needs_starling_stereo_setup){
+                fprintf(stderr, "SETTING UP STARLING\n");
+                // need to grab imu->both cameras from the extrinsics, but use the R/T _to_parent
+                rc_tf_t imu_to_cam_bottom, imu_to_cam_top;
+                int j, k;
+
+                // grab the imu -> bottom camera extrinsics relation
+                if (vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) goto failure;
+
+                for (j = 0; j < 3; j++) {
+                    imu_to_cam_bottom.d[j][3] = extrins_holder.T_child_wrt_parent[j];
+                    for (k = 0; k < 3; k++) {
+                        imu_to_cam_bottom.d[j][k] = extrins_holder.R_child_to_parent[j][k];
+                    }
+                }
+
+                memset(ext_name, '\0', CHAR_BUF_SIZE);
+                strcpy(ext_name, cam_info_vec[i].name);
+                strcat(ext_name, "_upper");
+
+                // grab the imu -> top camera extrinsics relation
+                if (vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) goto failure;
+
+                for (j = 0; j < 3; j++) {
+                    imu_to_cam_top.d[j][3] = extrins_holder.T_child_wrt_parent[j];
+                    for (k = 0; k < 3; k++) {
+                        imu_to_cam_top.d[j][k] = extrins_holder.R_child_to_parent[j][k];
+                    }
+                }
+
+                needs_inverse_transform = true;
+
+                // now we have: imu_to_ BOTH CAMERAS
+                create_ov_extrinsics(imu_to_cam_bottom, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
+                // before we iterate to the next camera, flag this one as cam0 in stereo pair
+                // cam_info_vec[i].is_stereo = true;
+                // i += 1;
+                // create_ov_extrinsics(imu_to_cam_top, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
+
+                continue;
+
             }
             else {
             failure:

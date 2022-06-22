@@ -121,99 +121,36 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     if (data_array == NULL) return;
     if (n_packets <= 0) return;
 
-    is_imu_connected = 1;
-
     global_error_codes &= ~ERROR_CODE_IMU_MISSING;
     if (!is_cam_connected) return;
     if (!vio_manager) return;
-    if (!main_running) return;
-
-    // int64_t last_cam_ts = 0;
-    // {
-    //     std::lock_guard<std::mutex> lg(vio_manager_mutex);
-
-    //     last_cam_ts = *std::max_element(last_cam_timestamps.begin(), last_cam_timestamps.end());
-    // }
-    // if (!holding_packets.empty()){
-    //     int index_removed_to = -1;
-    //     for (int i = 0; i < holding_packets.size(); i++){
-    //         if (holding_packets[i].timestamp_ns <= last_cam_ts){
-    //             ov_core::ImuData vio_manager_data;
-    //             vio_manager_data.timestamp = holding_packets[i].timestamp_ns / 1000000000.0;  // (seconds)
-
-    //             // next test: send in our imu data with z flipped, see if ov is happy
-    //             vio_manager_data.wm(0, 0) = holding_packets[i].gyro_rad[0];
-    //             vio_manager_data.wm(1, 0) = holding_packets[i].gyro_rad[1];
-    //             // vio_manager_data.wm(2, 0) = holding_packets[i].gyro_rad[2];
-
-    //             vio_manager_data.wm(2, 0) = -holding_packets[i].gyro_rad[2];
-
-    //             vio_manager_data.am(0, 0) = holding_packets[i].accl_ms2[0];
-    //             vio_manager_data.am(1, 0) = holding_packets[i].accl_ms2[1];
-    //             // vio_manager_data.am(2, 0) = holding_packets[i].accl_ms2[2];
-
-    //             vio_manager_data.am(2, 0) = -holding_packets[i].accl_ms2[2];
-
-    //             rc_ov_t imu_buf_packet = {holding_packets[i].gyro_rad[0], holding_packets[i].gyro_rad[1], holding_packets[i].gyro_rad[2], holding_packets[i].timestamp_ns};
-    //             // rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
-
-    //             std::lock_guard<std::mutex> lg(vio_manager_mutex);
-    //             vio_manager->feed_measurement_imu(vio_manager_data);
-
-    //             last_imu_timestamp_ns = holding_packets[i].timestamp_ns;
-    //             index_removed_to++;
-    //         }
-    //         else {
-    //             if (index_removed_to >= 0){
-    //                 holding_packets.erase(holding_packets.begin(), holding_packets.end());
-    //             }
-    //             break;
-    //         }
-    //     }
-    // }
-
-    // if (data_array[n_packets-1].timestamp_ns > last_cam_ts){
-    //     // add it to our queue and return 
-    //     for (int i = 0; < i < data[i])
-    //     holding_packets.push_back(data_array[i]);
-    // }
-
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
+    if (!main_running) return; 
 
     for (int i = 0; i < n_packets; i++) {
-        // if (data_array[i].timestamp_ns > last_cam_ts){
-        //     holding_packets.push_back(data_array[i]);
-        //     continue;
-        // }
-
         // Create the data struct that we will use for ingesting data into the vio manager
         ov_core::ImuData vio_manager_data;
         vio_manager_data.timestamp = data_array[i].timestamp_ns / 1000000000.0;  // (seconds)
 
-        // next test: send in our imu data with z flipped, see if ov is happy
+        //send in our imu data with z flipped
         vio_manager_data.wm(0, 0) = data_array[i].gyro_rad[0];
-        // vio_manager_data.wm(1, 0) = data_array[i].gyro_rad[1];
-        // vio_manager_data.wm(2, 0) = data_array[i].gyro_rad[2];
-
         vio_manager_data.wm(1, 0) = -data_array[i].gyro_rad[1];
         vio_manager_data.wm(2, 0) = -data_array[i].gyro_rad[2];
 
         vio_manager_data.am(0, 0) = data_array[i].accl_ms2[0];
-        // vio_manager_data.am(1, 0) = data_array[i].accl_ms2[1];
-        // vio_manager_data.am(2, 0) = data_array[i].accl_ms2[2];
-
         vio_manager_data.am(1, 0) = -data_array[i].accl_ms2[1];
         vio_manager_data.am(2, 0) = -data_array[i].accl_ms2[2];
 
         // rc_ov_t imu_buf_packet = {data_array[i].gyro_rad[0], data_array[i].gyro_rad[1], data_array[i].gyro_rad[2], data_array[i].timestamp_ns};
         // rc_ov_ringbuf_insert(&imu_buf, &imu_buf_packet);
 
-        // std::lock_guard<std::mutex> lg(vio_manager_mutex);
         vio_manager->feed_measurement_imu(vio_manager_data);
 
         last_imu_timestamp_ns = data_array[i].timestamp_ns;
-        // fprintf(stderr, "imu feed\n");
     }
+
+    // fprintf(stderr, "imu fed\n");
+    is_imu_connected = 1;
+
     return;
 }
 
@@ -224,7 +161,6 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 
     int camera_index = ch - CAMERA_CH_START_OFFSET;
 
-    // fprintf(stderr, "cam index: %d\n", camera_index);
     if (!vio_manager) return;
     if (!main_running) return;
 
@@ -275,16 +211,18 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     vio_manager_data.sensor_ids.push_back(camera_index);
 
     if (meta.format == IMAGE_FORMAT_RAW8) {
-        if (!child_cam_data.sensor_ids.empty()){
-            std::lock_guard<std::mutex> lg(cam_mutex);
-            vio_manager->feed_measurement_camera(child_cam_data);
-            last_cam_timestamps[child_cam_data.sensor_ids[0]] = cam_timestamp_ns; // will need to be dynamic
-        }
+        // if (!child_cam_data.sensor_ids.empty()){
+        //     std::lock_guard<std::mutex> lg(cam_mutex);
+        //     vio_manager->feed_measurement_camera(child_cam_data);
+        //     last_cam_timestamps[child_cam_data.sensor_ids[0]] = cam_timestamp_ns; // will need to be dynamic
+        // }
 
         // Unpack the data into an opencv image Mat
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
         // Create a mask for the ingestion.  We want the full image to be ingested
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        // fprintf(stderr, "packet created!\n");
+
         vio_manager_data.images.push_back(img);
         vio_manager_data.masks.push_back(mask);
     } else if (meta.format == IMAGE_FORMAT_STEREO_RAW8) {
@@ -353,31 +291,31 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         //     child_cam_data.masks.push_back(mask2);
         // }
         // else {
-            vio_manager_data.sensor_ids.push_back(camera_index + 1);
+            // vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
             // Unpack the data into opencv image Mats
             // fprintf(stderr, "creating stereo packets\n");
             cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
             // fprintf(stderr, "creating stereo packet2\n");
 
-            cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
+            // cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
             // fprintf(stderr, "created stereo packet2\n");
 
             // Create masks for the ingestion. We want both full images to be ingested
             cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-            cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+            // cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
             vio_manager_data.images.push_back(img);
             vio_manager_data.masks.push_back(mask);
-            vio_manager_data.images.push_back(img2);
-            vio_manager_data.masks.push_back(mask2);
+            // vio_manager_data.images.push_back(img2);
+            // vio_manager_data.masks.push_back(mask2);
 
-            // fprintf(stderr, "packet created!\n");
         // }
     }
 
     if (master_cam_ts == 0 && camera_index == 0){
         master_cam_ts = cam_timestamp_ns;
+        // fprintf(stderr, "mast ts set \n");
     }
     else if (master_cam_ts == 0){
         fprintf(stderr, "master frame not inserted yet\n");
@@ -388,7 +326,14 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 
     // Ingest the data
     std::lock_guard<std::mutex> lg(cam_mutex);
+    // fprintf(stderr, "cam mutex locked!\n");
+
+    std::lock_guard<std::mutex> lg2(vio_manager_mutex);
+    // fprintf(stderr, "vio mutex locked!\n");
+
     vio_manager->feed_measurement_camera(vio_manager_data);
+    // fprintf(stderr, "vio ferd locked!\n");
+
     last_cam_timestamps[camera_index] = cam_timestamp_ns;
 
     // fprintf(stderr, "packet pushed!\n");
@@ -410,6 +355,7 @@ static void _publish_vio_data() {
         if (next_time < current_time) {
             fprintf(stderr, "WARNING: output data thread fell behind\n");
             next_time = current_time + (int64_t)(1000000000.0f / odr_hz);
+            // continue;
         }
         _nanosleep(next_time - current_time);
 
@@ -492,10 +438,6 @@ static void _publish_vio_data() {
             meta_.size_bytes = meta_.width * meta_.height * 3;
             meta_.stride = meta_.width * 3;
             meta_.format = IMAGE_FORMAT_RGB;
-
-            // don't need to send out full color images
-            // cv::Mat grey_overlay;
-            // cv::cvtColor(open_vins_overlay, grey_overlay, cv::COLOR_BGR2GRAY);
 
             pipe_server_write_camera_frame(OVERLAY_OUTPUT_CH, meta_, (char*)open_vins_overlay.data);
         }
@@ -753,16 +695,29 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_options.gravity_mag = gravity_mag;
     vio_manager_options.init_options.init_window_time = init_window_time;
     vio_manager_options.init_options.init_imu_thresh = init_imu_thresh;
+    vio_manager_options.init_options.init_dyn_num_pose = max_clone_size;
 
     /// IMU NOISE OPTIONS ///
-    vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
+    // vio_manager_options.imu_noises.sigma_w = .00028    ;
+    // vio_manager_options.imu_noises.sigma_wb = 3.0000e-5;
+    // vio_manager_options.imu_noises.sigma_a = .00350    ;
+    // vio_manager_options.imu_noises.sigma_ab = 1.9393e-03;
+    
+    vio_manager_options.imu_noises.sigma_w =  imu_sigma_w;
     vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
-    vio_manager_options.imu_noises.sigma_a = imu_sigma_a;
+    vio_manager_options.imu_noises.sigma_a =  imu_sigma_a;
     vio_manager_options.imu_noises.sigma_ab = imu_sigma_ab;
-    vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
-    vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
-    vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
-    vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
+
+    // vio_manager_options.imu_noises.sigma_w  *= 5;
+    // vio_manager_options.imu_noises.sigma_wb *= 5;
+    // vio_manager_options.imu_noises.sigma_a  *= 5;
+    // vio_manager_options.imu_noises.sigma_ab *= 5;
+
+
+    // vio_manager_options.imu_noises.sigma_w_2 = imu_sigma_w_2;
+    // vio_manager_options.imu_noises.sigma_wb_2 = imu_sigma_wb_2;
+    // vio_manager_options.imu_noises.sigma_a_2 = imu_sigma_a_2;
+    // vio_manager_options.imu_noises.sigma_ab_2 = imu_sigma_ab_2;
 
     // vio_manager_options.imu_noises.sigma_w *= 20; //imu_sigma_w;
     // vio_manager_options.imu_noises.sigma_wb *= 20; //imu_sigma_wb;
@@ -775,14 +730,14 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     // NOTE - JAMES ONLY BUMP COVARIANCE (i.e _2 stats) NOT HZ? -> didn't help much in initial tests. need both dialed wayyyy up
 
     // TOYED WITH, EXTRA NOISY BUT WORKS BETTER
-    // vio_manager_options.imu_noises.sigma_w = 1.6968e-02;
-    // vio_manager_options.imu_noises.sigma_wb = 1.9393e-03;
-    // vio_manager_options.imu_noises.sigma_a = 2.0000e-1;
-    // vio_manager_options.imu_noises.sigma_ab = 3.0000e-01;
-    // vio_manager_options.imu_noises.sigma_w_2 = pow(1.6968e-02, 2);
-    // vio_manager_options.imu_noises.sigma_wb_2 = pow(1.9393e-03, 2);
-    // vio_manager_options.imu_noises.sigma_a_2 = pow(2.0000e-1, 2);
-    // vio_manager_options.imu_noises.sigma_ab_2 = pow(3.0000e-01, 2);
+    // vio_manager_options.imu_noises.sigma_w =  0;
+    // vio_manager_options.imu_noises.sigma_wb = 0;
+    // vio_manager_options.imu_noises.sigma_a =  0;
+    // vio_manager_options.imu_noises.sigma_ab = 0;
+    vio_manager_options.imu_noises.sigma_w_2 =  std::pow(vio_manager_options.imu_noises.sigma_w, 2);
+    vio_manager_options.imu_noises.sigma_wb_2 = std::pow(vio_manager_options.imu_noises.sigma_wb, 2);
+    vio_manager_options.imu_noises.sigma_a_2 =  std::pow(vio_manager_options.imu_noises.sigma_a, 2);
+    vio_manager_options.imu_noises.sigma_ab_2 = std::pow(vio_manager_options.imu_noises.sigma_ab, 2);
 
     /// FEATURE OPTIONS - all use the same struct, can be dif per feature set ///
     // msckf
@@ -825,6 +780,20 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.downsample_cameras = downsample_cams;
     vio_manager_options.use_multi_threading = use_multithreading;
 
+    /// FEATURE INITIALIZER OPTIONS ///
+    vio_manager_options.featinit_options.triangulate_1d = false;
+    vio_manager_options.featinit_options.refine_features = true;
+    vio_manager_options.featinit_options.max_runs = 3;
+    vio_manager_options.featinit_options.init_lamda = 1e-3;
+    vio_manager_options.featinit_options.max_lamda = 1e6;
+    vio_manager_options.featinit_options.min_dx = 1e-6;
+    vio_manager_options.featinit_options.min_dcost = 1e-6;
+    vio_manager_options.featinit_options.lam_mult = 10;
+    vio_manager_options.featinit_options.min_dist = 0.1;
+    vio_manager_options.featinit_options.max_dist = 10;
+    vio_manager_options.featinit_options.max_baseline = 10;
+    vio_manager_options.featinit_options.max_cond_number = 1000;
+
     /// CAMERA INTRINSICS + EXTRINSICS ///
     int actual_index = 0;
     std::shared_ptr<ov_core::CamBase> cam_calib_intrinsic;
@@ -846,13 +815,14 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
             last_cam_timestamps.push_back(0);
 
             actual_index++;
+            break;
         }
     }
     vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
     vio_manager_options.init_options.camera_extrinsics = vio_manager_options.camera_extrinsics;
     // this needs to be set in both locations, for some reason the updaters address both in different stages
-    vio_manager_options.init_options.num_cameras = actual_index;
-    vio_manager_options.state_options.num_cameras = actual_index;
+    vio_manager_options.init_options.num_cameras =  1; //actual_index;
+    vio_manager_options.state_options.num_cameras = 1; //actual_index;
     return vio_manager_options;
 }
 
@@ -1056,6 +1026,8 @@ int main(int argc, char* argv[]) {
 
     rc_ov_ringbuf_alloc(&imu_buf, 1000);
 
+    pipe_set_process_priority(99);
+
     // Set the main running flag to 1 to indicate that we are running
     main_running = 1;
 
@@ -1065,6 +1037,29 @@ int main(int argc, char* argv[]) {
      * make our own safely.
      */
     make_pid_file(PROCESS_NAME);
+
+    cpu_set_t cpuset;
+
+    /* Set affinity mask to include CPUs 7 only */
+    CPU_ZERO(&cpuset);
+    CPU_SET(7, &cpuset);
+    CPU_SET(6, &cpuset);
+    CPU_SET(5, &cpuset);
+
+    if(sched_setaffinity(0, sizeof(cpu_set_t), &cpuset)){
+        perror("sched_setaffinity");
+    }
+
+    /* Check the actual affinity mask assigned to the thread */
+    if(sched_getaffinity(0, sizeof(cpu_set_t), &cpuset)){
+        perror("sched_getaffinity_np");
+    }
+    printf("voxl-open-vins-server is now locked to the following cores:");
+    for (int j = 0; j < CPU_SETSIZE; j++){
+        if(CPU_ISSET(j, &cpuset)) printf(" %d", j);
+    }
+    printf("\n");
+
 
     // Load the config files
     printf("Loading our own config file\n");

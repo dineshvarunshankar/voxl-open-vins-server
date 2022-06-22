@@ -167,7 +167,8 @@ static void _connect_cb(__attribute__((unused)) int ch, __attribute__((unused)) 
 // called whenever we disconnect from the server
 static void _disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context)
 {
-	fprintf(stderr, "\nvoxl-qvio-server disconnected\n");
+	fprintf(stderr, "\nvoxl-open-vins-server disconnected\n");
+	if(!en_newline) printf("\r" CLEAR_LINE);
 	return;
 }
 

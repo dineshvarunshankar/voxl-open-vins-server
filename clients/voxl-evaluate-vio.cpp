@@ -81,6 +81,7 @@ bool en_debug = false;
 bool en_timing = false;
 bool live_align = false;
 bool en_viz = false;
+bool en_simple_eval = false;
 
 static int64_t log_start_ns = -1;
 
@@ -132,7 +133,7 @@ static int _parse_opts(int argc, char* argv[]) {
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "a:cdlztf:v:g:", long_options, &option_index);
+        int c = getopt_long(argc, argv, "a:cdlzitf:v:g:", long_options, &option_index);
 
         if (c == -1) break;  // Detect the end of the options.
 
@@ -149,6 +150,10 @@ static int _parse_opts(int argc, char* argv[]) {
 
             case 'g':
                 path_to_gt.assign(optarg);
+                break;
+
+            case 'i':
+                en_simple_eval = true;
                 break;
 
             case 'z':
@@ -467,6 +472,29 @@ static void _load_and_align_helper_cb(__attribute__((unused)) int ch, char* data
     if (!ready_to_process || queue_of_packets.size() < 3) return;
 
     fprintf(stderr, "Log complete. Starting to perform calculations.\n");
+
+    if (en_simple_eval){
+        if (file_to_log == "") return;
+        FILE* file = fopen(file_to_log.c_str(), "a");
+        if (!file) {
+            fprintf(stderr, "Failed to open log file %s.\n", file_to_log.c_str());
+            return;
+        }
+
+        // regardless of file contents, throw in a newline and write our header
+        fprintf(file, "\nfinal poses:\n");
+        fprintf(file, "packet index, x, y, z\n");
+
+
+        // simply log final N packets
+        for (int i = queue_of_packets.size() - 25; i < (int)queue_of_packets.size(); i++) {
+            fprintf(file, "%d,%6.5f,%6.5f,%6.5f\n", i, queue_of_packets[i].T_imu_wrt_vio[0], queue_of_packets[i].T_imu_wrt_vio[1], queue_of_packets[i].T_imu_wrt_vio[2]);
+        }
+
+        fprintf(file, "\n");
+        fclose(file);
+        std::exit(0);
+    }
 
     std::vector<double> times_temp;
     std::vector<Eigen::Matrix<double, 7, 1>> poses_temp;

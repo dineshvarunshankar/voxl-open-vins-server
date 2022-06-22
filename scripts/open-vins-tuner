@@ -10,16 +10,19 @@ CONFIG_FILE="/etc/modalai/${NAME}.conf"
 GROUND_TRUTH_SUFFIX="/run/mpa/qvio/data.csv"
 
 ## RAW IMU NOISE - LOCKED IN FOR TRACKING ONLY
-SIGMA_W=(0.008484)
-SIGMA_WB=(0.00096965)
-SIGMA_A=(0.01)
-SIGMA_AB=(0.0015)
+# SIGMA_W=(0.008484)
+# SIGMA_WB=(0.00096965)
+# SIGMA_A=(0.01)
+# SIGMA_AB=(0.0015)
 
-## COVARIANCES - LOCKED IN FOR TRACKING ONLY
-SIGMA_W_2=(0.000000144)  
-SIGMA_WB_2=(0.00000001)  
-SIGMA_A_2=(0.00002)      
-SIGMA_AB_2=(0.000045)    
+SIGMA_WB=(0 0.15 0.3 0.015 0.03 0.0015 0.003 0.00015 0.0003 0.000015 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003 0.00003)
+SIGMA_AB=(0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0.00019 0 0.58 0.19 0.058 0.019 0.0058 0.0019 0.00058 0.00019 0.000058 0.000019)
+
+## COVARIANCES - LOCKED IN FOR TRACKING ONLYs
+SIGMA_W_2=(0.000000144)
+SIGMA_WB_2=(0.00000001)
+SIGMA_A_2=(0.00002)    
+SIGMA_AB_2=(0.000045)  
 
 ## features - LOCKED IN FOR TRACKING ONLY
 CHI2_MULT=(15)
@@ -115,41 +118,41 @@ construct_curr_paramlist () {
 
     # curr_paramlist+=(${SIGMA_W[$param_index]})
     # curr_paramlist+=(${SIGMA_W_2[$param_index]})
-    # curr_paramlist+=(${SIGMA_WB[$param_index]})
+    curr_paramlist+=(${SIGMA_WB[$param_index]})
     # curr_paramlist+=(${SIGMA_WB_2[$param_index]})
     # curr_paramlist+=(${SIGMA_A[$param_index]})
     # curr_paramlist+=(${SIGMA_A_2[$param_index]})
-    # curr_paramlist+=(${SIGMA_AB[$param_index]})
+    curr_paramlist+=(${SIGMA_AB[$param_index]})
     # curr_paramlist+=(${SIGMA_AB_2[$param_index]})
 
     # curr_paramlist+=(${CHI2_MULT[0]})
     # curr_paramlist+=(${SIGMA_PIX[0]})
     # curr_paramlist+=(${SIGMA_PIX_2[0]})
 
-    curr_paramlist+=(${FEAT_REP_MSCKF[$param_index]})
-    curr_paramlist+=(${FEAT_REP_SLAM[$param_index]})
+    # curr_paramlist+=(${FEAT_REP_MSCKF[$param_index]})
+    # curr_paramlist+=(${FEAT_REP_SLAM[$param_index]})
 
-    curr_paramlist+=(${CAM0_OPT[$cam_index]})
-    curr_paramlist+=(${CAM1_OPT[$cam_index]})
-    curr_paramlist+=(${STEREO_OPT[$cam_index]})
+    # curr_paramlist+=(${CAM0_OPT[$cam_index]})
+    # curr_paramlist+=(${CAM1_OPT[$cam_index]})
+    # curr_paramlist+=(${STEREO_OPT[$cam_index]})
 }
 
 set_ov_params_from_list () {
     # set_param imu_sigma_w ${curr_paramlist[0]}
     # set_param imu_sigma_w_2 ${curr_paramlist[0]}
-    # set_param imu_sigma_wb ${curr_paramlist[1]}
+    set_param imu_sigma_wb ${curr_paramlist[0]}
     # set_param imu_sigma_wb_2 ${curr_paramlist[1]}
     # set_param imu_sigma_a ${curr_paramlist[2]}
     # set_param imu_sigma_a_2 ${curr_paramlist[2]}
-    # set_param imu_sigma_ab ${curr_paramlist[3]}
+    set_param imu_sigma_ab ${curr_paramlist[1]}
     # set_param imu_sigma_ab_2 ${curr_paramlist[3]}
     
-    set_param feat_rep_msckf ${curr_paramlist[0]}
-    set_param feat_rep_slam ${curr_paramlist[1]}
+    # set_param feat_rep_msckf ${curr_paramlist[0]}
+    # set_param feat_rep_slam ${curr_paramlist[1]}
 
-    set_param cam0_enable ${curr_paramlist[2]}
-    set_param cam1_enable ${curr_paramlist[3]}
-    set_param_last use_stereo ${curr_paramlist[4]}
+    # set_param cam0_enable ${curr_paramlist[2]}
+    # set_param cam1_enable ${curr_paramlist[3]}
+    # set_param_last use_stereo ${curr_paramlist[4]}
 
 
 
@@ -181,11 +184,11 @@ dirlist=(`ls ${LOG_DIR} | grep -v csv`)
 dirlist_len=${#dirlist[@]}
 
 ## get some helper vars
-# paramlist_len=${#SIGMA_W[@]}
+paramlist_len=${#SIGMA_WB[@]}
 # paramlist_len=${#SIGMA_W_2[@]}
 # paramlist_len=${#CHI2_MULT[@]}
-paramlist_len=${#FEAT_REP_SLAM[@]}
-camlist_len=${#CAM0_OPT[@]}
+# paramlist_len=${#FEAT_REP_SLAM[@]}
+camlist_len=3
 curr_blowups=0
 
 
@@ -196,22 +199,17 @@ do
     results_csv="${LOG_DIR}${dirlist[$i]}.csv"
     echo ${results_csv}
 
+
+
     for (( k=0; k<$camlist_len; k++ ));
     do
         for (( j=0; j<$paramlist_len; j++ ));
         do
+
+            echo "sigma wb, sigma ab" >> ${results_csv}
+
             # construct the list of parameters we are going to test out
             construct_curr_paramlist $k $j
-            # need to write into the file a "header" with all ov params in use
-            # echo "sigma_w,sigma_w_2,sigma_wb,sigma_wb_2,sigma_a,sigma_a_2,sigma_ab,sigma_ab_2" >> ${results_csv}
-            # echo "sigma_w,sigma_w_2,sigma_wb,sigma_wb_2,sigma_a,sigma_a_2,sigma_ab,sigma_ab_2,chi2_mult,sigma_pix,sigma_pix_2" >> ${results_csv}
-            
-            # echo "sigma_w,sigma_wb,sigma_a,sigma_ab" >> ${results_csv}
-            # echo "sigma_w_2,sigma_wb_2,sigma_a_2,sigma_ab_2" >> ${results_csv}
-            # echo "chi2,sigma_pix,sigma_pix_2" >> ${results_csv}
-
-            echo "feat_msckf, feat_slam, tracking_en, stereo_en, use_stereo" >> ${results_csv}
-
 
             printf "%s," "${curr_paramlist[@]}" >> ${results_csv}
             sed -i '$ s/.$//' ${results_csv}
@@ -220,9 +218,9 @@ do
             # now, actually set those parameters
             set_ov_params_from_list
 
-            # now, fire up the evaluate-vio process
+            # # now, fire up the evaluate-vio process
             ground_truth="${LOG_DIR}${dirlist[$i]}${GROUND_TRUTH_SUFFIX}"
-            voxl-evaluate-vio -f ${results_csv} -g ${ground_truth} &
+            voxl-evaluate-vio -f ${results_csv} -i -g ${ground_truth} &
             eval_pid=$!
 
             sleep 2
@@ -234,7 +232,7 @@ do
             sleep 2
 
             # finally, start the log
-            voxl-replay -p ${LOG_DIR}${dirlist[$i]}/ &
+            voxl-replay -l -p ${LOG_DIR}${dirlist[$i]}/ &
             replay_pid=$!
 
             sleep 2
@@ -248,10 +246,7 @@ do
             # need to be able to determine if what we just did was actually good data
             last_entry=$( tail -n 1  ${results_csv} )
 
-            # easy check: make sure the length is greater than 4, this should catch failures and bad runs
-            # need to also keep track of how many attempts we've had with the same log + params
-            # if > 5? blowups, just give up
-            if [ ${#last_entry} -ge 5 ]; then
+            if [ ${#last_entry} -le 2 ]; then
                 echo "BLOWUP" >> ${results_csv}
                 curr_blowups=$((curr_blowups+1))
                 if [ ${curr_blowups} -ge 5 ]; then
@@ -262,6 +257,21 @@ do
             else
                 curr_blowups=0
             fi
+
+            # easy check: make sure the length is greater than 4, this should catch failures and bad runs
+            # need to also keep track of how many attempts we've had with the same log + params
+            # if > 5? blowups, just give up
+            # if [ ${#last_entry} -ge 5 ]; then
+            #     echo "BLOWUP" >> ${results_csv}
+            #     curr_blowups=$((curr_blowups+1))
+            #     if [ ${curr_blowups} -ge 5 ]; then
+            #         curr_blowups=0
+            #     else
+            #         j=$((j-1))    # retry with same set of params
+            #     fi
+            # else
+            #     curr_blowups=0
+            # fi
 
             # once ov_eval process stops, then we're safe to continue onwards in the loop?
             # kill everything else just in case
