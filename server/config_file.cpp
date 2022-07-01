@@ -46,6 +46,8 @@
 #include <opencv2/stereo.hpp>
 #include <string>
 
+#include <iostream>
+
 using namespace cv;
 using namespace std;
 
@@ -126,7 +128,7 @@ bool downsample_cams;
 bool use_multithreading;
 bool use_mask;
 
-extern bool en_eval;
+// extern bool en_eval;
 extern std::string log_path;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
@@ -173,6 +175,9 @@ static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> 
     }
     cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
     cam_wrt_imu.block(4, 0, 3, 1) = translation;
+    std::cout << "ROT" << std::endl << rotation_par_wrt_ch << std::endl;
+    std::cout << "TRANS" << std::endl << translation << std::endl;
+
     return;
 }
 
@@ -234,11 +239,12 @@ static int load_opencv_stereo_extrinsics_file(rc_tf_t* cam_l_to_cam_r, int index
 
     fprintf(stderr, "LOG_PATH: %s\n", log_path.data());
 
-    if (en_eval) {
-        strcpy(cv_extrinsics_path, log_path.data());
-        strcat(cv_extrinsics_path, "/data/modalai/opencv_");
-    }
-    else strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
+    // if (en_eval) {
+        // strcpy(cv_extrinsics_path, log_path.data());
+        // strcat(cv_extrinsics_path, "/data/modalai/opencv_");
+    // }
+    // else
+    strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
     strcat(cv_extrinsics_path, cam_info_vec[index].name);
     strcat(cv_extrinsics_path, "_extrinsics.yml");
 
@@ -418,14 +424,20 @@ int load_extrinsics_file() {
                     }
                 }
 
-                needs_inverse_transform = true;
+                float swap_ = imu_to_cam_bottom.d[2][3];
+                // imu_to_cam_bottom.d[2][3] = imu_to_cam_top.d[2][3];
+                // imu_to_cam_top.d[2][3] = swap_;
+
+                fprintf(stderr, "SWAP: %6.5f\n", swap_);
+
+                needs_inverse_transform = false;
 
                 // now we have: imu_to_ BOTH CAMERAS
                 create_ov_extrinsics(imu_to_cam_bottom, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
                 // before we iterate to the next camera, flag this one as cam0 in stereo pair
                 // cam_info_vec[i].is_stereo = true;
-                // i += 1;
-                // create_ov_extrinsics(imu_to_cam_top, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
+                i += 1;
+                create_ov_extrinsics(imu_to_cam_top, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
 
                 continue;
 
@@ -454,11 +466,12 @@ int load_intrinsics_file() {
         if (cam_info_vec[i].enable) {
             memset(intrinsics_path, '\0', CHAR_BUF_SIZE);
             // opencv_cam_name_intrinsics.ymls
-            if (en_eval) {
-                strcpy(intrinsics_path, log_path.data());
-                strcat(intrinsics_path, "/data/modalai/opencv_");
-            }
-            else strcpy(intrinsics_path, "/data/modalai/opencv_");
+            // if (en_eval) {
+                // strcpy(intrinsics_path, log_path.data());
+                // strcat(intrinsics_path, "/data/modalai/opencv_");
+            // }
+            // else 
+            strcpy(intrinsics_path, "/data/modalai/opencv_");
             strcat(intrinsics_path, cam_info_vec[i].name);
             strcat(intrinsics_path, "_intrinsics.yml");
 
