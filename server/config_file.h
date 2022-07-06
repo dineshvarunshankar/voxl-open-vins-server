@@ -132,6 +132,15 @@ typedef struct camera_info {
 extern std::vector<camera_info> cam_info_vec;
 extern char imu_name[CHAR_BUF_SIZE];
 
+// auto reset parameters
+extern int en_auto_reset;
+extern float auto_reset_max_velocity;
+extern float auto_reset_max_v_cov_instant;
+extern float auto_reset_max_v_cov;
+extern float auto_reset_max_v_cov_timeout_s;
+extern int   auto_reset_min_features;
+extern float auto_reset_min_feature_timeout_s;
+
 /// STATE OPTIONS ///
 extern bool do_fej;
 extern bool imu_avg;

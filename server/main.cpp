@@ -60,8 +60,8 @@
 // a stall has occured with a failed state
 #define STALL_TIMEOUT_NS 300000000
 
-// auto restart if the system fails to init after 2 seconds
-#define INIT_FAILURE_TIMEOUT_NS 2000000000
+// auto restart if the system fails to init after 10 seconds
+#define INIT_FAILURE_TIMEOUT_NS 10000000000
 
 // do not check for blowups until 1 second after VIO claims to have initialized
 #define BLOWUP_DETECT_TIMEOUT_NS 1000000000
@@ -105,7 +105,7 @@ static volatile int hard_reset_blowup_flag = 1;
 
 // flag and time when a reset is requested to indicate to the init failure
 // detection how long VIO has been trying to init
-static volatile int init_failure_detector_reset_flag = 1;
+static volatile int init_failure_detector_reset_flag = 0;
 static volatile int64_t time_of_last_reset = 0;
 static volatile int last_state = VIO_STATE_FAILED;
 static volatile int blowup_detector_flag = 0;
@@ -115,7 +115,7 @@ static volatile int64_t time_of_first_okay = 0;
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
 static ov_msckf::VioManagerOptions vio_manager_options;
 std::mutex vio_manager_mutex;
-static int is_initialized = 1;
+static int is_initialized = 0;
 static int blank_counter = 0;
 static int fade_counter = 0;
 static int64_t last_time_alignment_ns = 0;
@@ -134,7 +134,7 @@ static uint32_t global_error_codes = 0;
 
 // function prototypes
 static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images);
-static int _hard_reset(void);
+static int _hard_reset(bool is_locked);
 
 static bool show_extra_points_on_overlay = true;
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
@@ -365,70 +365,73 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx)
         int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
 
         if(init_failure_detector_reset_flag){
-            uint64_t time_since_reset = current_time - time_of_last_reset;
-            if(time_since_reset > INIT_FAILURE_TIMEOUT_NS){
-                fprintf(stderr, "WARNING failed to init in time, trying again\n");
-                _hard_reset();
-                continue;
+            if (time_of_last_reset != 0){
+                uint64_t time_since_reset = current_time - time_of_last_reset;
+                if(time_since_reset > INIT_FAILURE_TIMEOUT_NS){
+                    fprintf(stderr, "WARNING failed to init in time, trying again\n");
+                    _hard_reset(false);
+                    continue;
+                }
             }
+            else continue;
         }
 
-        // If last packet is recent enough, nothing to worry about.
-        // Otherwise, send out failure packets, this inlcudes global error codes
-        // indicating if we are waiting for cam or IMU data
-        if(delay_ns < STALL_TIMEOUT_NS) continue;
+        // // If last packet is recent enough, nothing to worry about.
+        // // Otherwise, send out failure packets, this inlcudes global error codes
+        // // indicating if we are waiting for cam or IMU data
+        // if(delay_ns < STALL_TIMEOUT_NS && last_real_pose_timestamp_ns != 0) continue;
 
-        // flag that we've sent a packet with the current timestamp
-        last_sent_timestamp_ns = current_time;
+        // // flag that we've sent a packet with the current timestamp
+        // last_sent_timestamp_ns = current_time;
 
-        ext_vio_data_t d;	// complete "extended" vio MPA packet
-        vio_data_t s;	// simplified vio packet
+        // ext_vio_data_t d;	// complete "extended" vio MPA packet
+        // vio_data_t s;	// simplified vio packet
 
-        // make sure we start with clean data structs and apply any global error codes
-        // full extended qvio packet
-        memset(&d,0,sizeof(d));
-        d.v.magic_number = VIO_MAGIC_NUMBER;
-        d.v.timestamp_ns = current_time;
-        d.v.error_code = global_error_codes | ERROR_CODE_STALLED;
-        d.v.state = VIO_STATE_FAILED;
-        d.v.quality = -1.0f;
-        // simple lib modal pipe standard vio packet
-        memset(&s,0,sizeof(s));
-        s.magic_number = VIO_MAGIC_NUMBER;
-        s.timestamp_ns = current_time;
-        s.error_code = global_error_codes | ERROR_CODE_STALLED;
-        s.state = VIO_STATE_FAILED;
-        s.quality = -1.0f;
+        // // make sure we start with clean data structs and apply any global error codes
+        // // full extended qvio packet
+        // memset(&d,0,sizeof(d));
+        // d.v.magic_number = VIO_MAGIC_NUMBER;
+        // d.v.timestamp_ns = current_time;
+        // d.v.error_code = global_error_codes | ERROR_CODE_STALLED;
+        // d.v.state = VIO_STATE_FAILED;
+        // d.v.quality = -1.0f;
+        // // simple lib modal pipe standard vio packet
+        // memset(&s,0,sizeof(s));
+        // s.magic_number = VIO_MAGIC_NUMBER;
+        // s.timestamp_ns = current_time;
+        // s.error_code = global_error_codes | ERROR_CODE_STALLED;
+        // s.state = VIO_STATE_FAILED;
+        // s.quality = -1.0f;
 
-        // send to both pipes
-        pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
-        pipe_server_write(SIMPLE_CH,   (char*)&s, sizeof(vio_data_t));
+        // // send to both pipes
+        // pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
+        // pipe_server_write(SIMPLE_CH,   (char*)&s, sizeof(vio_data_t));
 
-        // turn off dropped cam frame code now we have informed everyone.
-        global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
+        // // turn off dropped cam frame code now we have informed everyone.
+        // global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
     }
 
     return NULL;
 }
 
 
-static int _hard_reset(void)
+static int _hard_reset(bool is_locked)
 {
     // lock the mutex before calling any ov api calls
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
+    if (!is_locked) vio_manager_mutex.lock();
 
     // stop it if it's running
     if(is_initialized){
         is_initialized = 0;
-        // vio_manager.reset(nullptr);
+        vio_manager.reset();
     }
 
     // let the blowup detection know we just had a reset
     hard_reset_blowup_flag = 1;
 
     // let the init failure detector know we just had a reset
-    // init_failure_detector_reset_flag = 1;
-    // blowup_detector_flag = 0;
+    init_failure_detector_reset_flag = 1;
+    blowup_detector_flag = 0;
     last_state = VIO_STATE_FAILED;
     time_of_last_reset = _apps_time_monotonic_ns();
 
@@ -440,7 +443,8 @@ static int _hard_reset(void)
         _quit(-1);
     }
 
-    is_initialized = 1;
+    if (!is_locked) vio_manager_mutex.unlock();
+
     return 0;
 }
 
@@ -512,7 +516,7 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string, \
     // }
     if(strncmp(string, RESET_VIO_HARD, strlen(RESET_VIO_HARD))==0){
         printf("Client requested hard reset\n");
-        _hard_reset(); // close and restart the object
+        _hard_reset(false); // close and restart the object
         return;
     }
 
@@ -569,7 +573,6 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     is_imu_connected = 1;
     global_error_codes &= ~ERROR_CODE_IMU_MISSING;
     if(!is_cam_connected) return;
-    if(!is_initialized) return;
 
     std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
@@ -664,7 +667,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 
     // Make the timestamp be the center of the exposure
     int64_t cam_timestamp_ns = meta.timestamp_ns;
-    // cam_timestamp_ns += meta.exposure_ns / 2;
+    cam_timestamp_ns += meta.exposure_ns / 2;
 
     if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 1000000000)) {
         global_error_codes |= ERROR_CODE_DROPPED_CAM;
@@ -783,9 +786,79 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
 }
 
 
+// return 0 if all is well, otherwise return the reason for blowup
+static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state, Eigen::Matrix<double, 12, 12> cov_plus, int good_features)
+{
+	int64_t current_ts = current_state->_timestamp * 1e9;
+	static int64_t last_time_with_good_cov = 0;
+	static int64_t last_time_with_enough_features = 0;
+
+	// reset timers to current time after reset so we don't trip this during init
+	if(hard_reset_blowup_flag){
+		last_time_with_enough_features = current_ts;
+		last_time_with_good_cov = current_ts;
+		hard_reset_blowup_flag = 0;
+	}
+
+	// Now go through our 4 blowup criteria
+	// max velocity check  current_state->_imu->vel().cast<float>()
+	float vel = sqrtf(	(current_state->_imu->vel_fej()(0)*current_state->_imu->vel_fej()(0)) + \
+						(current_state->_imu->vel_fej()(1)*current_state->_imu->vel_fej()(1)) + \
+						(current_state->_imu->vel_fej()(2)*current_state->_imu->vel_fej()(2)) );
+	if(vel > auto_reset_max_velocity){
+		fprintf(stderr, "WARNING auto-resetting due to exceeding max velocity of %4.1fm/s\n", (double)auto_reset_max_velocity);
+		return ERROR_CODE_VEL_INST_CERT;
+	}
+	
+	// get max velocity covariance
+	double cov = cov_plus(6,6);
+	if(cov_plus(7,7)>cov) cov = cov_plus(7,7);
+	if(cov_plus(8,8)>cov) cov = cov_plus(8,8);
+
+	// min feature timeout check
+	if(good_features>auto_reset_min_features){
+		last_time_with_enough_features = current_ts;
+	}
+	else{
+		float tmp = (float)(current_ts - last_time_with_enough_features)/1000000000.0f;
+		if(tmp>auto_reset_min_feature_timeout_s){
+			fprintf(stderr, "WARNING auto-resetting due to low feature count\n");
+            fprintf(stderr, "feats: %d, limit: %d\n", good_features, auto_reset_min_features);
+			return ERROR_CODE_LOW_FEATURES;
+		}
+	}
+
+	// max v cov timeout check
+	if(cov<auto_reset_max_v_cov){
+		last_time_with_good_cov = current_ts;
+	}
+	else{
+		float tmp = (current_ts - last_time_with_good_cov)/1000000000.0f;
+		if(tmp>auto_reset_max_v_cov_timeout_s){
+			fprintf(stderr, "WARNING auto-resetting due to high vel covariance\n");
+            fprintf(stderr, "vel cov: %6.5f, limit: %6.5f\n", cov, auto_reset_max_v_cov);
+			return ERROR_CODE_VEL_WINDOW_CERT;
+		}
+	}
+
+	// check for instant vel covariance limit
+	if(cov  > auto_reset_max_v_cov_instant){
+		fprintf(stderr, "WARNING auto-resetting due to vel covariance instant limit\n");
+        fprintf(stderr, "vel cov: %6.5f, limit: %6.5f\n", cov, auto_reset_max_v_cov_instant);
+		return ERROR_CODE_VEL_INST_CERT;
+	}
+
+	// all is good (for now)
+	return 0;
+}
+
+
 static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 {
-    std::shared_ptr<ov_msckf::State> current_state = {nullptr};
+    std::shared_ptr<ov_msckf::State> current_state = {nullptr};                     // contains a few extra pieces we need
+    Eigen::Matrix<double, 13, 1> state_plus = Eigen::Matrix<double, 13, 1>::Zero(); // not necessary
+    Eigen::Matrix<double, 12, 12> cov_plus = Eigen::Matrix<double, 12, 12>::Zero(); // covariance!!!!
+
     ext_vio_data_t d;	// complete "extended" vio MPA packet
     vio_data_t s;	    // simplified vio packet
     int nPoints;
@@ -794,15 +867,21 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     int i,j;
 
     // make sure we start with clean data structs and apply any global error codes
-    // full extended qvio packet only needs memset
+    // full extended vio packet
     memset(&d,0,sizeof(d));
+    d.v.magic_number = VIO_MAGIC_NUMBER;
+    d.v.error_code = global_error_codes;
+
     // simple lib modal pipe standard vio packet
     memset(&s,0,sizeof(s));
     s.magic_number = VIO_MAGIC_NUMBER;
     s.error_code = global_error_codes;
 
-    // Grab the state
+    // Grab the state, then fill our state_plus and covariance
     current_state = vio_manager->get_state();
+    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(last_imu_timestamp_ns) / 1e9, state_plus, cov_plus)){
+        return;
+    }
 
     // get features
     // not sure how to calculate quality of these features, may need to expose another function for some
@@ -817,17 +896,27 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     last_real_pose_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
     // check if its initialized or not
-    if(!vio_manager->initialized()) s.state = VIO_STATE_INITIALIZING;
-    else s.state = VIO_STATE_OK;
+    if(!vio_manager->initialized()){
+        s.state = VIO_STATE_INITIALIZING;
+        is_initialized = false;
+        // send to both pipes
+        pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
+        pipe_server_write(SIMPLE_CH,   (char*)&s, sizeof(vio_data_t));
+        return;
+    } 
+    else{
+        s.state = VIO_STATE_OK;
+        is_initialized = true;
+    }
 
-    // TODO 
-    // dont have direct access to covariances yet
 
-    // // sometimes qvio will report covariance as invalid but state is still OKAY
-    // // this is NOT alright, in this case manually set the state to failed.
-    // if(p.errCovPose[3][3]<=0.0f || p.errCovPose[4][4]<=0.0f || p.errCovPose[5][5]<=0.0f){
-    //     d.state=VIO_STATE_FAILED;
-    // }
+
+    // sometimes qvio will report covariance as invalid but state is still OKAY
+    // this is NOT alright, in this case manually set the state to failed.
+    if(cov_plus(3,3)<=0.0f || cov_plus(4,4)<=0.0f || cov_plus(5,5)<=0.0f){
+        fprintf(stderr, "ERROR: got negative covariance\n");
+        s.state=VIO_STATE_FAILED;
+    }
 
     // we finished initializing, no longer check for init timeout
     if(s.state == VIO_STATE_OK){
@@ -850,21 +939,17 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     }
     last_state = s.state;
 
-    // TODO 
-    // dont have direct access to covariances yet
-
     // while VIO state is OK, do our own additional blowup checks if enough
     // time has passed since the init
-    // int64_t time_since_first_okay = _apps_time_monotonic_ns() - time_of_first_okay;
-    // if(blowup_detector_flag && time_since_first_okay>BLOWUP_DETECT_TIMEOUT_NS){
-    //     int code = _check_for_blowup(p,n_good_points);
-    //     if(code){
-    //         pthread_mutex_unlock(&mv_mtx);
-    //         _hard_reset();
-    //         d.state = VIO_STATE_FAILED;
-    //         d.error_code |= code;
-    //     }
-    // }
+    int64_t time_since_first_okay = _apps_time_monotonic_ns() - time_of_first_okay;
+    if(blowup_detector_flag && time_since_first_okay>BLOWUP_DETECT_TIMEOUT_NS){
+        int code = _check_for_blowup(current_state, cov_plus, n_good_points);
+        if(code){
+            _hard_reset(true);
+            s.state = VIO_STATE_FAILED;
+            s.error_code |= code;
+        }
+    }
 
 
     // don't send packets from the past, this can happen when qvio stalls
@@ -891,8 +976,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
     Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
     Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
-    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = current_state->_calib_IMUtoCAM[0]->pos().cast<float>();
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).cast<float>();
+
+
+    // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
+    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 3) = current_state->_imu->bias_a_fej().cast<float>();
 
@@ -901,14 +990,25 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     // d.T_imu_wrt_vio[1] = -d.T_imu_wrt_vio[1];
     // d.T_imu_wrt_vio[2] = -d.T_imu_wrt_vio[2];
 
-    // memcpy(d.pose_covariance,	p.errCovPose,		sizeof(float)*6*6);
-    // memcpy(d.vel_covariance,	p.errCovVelocity,	sizeof(float)*3*3);
+    // pose covariance diagonals, 6 entries
+	s.pose_covariance[0] =  (float) cov_plus(0, 0);
+	s.pose_covariance[6] =  (float) cov_plus(1, 1);
+	s.pose_covariance[11] = (float) cov_plus(2, 2);
+	s.pose_covariance[15] = (float) cov_plus(3, 3);
+	s.pose_covariance[18] = (float) cov_plus(4, 4);
+	s.pose_covariance[20] = (float) cov_plus(5, 5);
+
+	// velocity covariance diagonals, 3 entries
+	s.velocity_covariance[0] =   cov_plus(6, 6);
+	s.velocity_covariance[6] =   cov_plus(7, 7);
+	s.velocity_covariance[11] =  cov_plus(8, 8);
+
     // LEAVING OUT ANGULAR VELOCITY FOR NOW
     // memcpy(d.imu_angular_vel,	p.angularVelocity,	sizeof(float)*3);
 
+    // since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out
     static float grav_vec[3] = {0, 0, 1};
     memcpy(s.gravity_vector,	grav_vec,			sizeof(float)*3);
-    // memcpy(d.gravity_covariance,p.errCovGravity,	sizeof(float)*3*3);
 
     // limit the number of features to what fits in our pipe packet
     d.n_total_features = curr_slam_features.size() + msckf_last_features.size();
@@ -1160,7 +1260,7 @@ static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
     std::lock_guard<std::mutex> lg(vio_manager_mutex);
     ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
     // HARD RESET
-    _hard_reset();
+    _hard_reset(false);
     return;
 }
 
@@ -1182,7 +1282,7 @@ static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
     std::lock_guard<std::mutex> lg(vio_manager_mutex);
     ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
     // HARD RESET
-    _hard_reset();
+    _hard_reset(false);
     return;
 }
 
@@ -1358,7 +1458,7 @@ int main(int argc, char* argv[]) {
     if (load_intrinsics_file() < 0) _quit(-1);
 
     // Create the VIO Manager
-    ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
+    vio_manager_options = generate_open_vins_manager_options();
     vio_manager = std::unique_ptr<ov_msckf::VioManager>(new ov_msckf::VioManager(vio_manager_options));
 
     // Create the server pipes
@@ -1366,6 +1466,10 @@ int main(int argc, char* argv[]) {
 
     // Connect to the client pipes and start getting data
     if (connect_client_pipes() < 0) _quit(0);
+
+    pthread_attr_t tattr;
+	pthread_attr_init(&tattr);
+	pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
 
     // run until start/stop module catches a signal and changes main_running to 0
     while (main_running) usleep(5000000);

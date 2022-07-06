@@ -353,7 +353,7 @@ int main(int argc, char* argv[])
 	pipe_client_set_disconnect_cb(0, _disconnect_cb, NULL);
 
 	// request a new pipe from the server
-	printf("waiting for server\n");
+	printf("waiting for server at %s\n", pipe_path);
 	int ret = pipe_client_open(0, pipe_path, CLIENT_NAME, \
 				EN_PIPE_CLIENT_SIMPLE_HELPER, \
 				VIO_RECOMMENDED_READ_BUF_SIZE);

@@ -58,6 +58,15 @@ using namespace std;
 std::vector<camera_info> cam_info_vec(MAX_CAMERAS);
 char imu_name[CHAR_BUF_SIZE];
 
+// auto reset parameters
+int en_auto_reset;
+float auto_reset_max_velocity;
+float auto_reset_max_v_cov_instant;
+float auto_reset_max_v_cov;
+float auto_reset_max_v_cov_timeout_s;
+int   auto_reset_min_features;
+float auto_reset_min_feature_timeout_s;
+
 /// STATE OPTIONS ///
 bool do_fej;
 bool imu_avg;
@@ -297,14 +306,17 @@ int load_extrinsics_file() {
                 // strcat(ext_name, "_lower");
                 // needs_starling_stereo_setup = true;
             }
-            // this is the relation open vins wants, i.e. imu to cam
+            // // this is the relation open vins wants, i.e. imu to cam
+            // if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
+            //     needs_inverse_transform = false;
+            //     fprintf(stderr, "no inverse transform required\n");
+            //     vcc_print_extrinsic_conf(&extrins_holder, 1);
+            // } else 
             if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
-                needs_inverse_transform = false;
-                fprintf(stderr, "no inverse transform required\n");
-                vcc_print_extrinsic_conf(&extrins_holder, 1);
-            } else if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 // relation is from cam to imu, need relation from imu to cam
                 fprintf(stderr, "creating inverse transform\n");
+                vcc_print_extrinsic_conf(&extrins_holder, 1);
+
                 needs_inverse_transform = true;
             } else if (needs_wonky_stereo_setup) {
                 // we got a stereo pair that needs to be setup for ov
@@ -694,6 +706,14 @@ int config_file_print(void) {
     printf("============================IMU==================================\n");
     printf("imu pipe:                         %s\n", imu_name);
     printf("=================================================================\n");
+    printf("=========================AUTO RESET==============================\n");
+	printf("en_auto_reset:                    %d\n",    en_auto_reset);
+	printf("auto_reset_max_velocity:          %6.3f\n", (double)auto_reset_max_velocity);
+	printf("auto_reset_max_v_cov_instant:     %6.3f\n", (double)auto_reset_max_v_cov_instant);
+	printf("auto_reset_max_v_cov:             %6.3f\n", (double)auto_reset_max_v_cov);
+	printf("auto_reset_max_v_cov_timeout_s:   %6.3f\n", (double)auto_reset_max_v_cov_timeout_s);
+	printf("auto_reset_min_features:          %d\n",    auto_reset_min_features);
+	printf("auto_reset_min_feature_timeout_s: %6.3f\n", (double)auto_reset_min_feature_timeout_s);
     printf("===========================STATE=================================\n");
     printf("do fej:                           %s\n", do_fej ? "true" : "false");
     printf("imu avg:                          %s\n", imu_avg ? "true" : "false");
@@ -778,56 +798,65 @@ int config_file_read(void) {
 
     json_fetch_string_with_default(parent, "imu_name", imu_name, CHAR_BUF_SIZE, "imu_apps");
 
+    // auto reset features
+	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
+	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		10.0f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.1f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
+	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		3);
+	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s,1.0f);
+
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
-    json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 0);
+    json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
     json_fetch_bool_with_default(parent, "use_rk4_integration", (int *)&use_rk4_integration, 1);
 
     json_fetch_bool_with_default(parent, "cam_to_imu_refinement", (int *)&cam_to_imu_refinement, 1);
-    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 0);
+    json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 1);
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
-    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 45);
+    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 15);
     json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 40);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 40);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 64);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 64);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 0);
-    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 0);
+    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 5);
 
-    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, -0.002);
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.002);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
-    json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 2.0);
-    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.5);
+    json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 1.5);
+    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 0.6);
 
-    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 0.008484);
-    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 0.00096965);
-    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.01);
-    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.0015);
+    json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 0.0002);
+    json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.565e-06);
+    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.005333);
+    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.000357402);
 
-    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 20.0);
-    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 14.0);
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 10.);
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 100.);
 
-    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 20.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 14.0);
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 10.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
-    json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
+    json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 0);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
 
     json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
-    json_fetch_int_with_default(parent, "num_pts", &num_pts, 50);
-    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 20);
+    json_fetch_int_with_default(parent, "num_pts", &num_pts, 85);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 25);
     json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
-    json_fetch_int_with_default(parent, "grid_y", &grid_y, 8);
-    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 12);
-    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.80);
+    json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
+    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
+    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
     json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
     json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 0);
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
