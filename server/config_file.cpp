@@ -57,7 +57,6 @@ using namespace std;
 // define all the externs from config_file.h
 std::vector<camera_info> cam_info_vec(MAX_CAMERAS);
 char imu_name[CHAR_BUF_SIZE];
-float odr_hz;
 
 /// STATE OPTIONS ///
 bool do_fej;
@@ -89,23 +88,16 @@ double imu_sigma_w;
 double imu_sigma_wb;
 double imu_sigma_a;
 double imu_sigma_ab;
-double imu_sigma_w_2;
-double imu_sigma_wb_2;
-double imu_sigma_a_2;
-double imu_sigma_ab_2;
 
 /// FEATURE OPTIONS ///
 double msckf_chi2_multiplier;
 double msckf_sigma_px;
-double msckf_sigma_px_sq;
 
 double slam_chi2_multiplier;
 double slam_sigma_px;
-double slam_sigma_px_sq;
 
 double zupt_chi2_multiplier;
 double zupt_sigma_px;
-double zupt_sigma_px_sq;
 
 bool use_stereo;
 
@@ -208,24 +200,11 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
         // finally, invert it and we're ready to go
         translation = -translation;
     }
-
-    // HACKY GRAVUITY ALIGNMENT TESTING
-    translation[1] *= -1;
-    translation[2] *= -1;
-
-    Eigen::Matrix<double, 3, 3> imu_norm_to_imu_neg =  Eigen::MatrixXd::Identity(3,3);
-
-    imu_norm_to_imu_neg(1, 1) *= -1;
-    imu_norm_to_imu_neg(2, 2) *= -1;
-
-    Eigen::Matrix<double, 3, 3> imu_neg_to_cam = rotation_par_wrt_ch * imu_norm_to_imu_neg;
-
-    quaternion = ov_core::rot_2_quat(imu_neg_to_cam);
-
-    // END HACKY GRAV ALIGNMENT STUFF
     
     cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
     cam_wrt_imu.block(4, 0, 3, 1) = translation;
+    std::cout << "ROT" << std::endl << rotation_par_wrt_ch << std::endl;
+    std::cout << "TRANS" << std::endl << translation << std::endl;
     return;
 }
 
@@ -247,9 +226,6 @@ static int load_opencv_stereo_extrinsics_file(rc_tf_t* cam_l_to_cam_r, int index
     strcpy(cv_extrinsics_path, "/data/modalai/opencv_");
     strcat(cv_extrinsics_path, cam_info_vec[index].name);
     strcat(cv_extrinsics_path, "_extrinsics.yml");
-
-    fprintf(stderr, "LOADING STEREO FROM: %s\n", cv_extrinsics_path);
-
 
     FileStorage fs(cv_extrinsics_path, FileStorage::READ);
     if (!fs.isOpened()) {
@@ -305,7 +281,6 @@ int load_extrinsics_file() {
     bool needs_starling_stereo_setup = false;
 
     for (int i = 0; i < MAX_CAMERAS; i++) {
-        // fprintf(stderr, "cam %d enabled: %d\n", i, cam_info_vec[i].enable);
         if (cam_info_vec[i].enable) {
             // create a copy of the camera name
             memset(ext_name, '\0', CHAR_BUF_SIZE);
@@ -313,20 +288,21 @@ int load_extrinsics_file() {
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
             if (strstr(ext_name, "stereo") != NULL) {
-                // use_stereo = true;
-                // strcat(ext_name, "_l");
+                use_stereo = true;
+                strcat(ext_name, "_l");
                 // here we go
-                // needs_wonky_stereo_setup = true;
+                needs_wonky_stereo_setup = true;
 
-                // hardcoding for starling here:
-                strcat(ext_name, "_lower");
-                needs_starling_stereo_setup = true;
+                // // hardcoding for starling here:
+                // strcat(ext_name, "_lower");
+                // needs_starling_stereo_setup = true;
             }
             // this is the relation open vins wants, i.e. imu to cam
-            if (!needs_starling_stereo_setup && !vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
+            if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 needs_inverse_transform = false;
                 fprintf(stderr, "no inverse transform required\n");
-            } else if (!needs_starling_stereo_setup && !vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
+                vcc_print_extrinsic_conf(&extrins_holder, 1);
+            } else if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 // relation is from cam to imu, need relation from imu to cam
                 fprintf(stderr, "creating inverse transform\n");
                 needs_inverse_transform = true;
@@ -717,7 +693,6 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("============================IMU==================================\n");
     printf("imu pipe:                         %s\n", imu_name);
-    printf("odr_hz:                           %6.3f\n", (double)odr_hz);
     printf("=================================================================\n");
     printf("===========================STATE=================================\n");
     printf("do fej:                           %s\n", do_fej ? "true" : "false");
@@ -745,21 +720,14 @@ int config_file_print(void) {
     printf("imu sigma wb:                     %6.5f\n", imu_sigma_wb);
     printf("imu sigma a:                      %6.5f\n", imu_sigma_a);
     printf("imu sigma ab:                     %6.5f\n", imu_sigma_ab);
-    printf("imu sigma w^2:                    %6.5f\n", imu_sigma_w_2);
-    printf("imu sigma wb^2:                   %6.5f\n", imu_sigma_wb_2);
-    printf("imu sigma a^2:                    %6.5f\n", imu_sigma_a_2);
-    printf("imu sigma ab^2:                   %6.5f\n", imu_sigma_ab_2);
     printf("=================================================================\n");
     printf("========================FEATURE NOISE============================\n");
     printf("msckf chi^2 multiplier:           %6.5f\n", msckf_chi2_multiplier);
     printf("msckf sigma px:                   %6.5f\n", msckf_sigma_px);
-    printf("msckf sigma px^2:                 %6.5f\n", msckf_sigma_px_sq);
     printf("slam chi^2 multiplier:            %6.5f\n", slam_chi2_multiplier);
     printf("slam sigma px:                    %6.5f\n", slam_sigma_px);
-    printf("slam sigma px^2:                  %6.5f\n", slam_sigma_px_sq);
     printf("zupt chi^2 multiplier:            %6.5f\n", zupt_chi2_multiplier);
     printf("zupt sigma px:                    %6.5f\n", zupt_sigma_px);
-    printf("zupt sigma px^2:                  %6.5f\n", zupt_sigma_px_sq);
     printf("=================================================================\n");
     printf("=============================ZUPT================================\n");
     printf("try zupt:                         %s\n", try_zupt ? "true" : "false");
@@ -809,7 +777,6 @@ int config_file_read(void) {
     json_fetch_string_with_default(parent, "cam3_pipe", cam_info_vec[6].name, CHAR_BUF_SIZE, "hires");
 
     json_fetch_string_with_default(parent, "imu_name", imu_name, CHAR_BUF_SIZE, "imu_apps");
-    json_fetch_float_with_default(parent, "odr_hz", &odr_hz, 30);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
     json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 0);
@@ -838,22 +805,15 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 0.00096965);
     json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.01);
     json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.0015);
-    json_fetch_double_with_default(parent, "imu_sigma_w_2", &imu_sigma_w_2, 0.000000144);
-    json_fetch_double_with_default(parent, "imu_sigma_wb_2", &imu_sigma_wb_2, 0.00000001);
-    json_fetch_double_with_default(parent, "imu_sigma_a_2", &imu_sigma_a_2, 0.00002);
-    json_fetch_double_with_default(parent, "imu_sigma_ab_2", &imu_sigma_ab_2, 0.000045);
 
     json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 20.0);
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 14.0);
-    json_fetch_double_with_default(parent, "msckf_sigma_px_sq", &msckf_sigma_px_sq, 20.0);
 
     json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 20.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 14.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px_sq", &slam_sigma_px_sq, 20.0);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
-    json_fetch_double_with_default(parent, "zupt_sigma_px_sq", &zupt_sigma_px_sq, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);

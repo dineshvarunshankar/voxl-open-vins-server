@@ -47,7 +47,7 @@
 #define DEG_TO_RAD	(3.14159265358979323846/180.0)
 #define RAD_TO_DEG	(180.0/3.14159265358979323846)
 
-static char pipe_path[MODAL_PIPE_MAX_PATH_LEN] = "/run/mpa/open-vins";
+static char pipe_path[MODAL_PIPE_MAX_PATH_LEN] = "/run/mpa/ov_extended";
 static int en_imu_angular_vel = 0;
 static int en_error_code = 1;
 static int en_n_feature_points = 0;
@@ -173,48 +173,48 @@ static void _disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused
 }
 
 
-static void _print_data(vio_data_t d)
+static void _print_data(ext_vio_data_t d)
 {
 	if(!en_newline) printf("\r" CLEAR_LINE);
 
 	// always print translation and rotation
-	printf("%8.2f%8.2f%8.2f|", (double)d.T_imu_wrt_vio[0], (double)d.T_imu_wrt_vio[1], (double)d.T_imu_wrt_vio[2]);
+	printf("%8.2f%8.2f%8.2f|", (double)d.v.T_imu_wrt_vio[0], (double)d.v.T_imu_wrt_vio[1], (double)d.v.T_imu_wrt_vio[2]);
 	float roll, pitch, yaw;
-	_rotation_to_tait_bryan(d.R_imu_to_vio, &roll, &pitch, &yaw);
+	_rotation_to_tait_bryan(d.v.R_imu_to_vio, &roll, &pitch, &yaw);
 	printf("%6.1f %6.1f %6.1f|", (double)roll, (double)pitch, (double)yaw);
 
 	if(en_vel_imu_wrt_vio){
-		printf("%6.2f %6.2f %6.2f|", (double)d.vel_imu_wrt_vio[0], (double)d.vel_imu_wrt_vio[1], (double)d.vel_imu_wrt_vio[2]);
+		printf("%6.2f %6.2f %6.2f|", (double)d.v.vel_imu_wrt_vio[0], (double)d.v.vel_imu_wrt_vio[1], (double)d.v.vel_imu_wrt_vio[2]);
 	}
 
 	if(en_imu_angular_vel){
-		printf("%6.1f %6.1f %6.1f|", (double)d.imu_angular_vel[0]*RAD_TO_DEG, (double)d.imu_angular_vel[1]*RAD_TO_DEG, (double)d.imu_angular_vel[2]*RAD_TO_DEG);
+		printf("%6.1f %6.1f %6.1f|", (double)d.v.imu_angular_vel[0]*RAD_TO_DEG, (double)d.v.imu_angular_vel[1]*RAD_TO_DEG, (double)d.v.imu_angular_vel[2]*RAD_TO_DEG);
 	}
 	if(en_n_feature_points){
-		printf("  %4d  |", d.n_feature_points);
+		printf("  %4d  |", d.v.n_feature_points);
 	}
 	if(en_gravity_vector){
-		printf("%6.3f %6.3f %6.3f|", (double)d.gravity_vector[0], (double)d.gravity_vector[1], (double)d.gravity_vector[2]);
+		printf("%6.3f %6.3f %6.3f|", (double)d.v.gravity_vector[0], (double)d.v.gravity_vector[1], (double)d.v.gravity_vector[2]);
 	}
 	if(en_extrinsics){
-		_rotation_to_tait_bryan_xyz_intrinsic(d.R_cam_to_imu, &roll, &pitch, &yaw);
-		printf("%6.3f %6.3f %6.3f,", (double)d.T_cam_wrt_imu[0], (double)d.T_cam_wrt_imu[1], (double)d.T_cam_wrt_imu[2]);
+		_rotation_to_tait_bryan_xyz_intrinsic(d.v.R_cam_to_imu, &roll, &pitch, &yaw);
+		printf("%6.3f %6.3f %6.3f,", (double)d.v.T_cam_wrt_imu[0], (double)d.v.T_cam_wrt_imu[1], (double)d.v.T_cam_wrt_imu[2]);
 		printf("%6.1f %6.1f %6.1f|", (double)roll*RAD_TO_DEG, (double)pitch*RAD_TO_DEG, (double)yaw*RAD_TO_DEG);
 	}
 	if(en_quality){
-		printf("%10.5f|", (double)d.quality);
+		printf("%10.5f|", (double)d.v.quality);
 	}
 	if(en_timestamp_ns){
-		printf("%15ld |", d.timestamp_ns);
+		printf("%15ld |", d.v.timestamp_ns);
 	}
 	if(en_state){
 		printf(" ");
-		pipe_print_vio_state(d.state);
+		pipe_print_vio_state(d.v.state);
 		printf(" |");
 	}
 	if(en_error_code){
 		printf(" ");
-		pipe_print_vio_error(d.error_code);
+		pipe_print_vio_error(d.v.error_code);
 	}
 
 	// cleanup the end of the line depending on mode
@@ -228,7 +228,7 @@ static void _helper_cb( __attribute__((unused)) int ch, char* data, int bytes, _
 {
 	// validate that the data makes sense
 	int n_packets, i;
-	vio_data_t* data_array = pipe_validate_vio_data_t(data, bytes, &n_packets);
+	ext_vio_data_t* data_array = pipe_validate_ext_vio_data_t(data, bytes, &n_packets);
 	if(data_array == NULL) return;
 	for(i=0;i<n_packets;i++) _print_data(data_array[i]);
 	return;

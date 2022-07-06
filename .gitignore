@@ -10,3 +10,4 @@ pkg/data
 *.core
 .vscode
 .gitconfig
+tmp_pkgs

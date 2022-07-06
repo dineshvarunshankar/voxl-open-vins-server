@@ -53,11 +53,6 @@
  * Per camera that is enabled, we only need the name of the phsycial pipe \n\
  * i.e. tracking, NOT /run/mpa/tracking\n\
  * Imu is the same, just need the name (typically imu_apps/imu_px4/imu0/imu1)\n\
- * odr_hz: Output data date is independent from the camera frame rate so you can\n\
- * choose the desired output data rate. Note that voxl-imu-server defaults to\n\
- * 500hz imu sampling but new data is received by voxl-open-vins-server at 100hz by\n\
- * default so requesting qvio data faster requires updating voxl-imu-server.\n\
- * \n\
  * OpenVins param breakdown:\n\
  * \n\
  * do_fej: whether or not to do first estimate Jacobians\n\
@@ -136,7 +131,6 @@ typedef struct camera_info {
 
 extern std::vector<camera_info> cam_info_vec;
 extern char imu_name[CHAR_BUF_SIZE];
-extern float odr_hz;
 
 /// STATE OPTIONS ///
 extern bool do_fej;
@@ -168,23 +162,16 @@ extern double imu_sigma_w;
 extern double imu_sigma_wb;
 extern double imu_sigma_a;
 extern double imu_sigma_ab;
-extern double imu_sigma_w_2;
-extern double imu_sigma_wb_2;
-extern double imu_sigma_a_2;
-extern double imu_sigma_ab_2;
 
 /// FEATURE OPTIONS ///
 extern double msckf_chi2_multiplier;
 extern double msckf_sigma_px;
-extern double msckf_sigma_px_sq;
 
 extern double slam_chi2_multiplier;
 extern double slam_sigma_px;
-extern double slam_sigma_px_sq;
 
 extern double zupt_chi2_multiplier;
 extern double zupt_sigma_px;
-extern double zupt_sigma_px_sq;
 
 extern bool use_stereo;
 
