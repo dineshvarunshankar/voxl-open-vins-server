@@ -297,14 +297,14 @@ int load_extrinsics_file() {
 
             // if it contains stereo, we know the extrinsics file will contain the name + _l since we cal to left sensor
             if (strstr(ext_name, "stereo") != NULL) {
-                use_stereo = true;
-                strcat(ext_name, "_l");
+                // use_stereo = true;
+                // strcat(ext_name, "_l");
                 // here we go
-                needs_wonky_stereo_setup = true;
+                // needs_wonky_stereo_setup = true;
 
-                // // hardcoding for starling here:
-                // strcat(ext_name, "_lower");
-                // needs_starling_stereo_setup = true;
+                // hardcoding for starling here:
+                strcat(ext_name, "_lower");
+                needs_starling_stereo_setup = true;
             }
             // // this is the relation open vins wants, i.e. imu to cam
             // if (!vcc_find_extrinsic_in_array(ext_name, imu_name, t, n_extrinsics, &extrins_holder)) {
@@ -312,7 +312,7 @@ int load_extrinsics_file() {
             //     fprintf(stderr, "no inverse transform required\n");
             //     vcc_print_extrinsic_conf(&extrins_holder, 1);
             // } else 
-            if (!vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
+            if (!needs_starling_stereo_setup && !vcc_find_extrinsic_in_array(imu_name, ext_name, t, n_extrinsics, &extrins_holder)) {
                 // relation is from cam to imu, need relation from imu to cam
                 fprintf(stderr, "creating inverse transform\n");
                 vcc_print_extrinsic_conf(&extrins_holder, 1);
@@ -418,13 +418,14 @@ int load_extrinsics_file() {
 
                 fprintf(stderr, "SWAP: %6.5f\n", swap_);
 
-                needs_inverse_transform = false;
+                needs_inverse_transform = true;
 
                 // now we have: imu_to_ BOTH CAMERAS
                 create_ov_extrinsics(imu_to_cam_bottom, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
                 // before we iterate to the next camera, flag this one as cam0 in stereo pair
                 // cam_info_vec[i].is_stereo = true;
                 i += 1;
+                // cam_info_vec[i].enable = 0;
                 create_ov_extrinsics(imu_to_cam_top, cam_info_vec[i].cam_wrt_imu, needs_inverse_transform);
 
                 continue;
@@ -804,7 +805,7 @@ int config_file_read(void) {
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.1f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
-	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		3);
+	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		1);
 	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s,1.0f);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
@@ -838,7 +839,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 10.);
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 100.);
 
-    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 10.0);
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 5.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);

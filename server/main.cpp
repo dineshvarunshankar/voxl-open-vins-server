@@ -618,6 +618,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     return;
 }
 
+#define PLATFORM_QRB5165
 
 #ifdef PLATFORM_QRB5165
 // for qrb5165 only (right now) set the camera processing thread to run on 
@@ -635,6 +636,11 @@ static void _check_and_set_affinity(void)
     /* Set affinity mask to include CPUs 7 only */
     CPU_ZERO(&cpuset);
     CPU_SET(7, &cpuset);
+	CPU_SET(6, &cpuset);
+
+    // CPU_SET(7, &cpuset);
+    // CPU_SET(7, &cpuset);
+
     if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
         perror("pthread_setaffinity_np");
     }
@@ -656,9 +662,7 @@ static void _check_and_set_affinity(void)
 }
 #endif
 
-
 static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
-
 #ifdef PLATFORM_QRB5165
     _check_and_set_affinity();
 #endif
@@ -669,10 +673,11 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     int64_t cam_timestamp_ns = meta.timestamp_ns;
     cam_timestamp_ns += meta.exposure_ns / 2;
 
-    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 1000000000)) {
+    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 500000000)) {
         global_error_codes |= ERROR_CODE_DROPPED_CAM;
         pipe_client_flush(ch);
-        fprintf(stderr, "ERROR detected frame older than 1s, flushing cam pipe\n");
+        pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);   
+        fprintf(stderr, "ERROR detected frame older than 0.5s, flushing cam pipe\n");
         return;
     }
 
@@ -693,6 +698,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
             global_error_codes |= ERROR_CODE_DROPPED_CAM;
             pipe_client_flush(ch);
+            pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);   
             fprintf(stderr, "ERROR waited more than 0.3 seconds for imu to catch up, flushing camera pipe\n");
             return;
         }
@@ -735,22 +741,25 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         vio_manager_data.images.push_back(img2);
         vio_manager_data.masks.push_back(mask2);
     } else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
-        meta.width *= 2;
-        meta.size_bytes = meta.height * meta.width;
-        vio_manager_data.sensor_ids.push_back(camera_index + 1);
+        // fprintf(stderr, "IN STEREO CB\n");
+        // meta.height *= 1.5;
+        // meta.size_bytes = meta.height * meta.width;
+        // meta.format = IMAGE_FORMAT_NV12;
+
+        // vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
         // Unpack the data into opencv image Mats
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
+        // cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
 
         // Create masks for the ingestion. We want both full images to be ingested
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-        cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        // cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
         vio_manager_data.images.push_back(img);
         vio_manager_data.masks.push_back(mask);
-        vio_manager_data.images.push_back(img2);
-        vio_manager_data.masks.push_back(mask2);
+        // vio_manager_data.images.push_back(img2);
+        // vio_manager_data.masks.push_back(mask2);
     }
 
     // Ingest the data
@@ -987,8 +996,8 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
     // GRAVITY ALIGNMENT WITH QVIO
     // Z AND Y AXES MUST BE FLIPPED
-    // d.T_imu_wrt_vio[1] = -d.T_imu_wrt_vio[1];
-    // d.T_imu_wrt_vio[2] = -d.T_imu_wrt_vio[2];
+    // s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1];
+    // s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
 
     // pose covariance diagonals, 6 entries
 	s.pose_covariance[0] =  (float) cov_plus(0, 0);
@@ -1199,17 +1208,17 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
 
     /// FEATURE INITIALIZER OPTIONS ///
     vio_manager_options.featinit_options.triangulate_1d = false;
-    vio_manager_options.featinit_options.refine_features = true;
-    vio_manager_options.featinit_options.max_runs = 3;
+    vio_manager_options.featinit_options.refine_features = false;
+    vio_manager_options.featinit_options.max_runs = 5;
     vio_manager_options.featinit_options.init_lamda = 1e-3;
     vio_manager_options.featinit_options.max_lamda = 1e6;
     vio_manager_options.featinit_options.min_dx = 1e-6;
     vio_manager_options.featinit_options.min_dcost = 1e-6;
     vio_manager_options.featinit_options.lam_mult = 10;
     vio_manager_options.featinit_options.min_dist = 0.1;
-    vio_manager_options.featinit_options.max_dist = 10;
+    vio_manager_options.featinit_options.max_dist = 16;
     vio_manager_options.featinit_options.max_baseline = 10;
-    vio_manager_options.featinit_options.max_cond_number = 1000;
+    vio_manager_options.featinit_options.max_cond_number = 1000000;
 
     /// CAMERA INTRINSICS + EXTRINSICS ///
     int actual_index = 0;
@@ -1254,10 +1263,10 @@ static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
     //     pipe_server_write(SIMPLE_EVAL_CH, (char*)&error_packet, sizeof(ov_eval_data));
     // }
 
+    std::lock_guard<std::mutex> lg(vio_manager_mutex);
     global_error_codes |= ERROR_CODE_CAM_MISSING;
     last_cam_timestamps_ns.assign(last_cam_timestamps_ns.size(), 0);
     is_cam_connected = 0;
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
     ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
     // HARD RESET
     _hard_reset(false);
@@ -1395,10 +1404,12 @@ static int connect_client_pipes(void) {
             pipe_client_set_disconnect_cb(channel_number, _cam_disconnect_cb, NULL);
             pipe_client_set_camera_helper_cb(channel_number, _new_camera_data_handler, NULL);
             int flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-            if (pipe_client_open(channel_number, full_pipe, PROCESS_NAME, flags, 0) != 0) {
+            if (pipe_client_open(channel_number, full_pipe, PROCESS_NAME, flags, 1280*800*30) != 0) {
                 fprintf(stderr, "ERROR: FAILED TO OPEN %s\n", full_pipe);
                 return -1;
             }
+            pipe_client_set_pipe_size(channel_number, 1280*800*1.5*2*60);   
+
 
             // if stereo, the right camera is going to use id+1 for its images, so we need to make space for that
             if (cam_info_vec[i].is_stereo) {
@@ -1435,7 +1446,32 @@ int main(int argc, char* argv[]) {
         _quit(-1);
     }
 
-    // pipe_set_process_priority(90);
+    // pipe_set_process_priority(1);
+
+	struct sched_param param;
+	memset(&param, 0, sizeof(sched_param));
+	param.sched_priority = 99;
+	fprintf(stderr, "setting scheduler\n");
+	int ret = sched_setscheduler(0, SCHED_FIFO, &param);
+	if(ret==-1){
+		fprintf(stderr, "WARNING Failed to set priority, errno = %d\n", errno);
+		fprintf(stderr, "This seems to be a problem with ADB, the scheduler\n");
+		fprintf(stderr, "should work properly when this is a background process\n");
+	}
+	// check
+	ret = sched_getscheduler(0);
+	if(ret!=SCHED_FIFO){
+		fprintf(stderr, "WARNING: failed to set scheduler\n");
+	}
+	else{
+		// even thought this is a success, print to stderr to that it shows up
+		// in the correct order. stdout logs in journalctl are usually out of
+		// sync with stderr
+		fprintf(stderr, "INFO: set FIFO priority successfully!\n");
+	}
+
+	// The threads created by libmodal_pipe after this should inherit this
+	// priority, TODO validate this
 
     // Set the main running flag to 1 to indicate that we are running
     main_running = 1;
