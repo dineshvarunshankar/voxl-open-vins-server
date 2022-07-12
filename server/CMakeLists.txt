@@ -51,7 +51,6 @@ include_directories(
     /usr/include/boost
 )
 
-message(WARNING ${Boost_LIBRARIES}     ${Boost_INCLUDE_DIRS}     ${OpenCV_INCLUDE_DIRS})
 # Add the target libraries
 target_link_libraries(${SERVERNAME}
     pthread

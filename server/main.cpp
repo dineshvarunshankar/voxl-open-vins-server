@@ -92,6 +92,7 @@ static pthread_t health_thread;
 static volatile int64_t last_imu_timestamp_ns = 0;
 // this will need to be populated per camera before we start referencing it
 static std::vector<int64_t> last_cam_timestamps_ns(MAX_CAMERAS);
+static std::vector<camera_setup> camera_properties(16);
 static volatile int64_t last_real_pose_timestamp_ns = 0;
 static volatile int64_t last_sent_timestamp_ns = 0;
 
@@ -673,11 +674,12 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     int64_t cam_timestamp_ns = meta.timestamp_ns;
     cam_timestamp_ns += meta.exposure_ns / 2;
 
-    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 500000000)) {
+    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 1000000000)) {
         global_error_codes |= ERROR_CODE_DROPPED_CAM;
-        pipe_client_flush(ch);
-        pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);   
-        fprintf(stderr, "ERROR detected frame older than 0.5s, flushing cam pipe\n");
+        // pipe_client_flush(ch);
+        // pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);
+        // fprintf(stderr, "ERROR detected frame older than 1s, flushing cam pipe\n");
+        fprintf(stderr, "ERROR detected frame older than 1s, skipping this frame\n");
         return;
     }
 
@@ -698,7 +700,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
             global_error_codes |= ERROR_CODE_DROPPED_CAM;
             pipe_client_flush(ch);
-            pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);   
+            pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);
             fprintf(stderr, "ERROR waited more than 0.3 seconds for imu to catch up, flushing camera pipe\n");
             return;
         }
@@ -725,9 +727,6 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         vio_manager_data.images.push_back(img);
         vio_manager_data.masks.push_back(mask);
     } else if (meta.format == IMAGE_FORMAT_STEREO_RAW8) {
-        meta.width *= 2;
-        vio_manager_data.sensor_ids.push_back(camera_index + 1);
-
         // Unpack the data into opencv image Mats
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
         cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height));
@@ -736,30 +735,49 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
         cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
-        vio_manager_data.images.push_back(img);
-        vio_manager_data.masks.push_back(mask);
-        vio_manager_data.images.push_back(img2);
-        vio_manager_data.masks.push_back(mask2);
+        if (camera_properties[camera_index] == STEREO_LEFT_ONLY){
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+        }
+        else if (camera_properties[camera_index] == STEREO_RIGHT_ONLY){
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
+        }
+        else {
+            meta.width *= 2;
+            vio_manager_data.sensor_ids.push_back(camera_index + 1);
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
+        }
     } else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
-        // fprintf(stderr, "IN STEREO CB\n");
-        // meta.height *= 1.5;
-        // meta.size_bytes = meta.height * meta.width;
-        // meta.format = IMAGE_FORMAT_NV12;
-
-        // vio_manager_data.sensor_ids.push_back(camera_index + 1);
 
         // Unpack the data into opencv image Mats
         cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        // cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2)); //I think this is right, images are coming out funky in from replay
+        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2));
 
         // Create masks for the ingestion. We want both full images to be ingested
         cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-        // cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
+        cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
 
-        vio_manager_data.images.push_back(img);
-        vio_manager_data.masks.push_back(mask);
-        // vio_manager_data.images.push_back(img2);
-        // vio_manager_data.masks.push_back(mask2);
+        if (camera_properties[camera_index] == STEREO_LEFT_ONLY){
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+        }
+        else if (camera_properties[camera_index] == STEREO_RIGHT_ONLY){
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
+        }
+        else {
+            // meta.width *= 2;
+            meta.size_bytes = meta.height * meta.width;
+            vio_manager_data.sensor_ids.push_back(camera_index + 1);
+            vio_manager_data.images.push_back(img);
+            vio_manager_data.masks.push_back(mask);
+            vio_manager_data.images.push_back(img2);
+            vio_manager_data.masks.push_back(mask2);
+        }
     }
 
     // Ingest the data
@@ -791,6 +809,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     // so basically when we call this, we need to make sure that we update the meta for the size of our entire concatted image
     // meta is going to be updated in the handling per image type, if stereo we gotta multiply the width by 2 and recalc size bytes if nv
     _publish(meta, vio_manager_data.images);
+
     return;
 }
 
@@ -897,7 +916,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
     // better access to the feature database
     std::vector<Eigen::Vector3d> msckf_last_features = vio_manager->get_good_features_MSCKF();
     std::vector<Eigen::Vector3d> curr_slam_features = vio_manager->get_features_SLAM();
-    std::vector<std::pair<int, cv::Point2f>> curr_pixel_locs = vio_manager->get_pixel_loc_features();
+    std::vector<pixel_features> curr_pixel_locs = vio_manager->get_pixel_loc_features();
 
     n_good_points = msckf_last_features.size() + curr_slam_features.size();
 
@@ -1066,12 +1085,20 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
     // if someone has subscribed to the overlay, draw it
     if(pipe_server_get_num_clients(OVERLAY_CH) > 0){
+        // changing the logic here: gonna create a frame with the features drawn on each image
+        // then gonna smash that memory together, add the bars 
 
+        cv::Mat combined_image = images[0];
 
-        int orig_bytes = meta.height * meta.width;
+        for (unsigned int i = 1; i < images.size(); i++){
+            hconcat(combined_image, images[i], combined_image);
+        }
+
+        int orig_bytes = combined_image.rows * combined_image.cols;
         draw_meta = meta;
         draw_meta.format = IMAGE_FORMAT_RAW8;
-        draw_meta.height = meta.height + DRAW_BONUS_ROWS_TOP + DRAW_BONUS_ROWS_BOT;
+        draw_meta.height = combined_image.rows + DRAW_BONUS_ROWS_TOP + DRAW_BONUS_ROWS_BOT;
+        draw_meta.width = combined_image.cols;
         draw_meta.size_bytes = draw_meta.width * draw_meta.height;
 
         // allocate memory for the overlay if this is the first time through
@@ -1079,33 +1106,31 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
             draw_frame = (uint8_t *)malloc(draw_meta.size_bytes);
         }
 
+
         // blank out the top rows
         memset(draw_frame, 0, draw_meta.width * DRAW_BONUS_ROWS_TOP);
-
-        //memcpy image to global
-        uint8_t* start_of_img = draw_frame + (draw_meta.width * DRAW_BONUS_ROWS_TOP);
-
-        // is this safe ???
-        for (unsigned int i = 0; i < images.size(); i++){
-            start_of_img = draw_frame + ((i+1) * (draw_meta.width * DRAW_BONUS_ROWS_TOP));
-            memcpy(start_of_img, images[0].data, orig_bytes);
-        }
 
         // blank out bottom rows
         uint8_t* start_of_bottom = draw_frame + (draw_meta.width * DRAW_BONUS_ROWS_TOP) + orig_bytes;
         memset(start_of_bottom, 0, draw_meta.width * DRAW_BONUS_ROWS_BOT);
+        
+        uint8_t* start_of_img = draw_frame + (draw_meta.width * DRAW_BONUS_ROWS_TOP);
+        memcpy(start_of_img, combined_image.data, combined_image.rows * combined_image.cols);
 
         // write strings for top bar
         char output_string[128];
         sprintf(output_string, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
                             s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);
-        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, 9);
+        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5+draw_meta.width/3, 9);
+
+        // we need to draw our features per frame
+        int image_step = draw_meta.width / images.size();
 
         // draw in-state and out-of-state points
         for (unsigned int i = 0; i < curr_pixel_locs.size(); i++){
-            if (curr_pixel_locs[i].first == INS_FEAT_ID) cCharacter_draw_dchar(draw_frame, draw_meta.width, draw_meta.height, 'O', curr_pixel_locs[i].second.x - 4, curr_pixel_locs[i].second.y + DRAW_BONUS_ROWS_TOP - 6, 255);
+            if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID) cCharacter_draw_dchar(draw_frame, draw_meta.width, draw_meta.height, 'O', curr_pixel_locs[i].location.x - 4 + (curr_pixel_locs[i].camera_id * image_step), curr_pixel_locs[i].location.y + DRAW_BONUS_ROWS_TOP - 6, 255);
             else if (show_extra_points_on_overlay){
-               cCharacter_draw_plus(draw_frame, draw_meta.width, draw_meta.height, curr_pixel_locs[i].second.x, curr_pixel_locs[i].second.y + DRAW_BONUS_ROWS_TOP - 6);
+               cCharacter_draw_plus(draw_frame, draw_meta.width, draw_meta.height, curr_pixel_locs[i].location.x + (curr_pixel_locs[i].camera_id * image_step), curr_pixel_locs[i].location.y + DRAW_BONUS_ROWS_TOP - 6);
                n_oos_points++;
             } 
         }
@@ -1119,7 +1144,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
          sprintf(output_string, "ex(ms): %6.1f Gain: %5d %s",
                             draw_meta.exposure_ns/1000000.0, draw_meta.gain, oos_pts_string);
-        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9);
+        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5+draw_meta.width/3, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9);
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*) draw_frame);
@@ -1226,6 +1251,11 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     for (size_t i = 0; i < MAX_CAMERAS; i++) {
         // Set the camera type
         if (cam_info_vec[i].enable) {
+            if (cam_info_vec[i].cam_mode == STEREO_RIGHT_ONLY){
+                // if right only, we need to just skip the left camera properties
+                cam_info_vec[i+1].enable = true;
+                continue;
+            }
             // ov uses camequi model to represent fisheye cameras, and the radtan model for standard lenses
             if (cam_info_vec[i].is_fisheye) {
                 cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
@@ -1239,8 +1269,12 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
             vio_manager_options.camera_extrinsics[actual_index] = cam_info_vec[i].cam_wrt_imu;
             last_cam_timestamps_ns.push_back(0);
 
+            if (cam_info_vec[i].cam_mode == STEREO_LEFT_ONLY){
+                // if left only, we need to just bounce over the next item in our vector
+                i+=1;
+            }
+
             actual_index++;
-            // break;
         }
     }
     vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
@@ -1396,6 +1430,8 @@ static int connect_client_pipes(void) {
         if (cam_info_vec[i].enable && cam_info_vec[i].name[0] != '\0') {
             memset(full_pipe, '\0', CHAR_BUF_SIZE);
             int channel_number = CAMERA_CH_START_OFFSET + actual_index;
+            camera_properties[actual_index] = cam_info_vec[i].cam_mode;
+
             if (pipe_expand_location_string(cam_info_vec[i].name, full_pipe) < 0) {
                 fprintf(stderr, "ERROR: unable to expand location string with camera %s\n", cam_info_vec[i].name);
                 return -1;
@@ -1412,7 +1448,7 @@ static int connect_client_pipes(void) {
 
 
             // if stereo, the right camera is going to use id+1 for its images, so we need to make space for that
-            if (cam_info_vec[i].is_stereo) {
+            if (cam_info_vec[i].cam_mode == STEREO) {
                 actual_index += 1;
                 // also need to skip the NEXT camera in the vector, since it should be the same topic, just a pair
                 i += 1;
