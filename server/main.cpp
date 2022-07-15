@@ -623,7 +623,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
 
 #ifdef PLATFORM_QRB5165
 // for qrb5165 only (right now) set the camera processing thread to run on 
-// CPU 7 which is the fastest core
+// CPUas 4-7, faster cores
 static void _check_and_set_affinity(void)
 {
     // only do this once
@@ -634,13 +634,12 @@ static void _check_and_set_affinity(void)
     pthread_t thread;
     thread = pthread_self();
 
-    /* Set affinity mask to include CPUs 7 only */
+    /* Set affinity mask to include CPUs 7 6 5 only */
     CPU_ZERO(&cpuset);
     CPU_SET(7, &cpuset);
 	CPU_SET(6, &cpuset);
-
-    // CPU_SET(7, &cpuset);
-    // CPU_SET(7, &cpuset);
+    // CPU_SET(5, &cpuset);
+    // CPU_SET(4, &cpuset);
 
     if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
         perror("pthread_setaffinity_np");
@@ -668,20 +667,37 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     _check_and_set_affinity();
 #endif
 
+
+    static bool did_last_flush = false;
+    static int64_t last_flush_time_ns = 0;
+
+    // if (did_last_flush){
+        // fprintf(stderr, "NEXT FRAME RECEIVED AFTER %6.5fms\n", (_apps_time_monotonic_ns() - last_flush_time_ns)/1000000.);
+        // did_last_flush = false;
+    // }
+
+    // if (pipe_client_bytes_in_pipe(ch)){
+    //     fprintf(stderr, "backed up. returning\n");
+    //     return;
+    // }
+
     int camera_index = ch - CAMERA_CH_START_OFFSET;
 
     // Make the timestamp be the center of the exposure
     int64_t cam_timestamp_ns = meta.timestamp_ns;
     cam_timestamp_ns += meta.exposure_ns / 2;
 
-    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 1000000000)) {
-        global_error_codes |= ERROR_CODE_DROPPED_CAM;
-        // pipe_client_flush(ch);
-        // pipe_client_set_pipe_size(ch, 1280*800*1.5*2*60);
-        // fprintf(stderr, "ERROR detected frame older than 1s, flushing cam pipe\n");
-        fprintf(stderr, "ERROR detected frame older than 1s, skipping this frame\n");
-        return;
-    }
+    // if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
+    //     global_error_codes |= ERROR_CODE_DROPPED_CAM;
+    //     // pipe_client_set_pipe_size(ch, 1280*800*1.5*2*30);
+    //     // pipe_client_flush(ch);
+    //     // pipe_client_set_pipe_size(ch, 1280*800*1.5*2*30);
+    //     // fprintf(stderr, "ERROR detected frame older than 0.3s, flushing cam pipe\n");
+    //     // fprintf(stderr, "ERROR detected frame older than 1s, skipping this frame\n");
+    //     return;
+    // }
+
+    // did_last_flush = false;
 
     // flag that camera data is active, skip frame is imu is disconnected
     is_cam_connected = 1;
@@ -937,8 +953,6 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
         is_initialized = true;
     }
 
-
-
     // sometimes qvio will report covariance as invalid but state is still OKAY
     // this is NOT alright, in this case manually set the state to failed.
     if(cov_plus(3,3)<=0.0f || cov_plus(4,4)<=0.0f || cov_plus(5,5)<=0.0f){
@@ -1015,8 +1029,8 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
     // GRAVITY ALIGNMENT WITH QVIO
     // Z AND Y AXES MUST BE FLIPPED
-    // s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1];
-    // s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
+    s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1];
+    s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
 
     // pose covariance diagonals, 6 entries
 	s.pose_covariance[0] =  (float) cov_plus(0, 0);
@@ -1085,6 +1099,8 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
     // if someone has subscribed to the overlay, draw it
     if(pipe_server_get_num_clients(OVERLAY_CH) > 0){
+        // TODO: 
+        // create an image grid/mosaic with tiled cams, not sure how visible everything would be
         // changing the logic here: gonna create a frame with the features drawn on each image
         // then gonna smash that memory together, add the bars 
 
@@ -1148,6 +1164,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images)
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*) draw_frame);
+        int64_t t_overlay_end = _apps_time_monotonic_ns();
     }
 
     return;
@@ -1234,7 +1251,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     /// FEATURE INITIALIZER OPTIONS ///
     vio_manager_options.featinit_options.triangulate_1d = false;
     vio_manager_options.featinit_options.refine_features = false;
-    vio_manager_options.featinit_options.max_runs = 5;
+    vio_manager_options.featinit_options.max_runs = 1;
     vio_manager_options.featinit_options.init_lamda = 1e-3;
     vio_manager_options.featinit_options.max_lamda = 1e6;
     vio_manager_options.featinit_options.min_dx = 1e-6;
@@ -1242,8 +1259,8 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.featinit_options.lam_mult = 10;
     vio_manager_options.featinit_options.min_dist = 0.1;
     vio_manager_options.featinit_options.max_dist = 16;
-    vio_manager_options.featinit_options.max_baseline = 10;
-    vio_manager_options.featinit_options.max_cond_number = 1000000;
+    vio_manager_options.featinit_options.max_baseline = 0.08;
+    vio_manager_options.featinit_options.max_cond_number = 10000;
 
     /// CAMERA INTRINSICS + EXTRINSICS ///
     int actual_index = 0;
@@ -1486,7 +1503,7 @@ int main(int argc, char* argv[]) {
 
 	struct sched_param param;
 	memset(&param, 0, sizeof(sched_param));
-	param.sched_priority = 99;
+	param.sched_priority = 95;
 	fprintf(stderr, "setting scheduler\n");
 	int ret = sched_setscheduler(0, SCHED_FIFO, &param);
 	if(ret==-1){
