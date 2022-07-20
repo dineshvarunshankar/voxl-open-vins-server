@@ -215,6 +215,22 @@ extern double knn_ratio;
 extern bool downsample_cams;
 extern bool use_multithreading;
 extern bool use_mask;
+extern bool use_aruco;
+
+/// FEATURE INITIALIZER OPTIONS ///
+extern bool triangulate_1d;
+extern bool refine_features;
+extern int max_runs;
+extern double init_lamda;
+extern double max_lamda;
+extern double min_dx;
+extern double min_dcost;
+extern double lam_mult;
+extern double min_dist;
+extern double max_dist;
+extern double max_baseline;
+extern double max_cond_number;
+
 
 // read only our own config file without printing the contents
 int config_file_read(void);

@@ -13,18 +13,10 @@ libmodal-json
 libmodal-pipe
 voxl-mpa-tools
 voxl-opencv
-voxl-ceres-solver
+voxl-open-vins
 "
 
-DEPS_APQ8096="
-libmodal-json
-libmodal-pipe
-voxl-mpa-tools
-voxl-opencv
-voxl-ceres-solver
-"
-# voxl-boost, eigen3 need to be dealt with
-# eigen3 is used by other projects, may be packaged up somewhere already
+DEPS_APQ8096=""
 
 ## this list is just for tab-completion
 ## it's not an exhaustive list of platforms available.
@@ -87,25 +79,11 @@ if [ "$MODE" == "DEB" ]; then
 	LINE="deb [trusted=yes] http://voxl-packages.modalai.com/ ./dists/$PLATFORM/$SECTION/binary-arm64/"
 	sudo echo "${LINE}" > ${DPKG_FILE}
 
-	## make sure we have the latest package index
-	## only pull from voxl-packages to save time
-	sudo apt-get update -o Dir::Etc::sourcelist="sources.list.d/modalai.list" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0"
+	sudo apt update
 
 	## install the user's list of dependencies
 	echo "installing: $DEPS_QRB5165"
 	sudo apt install -y $DEPS_QRB5165
-
-	sudo apt update
-	echo "installing: eigen3 and boost"
-	sudo apt install -y libeigen3-dev:arm64
-	sudo apt install -y libboost-filesystem-dev:arm64
-	sudo apt install -y libboost-thread-dev:arm64
-	sudo apt install -y libboost-date-time-dev:arm64
-
-	echo "installing: temporary openvins"
-	sudo apt install -y ./tmp_pkgs/voxl-open-vins*
-
-	sudo apt install -y libgoogle-glog-dev
 
 # install IPK packages with opkg
 else

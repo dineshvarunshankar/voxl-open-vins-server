@@ -35,7 +35,6 @@
 #include <utils/quat_ops.h>
 
 #include <modal_json.h>
-#include <rc_math.h>
 #include <stdio.h>
 #include <voxl_common_config.h>
 
@@ -109,6 +108,7 @@ double zupt_chi2_multiplier;
 double zupt_sigma_px;
 
 bool use_stereo;
+bool use_aruco;
 
 /// ZUPT OPTIONS ///
 bool try_zupt;
@@ -129,8 +129,22 @@ bool downsample_cams;
 bool use_multithreading;
 bool use_mask;
 
-extern std::string log_path;
+/// FEATURE INITIALIZER OPTIONS ///
+bool triangulate_1d;
+bool refine_features;
+int max_runs;
+double init_lamda;
+double max_lamda;
+double min_dx;
+double min_dcost;
+double lam_mult;
+double min_dist;
+double max_dist;
+double max_baseline;
+double max_cond_number;
 
+
+extern std::string log_path;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
@@ -211,9 +225,8 @@ static void create_ov_extrinsics(rc_tf_t transform, Eigen::Matrix<double, 7, 1> 
     }
     cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
     cam_wrt_imu.block(4, 0, 3, 1) = translation;
-    std::cout << "CAM ROTATION MATRIX:" << std::endl << rotation_par_wrt_ch << std::endl;
-    std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
-
+    // std::cout << "CAM ROTATION MATRIX:" << std::endl << rotation_par_wrt_ch << std::endl;
+    // std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
     return;
 }
 
@@ -248,8 +261,8 @@ static void create_ov_extrinsics(vcc_extrinsic_t &extrins, Eigen::Matrix<double,
     
     cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
     cam_wrt_imu.block(4, 0, 3, 1) = translation;
-    std::cout << "CAM ROTATION MATRIX:" << std::endl << rotation_par_wrt_ch << std::endl;
-    std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
+    // std::cout << "CAM ROTATION MATRIX:" << std::endl << rotation_par_wrt_ch << std::endl;
+    // std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
     return;
 }
 
@@ -810,7 +823,7 @@ int config_file_print(void) {
     printf("=============================ZUPT================================\n");
     printf("try zupt:                         %s\n", try_zupt ? "true" : "false");
     printf("zupt max velocity:                %6.5f\n", zupt_max_velocity);
-    printf("zupt_only_at_beginning:           %s\n", zupt_only_at_beginning ? "true" : "false");
+    printf("zupt only at beginning:           %s\n", zupt_only_at_beginning ? "true" : "false");
     printf("zupt noise multiplier:            %6.5f\n", zupt_noise_multiplier);
     printf("zupt max disparity:               %6.5f\n", zupt_max_disparity);
     printf("=================================================================\n");
@@ -826,6 +839,21 @@ int config_file_print(void) {
     printf("use multithreading:               %s\n", use_multithreading ? "true" : "false");
     printf("use mask:                         %s\n", use_mask ? "true" : "false");
     printf("use stereo:                       %s\n", use_stereo ? "true" : "false");
+    printf("use aruco:                        %s\n", use_aruco ? "true" : "false");
+    printf("=================================================================\n");
+    printf("========================FEATURE INITIALIZER======================\n");
+    printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
+    printf("refine features:                  %s\n", refine_features ? "true" : "false");
+    printf("max runs:                         %d\n", max_runs);
+    printf("init lamda:                       %6.5f\n", init_lamda);
+    printf("max lamda:                        %6.5f\n", max_lamda);
+    printf("min dx:                           %6.5f\n", min_dx);
+    printf("min dcost:                        %6.5f\n", min_dcost);
+    printf("lam mult:                         %6.5f\n", lam_mult);
+    printf("min dist:                         %6.5f\n", min_dist);
+    printf("max dist:                         %6.5f\n", max_dist);
+    printf("max baseline:                     %6.5f\n", max_baseline);
+    printf("max cond number:                  %6.5f\n", max_cond_number);
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -884,10 +912,10 @@ int config_file_read(void) {
     // auto reset features
 	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
 	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		10.0f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.1f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.5f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.5f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
-	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		1);
+	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		-1);
 	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s,1.0f);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
@@ -898,7 +926,7 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 1);
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
-    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 15);
+    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 12);
     json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
     json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 64);
     json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 64);
@@ -911,15 +939,15 @@ int config_file_read(void) {
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
     json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 1.5);
-    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 0.6);
+    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.0);
 
     json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 0.0002);
     json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.565e-06);
-    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.005333);
-    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.000357402);
+    json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.05333);
+    json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.00357402);
 
-    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 10.);
-    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 100.);
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 5.);
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.);
 
     json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 5.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.);
@@ -927,23 +955,38 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
-    json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 0);
+    json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.5);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.0);
 
     json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
     json_fetch_int_with_default(parent, "num_pts", &num_pts, 85);
-    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 25);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 65);
     json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
     json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
     json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
+
+    json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
+    json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
+    json_fetch_int_with_default(parent, "max_runs", &max_runs, 1);
+    json_fetch_double_with_default(parent, "init_lamda", &init_lamda, 1e-3);
+    json_fetch_double_with_default(parent, "max_lamda", &max_lamda, 1e6);
+    json_fetch_double_with_default(parent, "min_dx", &min_dx, 1e-6);
+    json_fetch_double_with_default(parent, "min_dcost", &min_dcost, 1e-6);
+    json_fetch_double_with_default(parent, "lam_mult", &lam_mult, 10);
+    json_fetch_double_with_default(parent, "min_dist", &min_dist, 0.1);
+    json_fetch_double_with_default(parent, "max_dist", &max_dist, 16);
+    json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 0.08);
+    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 50000);
+
     json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
-    json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 0);
+    json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 1);
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
+    json_fetch_bool_with_default(parent, "use_aruco", (int *)&use_aruco, 0);
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

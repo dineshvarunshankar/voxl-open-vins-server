@@ -1,0 +1,11 @@
+0.2.0
+    * major cmake updates
+    * major dependency restructure, ci setup
+    * exposed final params
+    * added back angular velocity + all health monitors
+    * cleaned up config logic
+    * added saved configs for reference
+    * added voxl-configure-open-vins script
+    * added basic readme
+0.1.0
+    * first semi functional version

@@ -16,19 +16,14 @@ if (NOT OpenCV_FOUND)
 endif()
 find_package(Boost REQUIRED )
 
-if (BUILD_FOR_X86)
-    set(MODAL_PIPE_LIBRARY modal_pipe)
-    set(MODAL_JSON_LIBRARY modal_json)
-    set(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config)
-else()
-    # Find all the modal AI packages
-    find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
-    find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
-    # find_library(MODAL_CV_LIBRARY modalcv REQUIRED HINTS /usr/lib64)
-    find_library(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config HINTS /usr/lib64)
-    find_library(LIBRC_MATH_LIBRARY NAMES librc_math.so HINTS /usr/lib /usr/lib64 )
-endif()
-
+# Find all the modal AI packages
+find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
+find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
+# find_library(MODAL_CV_LIBRARY modalcv REQUIRED HINTS /usr/lib64)
+find_library(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config REQUIRED HINTS /usr/lib64)
+find_library(LIBOV_CORE NAMES libov_core_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
+find_library(LIBOV_MSCKF NAMES libov_msckf_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
+find_library(LIB_CERES NAMES libceres.a REQUIRED HINTS /usr/lib /usr/lib64 )
 
 # Create the Server app
 set(SERVERNAME voxl-open-vins-server)
@@ -39,6 +34,10 @@ add_executable(${SERVERNAME} ${all_src_files})
 
 # Add all the include directories
 include_directories(${EIGEN3_INCLUDE_DIR})
+# have to include this, otherwise ceres will moan about not finding glog/logging.h header
+# its a minimal glog that is included with ceres, not the actual glog
+include_directories(/usr/include/ceres/internal/miniglog/)
+
 include_directories(SYSTEM ${SERVERNAME} ${ov_core_SOURCE_DIR}/src)
 include_directories(SYSTEM ${SERVERNAME} ${ov_msckf_SOURCE_DIR}/src)
 
@@ -56,17 +55,17 @@ target_link_libraries(${SERVERNAME}
     pthread
     ${MODAL_JSON_LIBRARY}
     ${MODAL_PIPE_LIBRARY}
-    ${LIBRC_MATH_LIBRARY}
     # ${MODAL_CV_LIBRARY}
     ${VOXL_COMMON_CONFIG_LIBRARY}
-    /usr/local/lib/libov_core_lib.so
-    /usr/local/lib/libov_msckf_lib.so
-    /usr/lib64/libceres.a
-
+    ${LIBOV_CORE}
+    ${LIBOV_MSCKF}
+    ${LIB_CERES}
     ${OpenCV_LIBRARIES}
+
+    # link against specific boost components needed ONLY
     boost_system
     boost_date_time
-    boost_filesystem    # ${Boost_LIBRARIES}
+    boost_filesystem
 )
 
 # The stuff to install 
