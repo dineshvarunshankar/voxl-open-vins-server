@@ -34,6 +34,8 @@
 #include <core/VioManager.h>
 #include <getopt.h>
 #include <modal_pipe.h>
+#include <state/Propagator.h>
+#include <state/State.h>
 #include <utils/quat_ops.h>
 
 #include <iostream>
@@ -42,7 +44,6 @@
 #include "cCharacter.h"
 #include "config_file.h"
 
-
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
 // These are the paths of the named pipe interfaces
@@ -50,14 +51,13 @@
 // the 'complete' interface sends data as a qvio_data_t struct
 // the 'simple' interface uses the simple vio_data_t struct from modal_vio_server_interface.h
 
-#define OV_VIO_EXTENDED_NAME		"ov_extended"
-#define OV_VIO_EXTENDED_LOCATION	MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_EXTENDED_NAME "/"
-#define OV_VIO_SIMPLE_NAME		"ov"
-#define OV_VIO_SIMPLE_LOCATION	MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_SIMPLE_NAME "/"
+#define OV_VIO_EXTENDED_NAME "ov_extended"
+#define OV_VIO_EXTENDED_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_EXTENDED_NAME "/"
+#define OV_VIO_SIMPLE_NAME "ov"
+#define OV_VIO_SIMPLE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_SIMPLE_NAME "/"
 
-
-#define OV_VIO_OVERLAY_NAME		"ov_overlay"
-#define OV_VIO_OVERLAY_LOCATION	MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_OVERLAY_NAME "/"
+#define OV_VIO_OVERLAY_NAME "ov_overlay"
+#define OV_VIO_OVERLAY_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_OVERLAY_NAME "/"
 
 // server channels
 #define EXTENDED_CH 0
@@ -157,6 +157,10 @@ static bool show_extra_points_on_overlay = true;
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 std::string log_path = "";
 
+// mcv feature extraction variables
+std::vector<mcv_fpx_feature_t*> mcv_features;
+mcv_fpx_config_t fpx_config;
+
 // printed if some invalid argument was given
 static void _print_usage(void) {
     printf(
@@ -188,7 +192,6 @@ run manually with the following debug options\n\
 \n");
     return;
 }
-
 
 static bool _parse_opts(int argc, char* argv[]) {
     static struct option long_options[] =
@@ -294,7 +297,6 @@ static bool _parse_opts(int argc, char* argv[]) {
     return false;
 }
 
-
 static int64_t _apps_time_monotonic_ns() {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
@@ -303,7 +305,6 @@ static int64_t _apps_time_monotonic_ns() {
     }
     return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
 }
-
 
 static void _nanosleep(uint64_t ns) {
     struct timespec req, rem;
@@ -318,7 +319,6 @@ static void _nanosleep(uint64_t ns) {
     return;
 }
 
-
 // call this instead of return when it's time to exit to cleans up everything
 static void _quit(int ret) {
     // Close all the open pipe connections
@@ -328,6 +328,15 @@ static void _quit(int ret) {
     // Remove this process ID file
     remove_pid_file(PROCESS_NAME);
 
+    // de-allocate feature buffers
+    if (!mcv_features.empty()){
+        for (int i = 0; i < mcv_features.size(); i++){
+            free(mcv_features[i]);
+        }
+    } 
+
+    mcv_fpx_deinit();
+
     if (ret == 0)
         printf("Exiting Cleanly\n");
     else
@@ -336,54 +345,51 @@ static void _quit(int ret) {
     return;
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////
 // this should be a combination of covariance reporting/analysis AND
 // basically how "spread" are our features across the FOV
 ///////////////////////////////////////////////////////////////////////////////
-static int32_t _vio_quality(Eigen::Matrix<double, 12, 12> &cov_plus,  std::vector<pixel_features> &curr_pixel_locs, unsigned int n_cameras)
-{
-	// vio quality uses covariance and a reset counter
-	// the whole covarience matrix should be zero in case of blowup
-	if(cov_plus(3, 3)<=0.0f || cov_plus(4, 4)<=0.0f || cov_plus(5, 5)<=0.0f){
-		return -1.0f;
-	}
+static int32_t _vio_quality(Eigen::Matrix<double, 12, 12>& cov_plus, std::vector<pixel_features>& curr_pixel_locs, unsigned int n_cameras) {
+    // vio quality uses covariance and a reset counter
+    // the whole covarience matrix should be zero in case of blowup
+    if (cov_plus(3, 3) <= 0.0f || cov_plus(4, 4) <= 0.0f || cov_plus(5, 5) <= 0.0f) {
+        return -1.0f;
+    }
 
-	// pick the maximum (worst) of the velocity diagonal entries
-	float max = cov_plus(6, 6);
-	if(cov_plus(7, 7)>max) max = cov_plus(7, 7);
-	if(cov_plus(8, 8)>max) max = cov_plus(8, 8);
+    // pick the maximum (worst) of the velocity diagonal entries
+    float max = cov_plus(6, 6);
+    if (cov_plus(7, 7) > max) max = cov_plus(7, 7);
+    if (cov_plus(8, 8) > max) max = cov_plus(8, 8);
 
-	// covariance is very small. Scale it by 10^5 to make the output more readable
-	float conf = 0.00001f / max;
+    // covariance is very small. Scale it by 10^5 to make the output more readable
+    float conf = 0.00001f / max;
 
     std::vector<int> feats_per_cam(n_cameras, 0);
     int feat_count = 0;
     // check the spread of our features
     for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
-        if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID){
+        if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID) {
             feat_count++;
             feats_per_cam[curr_pixel_locs[i].camera_id]++;
         }
     }
 
     float min_ratio = 10000;
-    for (unsigned int i = 0; i < n_cameras; i++){
-        if ((feats_per_cam[i] / (float)feat_count) < min_ratio){
-            min_ratio = (feats_per_cam[i] / (float)feat_count); 
+    for (unsigned int i = 0; i < n_cameras; i++) {
+        if ((feats_per_cam[i] / (float)feat_count) < min_ratio) {
+            min_ratio = (feats_per_cam[i] / (float)feat_count);
         }
     }
 
     conf *= (feat_count * min_ratio);
 
-	// now scale up to 100
-	conf *= 100;
+    // now scale up to 100
+    conf *= 100;
     // cap at 99, the flicker between 2 and three digits is annoying in the overlay
-	if (conf > 100) conf = 99;
+    if (conf > 100) conf = 99;
 
-	return (int32_t)conf;
+    return (int32_t)conf;
 }
-
 
 // pose data is published from the same thread that does the camera processing
 // and pose estimation. That freezes, sometimes for over a second, during blowups
@@ -414,24 +420,24 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx) {
         // If last packet is recent enough, nothing to worry about.
         // Otherwise, send out failure packets, this inlcudes global error codes
         // indicating if we are waiting for cam or IMU data
-        if(delay_ns < STALL_TIMEOUT_NS && last_real_pose_timestamp_ns != 0) continue;
+        if (delay_ns < STALL_TIMEOUT_NS && last_real_pose_timestamp_ns != 0) continue;
 
         // flag that we've sent a packet with the current timestamp
         last_sent_timestamp_ns = current_time;
 
-        ext_vio_data_t d;	// complete "extended" vio MPA packet
-        vio_data_t s;	    // simplified vio packet
+        ext_vio_data_t d;  // complete "extended" vio MPA packet
+        vio_data_t s;      // simplified vio packet
 
         // make sure we start with clean data structs and apply any global error codes
         // full extended qvio packet
-        memset(&d,0,sizeof(d));
+        memset(&d, 0, sizeof(d));
         d.v.magic_number = VIO_MAGIC_NUMBER;
         d.v.timestamp_ns = current_time;
         d.v.error_code = global_error_codes | ERROR_CODE_STALLED;
         d.v.state = VIO_STATE_FAILED;
         d.v.quality = -1.0f;
         // simple lib modal pipe standard vio packet
-        memset(&s,0,sizeof(s));
+        memset(&s, 0, sizeof(s));
         s.magic_number = VIO_MAGIC_NUMBER;
         s.timestamp_ns = current_time;
         s.error_code = global_error_codes | ERROR_CODE_STALLED;
@@ -440,7 +446,7 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx) {
 
         // send to both pipes
         pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
-        pipe_server_write(SIMPLE_CH,   (char*)&s, sizeof(vio_data_t));
+        pipe_server_write(SIMPLE_CH, (char*)&s, sizeof(vio_data_t));
 
         // turn off dropped cam frame code now we have informed everyone.
         global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
@@ -448,7 +454,6 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx) {
 
     return NULL;
 }
-
 
 static int _hard_reset(bool is_locked) {
     // lock the mutex before calling any ov api calls
@@ -483,7 +488,6 @@ static int _hard_reset(bool is_locked) {
 
     return 0;
 }
-
 
 // convert roll/pitch/yaw in degrees from extrinsics config file to axis-angle
 static int _tait_bryan_xyz_intrinsic_to_axis_angle(double tb_deg[3], float aa[3]) {
@@ -531,7 +535,6 @@ static int _tait_bryan_xyz_intrinsic_to_axis_angle(double tb_deg[3], float aa[3]
     return 0;
 }
 
-
 // control listens for reset commands
 static void _control_pipe_cb(__attribute__((unused)) int ch, char* string,
                              int bytes, __attribute__((unused)) void* context) {
@@ -559,7 +562,6 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string,
     return;
 }
 
-
 // print when a new client connects to us
 static void _overlay_connect_cb(__attribute__((unused)) int ch,
                                 __attribute__((unused)) int client_id,
@@ -569,7 +571,6 @@ static void _overlay_connect_cb(__attribute__((unused)) int ch,
     return;
 }
 
-
 // print when a client disconnects from us
 static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
                                    __attribute__((unused)) int client_id,
@@ -578,7 +579,6 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
     printf("client \"%s\" disconnected from overlay\n", client_name);
     return;
 }
-
 
 // imu callback registered to the imu server
 static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
@@ -630,7 +630,6 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     return;
 }
 
-
 #define PLATFORM_QRB5165
 
 #ifdef PLATFORM_QRB5165
@@ -670,7 +669,6 @@ static void _check_and_set_affinity(void) {
     return;
 }
 #endif
-
 
 static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
 #ifdef PLATFORM_QRB5165
@@ -818,7 +816,6 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
     return;
 }
 
-
 // return 0 if all is well, otherwise return the reason for blowup
 static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state, Eigen::Matrix<double, 12, 12> cov_plus, int good_features) {
     int64_t current_ts = current_state->_timestamp * 1e9;
@@ -881,7 +878,6 @@ static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state, Eig
     // all is good (for now)
     return 0;
 }
-
 
 static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) {
     std::shared_ptr<ov_msckf::State> current_state = {nullptr};                      // contains a few extra pieces we need
@@ -989,7 +985,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     last_sent_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
     // populate some other data
-    s.quality = _vio_quality(cov_plus, curr_pixel_locs, images.size()); // quality metric still needs work
+    s.quality = _vio_quality(cov_plus, curr_pixel_locs, images.size());  // quality metric still needs work
     s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
     d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
     last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
@@ -1031,12 +1027,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     s.imu_angular_vel[1] = state_plus(11);
     s.imu_angular_vel[2] = state_plus(12);
 
-
     // since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out
     static float grav_vec[3] = {0, 0, 1};
     memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
 
     // limit the number of features to what fits in our pipe packet
+    // TODO figure out why these viz weirdly
     d.n_total_features = curr_slam_features.size() + msckf_last_features.size();
     if (d.n_total_features > VIO_MAX_REPORTED_FEATURES) {
         d.n_total_features = VIO_MAX_REPORTED_FEATURES;
@@ -1045,15 +1041,15 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     for (k = 0; k < curr_slam_features.size(); k++) {
         if (k >= VIO_MAX_REPORTED_FEATURES) break;
         d.features[k].tsf[0] = static_cast<float>(curr_slam_features[k].x());
-        d.features[k].tsf[1] = static_cast<float>(curr_slam_features[k].y());
-        d.features[k].tsf[2] = static_cast<float>(curr_slam_features[k].z());
+        d.features[k].tsf[1] = -(static_cast<float>(curr_slam_features[k].y()));
+        d.features[k].tsf[2] = -(static_cast<float>(curr_slam_features[k].z()));
     }
     if (k < VIO_MAX_REPORTED_FEATURES) {
         for (unsigned int i = 0; i < msckf_last_features.size(); i++) {
             if (k >= VIO_MAX_REPORTED_FEATURES) break;
             d.features[i].tsf[0] = static_cast<float>(msckf_last_features[i].x());
-            d.features[i].tsf[1] = static_cast<float>(msckf_last_features[i].y());
-            d.features[i].tsf[2] = static_cast<float>(msckf_last_features[i].z());
+            d.features[i].tsf[1] = -(static_cast<float>(msckf_last_features[i].y()));
+            d.features[i].tsf[2] = -(static_cast<float>(msckf_last_features[i].z()));
             k++;
         }
     }
@@ -1204,6 +1200,38 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     return;
 }
 
+static int setup_fpx(int n_cameras) {
+    ////////////////////////////////////////////////////////////////////////////
+    // initialize feature point extractor
+    ////////////////////////////////////////////////////////////////////////////
+    mcv_fpx_config_t fpx_config;
+    fpx_config.width = 1280;  // TODO pull this dynamically
+    fpx_config.height = 800;  // TODO pull this dynamically
+    // fpx_config.mode = MCV_FPX_PEAK_8x8;
+    fpx_config.mode = MCV_FPX_ZONE;
+    fpx_config.nms_mode = MCV_FPX_5_TAP_NMS;
+    fpx_config.score_threshold = 80;
+    fpx_config.robustness = 100;  // 0-127, default 10
+
+    int feature_buf_size;
+    if (mcv_fpx_init(fpx_config, &feature_buf_size)) {
+        return -1;
+    }
+
+    // malloc required memory for feature output
+    printf("allocating %d bytes for features\n", feature_buf_size);
+    mcv_features.resize(n_cameras);
+
+    for (int i = 0; i <n_cameras; i++){
+        mcv_features[i] = (mcv_fpx_feature_t*)malloc(feature_buf_size);
+    }
+
+    if(mcv_dcm_init(1280, 800, n_cameras)){
+		return -1;
+	}
+
+    return 0;
+}
 
 static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     ov_msckf::VioManagerOptions vio_manager_options;
@@ -1229,7 +1257,9 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_options.init_window_time = init_window_time;
     vio_manager_options.init_options.init_imu_thresh = init_imu_thresh;
     vio_manager_options.init_options.init_dyn_num_pose = max_clone_size;
-    vio_manager_options.init_options.init_max_disparity = 0;
+    // TODO expose
+    vio_manager_options.init_options.init_max_disparity = 10000;
+    vio_manager_options.init_options.init_dyn_use = false;
 
     /// IMU NOISE OPTIONS ///
     vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
@@ -1325,14 +1355,22 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
             actual_index++;
         }
     }
+
     vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
     vio_manager_options.init_options.camera_extrinsics = vio_manager_options.camera_extrinsics;
     // this needs to be set in both locations, for some reason the updaters address both in different stages
     vio_manager_options.init_options.num_cameras = actual_index;
     vio_manager_options.state_options.num_cameras = actual_index;
+
+    /// MCV feature extraction
+    // TODO ask if i can run two of these at once, otherwise its too slow
+    // setup and initalize stuff
+    int ret = setup_fpx(actual_index);  // disregard return value for now
+    // assign the ptr
+    vio_manager_options._mcv_feature_ptr = &mcv_features;
+
     return vio_manager_options;
 }
-
 
 static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
     fprintf(stderr, "WARNING: disconnected from camera server, resetting VIO\n");

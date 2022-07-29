@@ -31,7 +31,9 @@ list(APPEND ALL_TARGETS ${TARGET})
 find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
 find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 
-target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY})
+target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} 
+/usr/lib64/libmodalcv.so
+)
 
 set(TARGET2 voxl-evaluate-vio)
 file(GLOB all_src_files "*/*.cpp" "*/*.c" "./voxl-evaluate*")
@@ -49,7 +51,9 @@ include_directories(
 
 list(APPEND ALL_TARGETS ${TARGET2})
 
-target_link_libraries(${TARGET2} LINK_PUBLIC ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} pthread ${Boost_LIBRARIES})
+target_link_libraries(${TARGET2} LINK_PUBLIC ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} pthread ${Boost_LIBRARIES} 
+/usr/lib64/libmodalcv.so
+)
 
 
 install(

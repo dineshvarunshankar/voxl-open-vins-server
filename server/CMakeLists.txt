@@ -28,6 +28,11 @@ find_library(LIB_CERES NAMES libceres.a REQUIRED HINTS /usr/lib /usr/lib64 )
 # Create the Server app
 set(SERVERNAME voxl-open-vins-server)
 
+# tell the linker not to worry about missing symbols in libraries
+set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_CXX_FLAGS}")
+
+
 # Add all the source files to the app
 file(GLOB all_src_files "*.cpp" "*.c")
 add_executable(${SERVERNAME} ${all_src_files})
@@ -61,7 +66,7 @@ target_link_libraries(${SERVERNAME}
     ${LIBOV_MSCKF}
     ${LIB_CERES}
     ${OpenCV_LIBRARIES}
-
+    /usr/lib64/libmodalcv.so
     # link against specific boost components needed ONLY
     boost_system
     boost_date_time

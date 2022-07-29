@@ -14,6 +14,7 @@ libmodal-pipe
 voxl-mpa-tools
 voxl-opencv
 voxl-open-vins
+libmodal-cv
 "
 
 DEPS_APQ8096=""
