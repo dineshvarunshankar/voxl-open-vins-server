@@ -55,6 +55,32 @@ target_link_libraries(${TARGET2} LINK_PUBLIC ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_
 /usr/lib64/libmodalcv.so
 )
 
+set(TARGET3 voxl-test-features)
+file(GLOB all_src_files "./voxl-test*")
+
+
+add_executable(${TARGET3} ${all_src_files})
+
+include_directories(${EIGEN3_INCLUDE_DIR} 
+${OpenCV_INCLUDE_DIRS}
+)
+
+include_directories(
+	./
+    ${Boost_INCLUDE_DIRS}
+)
+
+list(APPEND ALL_TARGETS ${TARGET3})
+
+# tell the linker not to worry about missing symbols in libraries
+set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_CXX_FLAGS}")
+
+target_link_libraries(${TARGET3} LINK_PUBLIC ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} pthread ${Boost_LIBRARIES} 
+/usr/lib64/libmodalcv.so 
+${OpenCV_LIBRARIES}
+)
+
 
 install(
 	TARGETS ${ALL_TARGETS}

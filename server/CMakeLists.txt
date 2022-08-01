@@ -23,7 +23,7 @@ find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 find_library(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config REQUIRED HINTS /usr/lib64)
 find_library(LIBOV_CORE NAMES libov_core_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
 find_library(LIBOV_MSCKF NAMES libov_msckf_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
-find_library(LIB_CERES NAMES libceres.a REQUIRED HINTS /usr/lib /usr/lib64 )
+find_library(LIB_CERES NAMES libceres.so.1 REQUIRED HINTS /usr/lib /usr/lib64 )
 
 # Create the Server app
 set(SERVERNAME voxl-open-vins-server)
