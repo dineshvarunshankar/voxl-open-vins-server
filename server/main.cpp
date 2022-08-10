@@ -330,12 +330,13 @@ static void _quit(int ret) {
 
     // de-allocate feature buffers
     if (!mcv_features.empty()){
-        for (int i = 0; i < mcv_features.size(); i++){
+        for (size_t i = 0; i < mcv_features.size(); i++){
             free(mcv_features[i]);
         }
     } 
 
     mcv_fpx_deinit();
+    mcv_dcm_deinit();
 
     if (ret == 0)
         printf("Exiting Cleanly\n");
@@ -634,7 +635,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
 
 #ifdef PLATFORM_QRB5165
 // for qrb5165 only (right now) set the camera processing thread to run on
-// CPUs 6-7, faster cores
+// CPU 7, big boy
 static void _check_and_set_affinity(void) {
     // only do this once
     static int has_set = 0;
@@ -644,10 +645,9 @@ static void _check_and_set_affinity(void) {
     pthread_t thread;
     thread = pthread_self();
 
-    /* Set affinity mask to include CPUs 7 6 only */
+    /* Set affinity mask to include CPUs 7 only */
     CPU_ZERO(&cpuset);
     CPU_SET(7, &cpuset);
-    CPU_SET(6, &cpuset);
 
     if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
         perror("pthread_setaffinity_np");
@@ -940,6 +940,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         s.state = VIO_STATE_FAILED;
     }
 
+    if (current_state->error_flag == VIO_STATE_FAILED){
+        fprintf(stderr, "WARNING auto-resetting, EKF starved of good features for too long\n");
+        _hard_reset(true);
+        s.state = VIO_STATE_FAILED;
+    }
+
     // we finished initializing, no longer check for init timeout
     if (s.state == VIO_STATE_OK) {
         init_failure_detector_reset_flag = 0;
@@ -999,7 +1005,9 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
-    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+    // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[images.size()-1]->quat().transpose()) * current_state->_calib_IMUtoCAM[images.size()-1]->pos()) * -1).cast<float>();
+
 
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 3) = current_state->_imu->bias_a_fej().cast<float>();
@@ -1149,6 +1157,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
                 cv::drawMarker(images[curr_pixel_locs[i].camera_id], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
             else if (show_extra_points_on_overlay) {
                 cv::drawMarker(images[curr_pixel_locs[i].camera_id], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
+                // fprintf(stderr, "Drawing oos point at: %d,%d\n", (int)curr_pixel_locs[i].location.x, (int)curr_pixel_locs[i].location.y);
                 n_oos_points++;
             }
         }
@@ -1210,8 +1219,8 @@ static int setup_fpx(int n_cameras) {
     // fpx_config.mode = MCV_FPX_PEAK_8x8;
     fpx_config.mode = MCV_FPX_ZONE;
     fpx_config.nms_mode = MCV_FPX_5_TAP_NMS;
-    fpx_config.score_threshold = 80;
-    fpx_config.robustness = 100;  // 0-127, default 10
+    fpx_config.score_threshold = 2100;
+    fpx_config.robustness = 50;  // 0-127, default 10
 
     int feature_buf_size;
     if (mcv_fpx_init(fpx_config, &feature_buf_size)) {
@@ -1308,7 +1317,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.min_px_dist = min_px_dist;
     vio_manager_options.knn_ratio = knn_ratio;
     vio_manager_options.downsample_cameras = downsample_cams;
-    vio_manager_options.use_multi_threading = use_multithreading;
+    vio_manager_options.use_multi_threading_subs = use_multithreading;
 
     /// FEATURE INITIALIZER OPTIONS ///
     vio_manager_options.featinit_options.triangulate_1d = triangulate_1d;
@@ -1367,7 +1376,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     // setup and initalize stuff
     int ret = setup_fpx(actual_index);  // disregard return value for now
     // assign the ptr
-    vio_manager_options._mcv_feature_ptr = &mcv_features;
+    vio_manager_options.mcv_feature_ptr = &mcv_features;
 
     return vio_manager_options;
 }
