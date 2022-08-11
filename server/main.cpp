@@ -375,14 +375,18 @@ static int32_t _vio_quality(Eigen::Matrix<double, 12, 12>& cov_plus, std::vector
         }
     }
 
-    float min_ratio = 10000;
+    float avg_ratio = 1.;
     for (unsigned int i = 0; i < n_cameras; i++) {
-        if ((feats_per_cam[i] / (float)feat_count) < min_ratio) {
-            min_ratio = (feats_per_cam[i] / (float)feat_count);
-        }
+        avg_ratio += (feats_per_cam[i] / n_cameras);
+
+        // if (feats_per_cam[i] < (float)feat_count/3) {
+            // min_ratio = (feats_per_cam[i] / (float)feat_count);
+        // }
     }
 
-    conf *= (feat_count * min_ratio);
+    // avg_ratio /= 
+
+    conf *= (feat_count*8 / (avg_ratio));
 
     // now scale up to 100
     conf *= 100;
@@ -612,12 +616,12 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
         vio_manager_data.timestamp = data_array[i].timestamp_ns / 1000000000.0;  // (seconds)
 
         vio_manager_data.wm(0, 0) = data_array[i].gyro_rad[0];
-        vio_manager_data.wm(1, 0) = data_array[i].gyro_rad[1];
-        vio_manager_data.wm(2, 0) = data_array[i].gyro_rad[2];
+        vio_manager_data.wm(1, 0) = -data_array[i].gyro_rad[1];
+        vio_manager_data.wm(2, 0) = -data_array[i].gyro_rad[2];
 
         vio_manager_data.am(0, 0) = data_array[i].accl_ms2[0];
-        vio_manager_data.am(1, 0) = data_array[i].accl_ms2[1];
-        vio_manager_data.am(2, 0) = data_array[i].accl_ms2[2];
+        vio_manager_data.am(1, 0) = -data_array[i].accl_ms2[1];
+        vio_manager_data.am(2, 0) = -data_array[i].accl_ms2[2];
 
         vio_manager->feed_measurement_imu(vio_manager_data);
 
@@ -706,7 +710,7 @@ static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char*
         if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
             global_error_codes |= ERROR_CODE_DROPPED_CAM;
             pipe_client_flush(ch);
-            pipe_client_set_pipe_size(ch, 1280 * 800 * 1.5 * 2 * 60);
+            // pipe_client_set_pipe_size(ch, 1280 * 800 * 1.5 * 2 * 60);
             fprintf(stderr, "ERROR waited more than 0.3 seconds for imu to catch up, flushing camera pipe\n");
             return;
         }
@@ -992,6 +996,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
     // populate some other data
     s.quality = _vio_quality(cov_plus, curr_pixel_locs, images.size());  // quality metric still needs work
+
     s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
     d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
     last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
@@ -999,9 +1004,18 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     d.last_cam_frame_id = last_frame_frame_id;
     d.last_cam_timestamp_ns = last_frame_timestamp_ns;
 
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
+    // Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = current_state->_imu->Rot_fej().cast<float>();
     Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = current_state->_imu->pos().cast<float>();
     Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = current_state->_imu->vel().cast<float>();
+
+    Eigen::Matrix3d correction_mat;
+    correction_mat << 1,0,0,0,-1,0,0,0,-1;
+    Eigen::Matrix3d final_out;
+        
+    final_out = current_state->_imu->Rot_fej() * correction_mat;
+    final_out =  correction_mat * final_out;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
+    
 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
@@ -1012,10 +1026,22 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 3) = current_state->_imu->bias_a_fej().cast<float>();
 
+    /////////////////////////////////////////////////////////////////////////////////////////////
     // GRAVITY ALIGNMENT WITH QVIO
-    // Z AND Y AXES MUST BE FLIPPED
-    s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1];
+    // Z AND Y AXES MUST BE FLIPPED FOR EVERYTHING
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
     s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
+    s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1];
+    s.vel_imu_wrt_vio[2] = -s.vel_imu_wrt_vio[2];
+    s.vel_imu_wrt_vio[1] = -s.vel_imu_wrt_vio[1];
+
+    // s.T_imu_wrt_vio[0] = -s.T_imu_wrt_vio[0];
+    // float holder =  s.T_imu_wrt_vio[1];
+    // s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1]; 
+    // s.T_imu_wrt_vio[0] = -holder;
+    //-s.T_imu_wrt_vio[1];
+    // s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
 
     // pose covariance diagonals, 6 entries
     s.pose_covariance[0] = (float)cov_plus(0, 0);
@@ -1031,9 +1057,10 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     s.velocity_covariance[11] = cov_plus(8, 8);
 
     // open vins does not estimate this, but reports it
+    // INVERTING Y AND Z AS ABOVE FOR NOW, SHOULD BE IN KALMAN FILTER
     s.imu_angular_vel[0] = state_plus(10);
-    s.imu_angular_vel[1] = state_plus(11);
-    s.imu_angular_vel[2] = state_plus(12);
+    s.imu_angular_vel[1] = -state_plus(11);
+    s.imu_angular_vel[2] = -state_plus(12);
 
     // since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out
     static float grav_vec[3] = {0, 0, 1};
@@ -1210,34 +1237,39 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 }
 
 static int setup_fpx(int n_cameras) {
+    static bool has_initialized = false;
     ////////////////////////////////////////////////////////////////////////////
     // initialize feature point extractor
     ////////////////////////////////////////////////////////////////////////////
-    mcv_fpx_config_t fpx_config;
-    fpx_config.width = 1280;  // TODO pull this dynamically
-    fpx_config.height = 800;  // TODO pull this dynamically
-    // fpx_config.mode = MCV_FPX_PEAK_8x8;
-    fpx_config.mode = MCV_FPX_ZONE;
-    fpx_config.nms_mode = MCV_FPX_5_TAP_NMS;
-    fpx_config.score_threshold = 2100;
-    fpx_config.robustness = 50;  // 0-127, default 10
+    if (!has_initialized){
+        mcv_fpx_config_t fpx_config;
+        fpx_config.width = 1280;  // TODO pull this dynamically
+        fpx_config.height = 800;  // TODO pull this dynamically
+        // fpx_config.mode = MCV_FPX_PEAK_8x8;
+        fpx_config.mode = MCV_FPX_ZONE;
+        fpx_config.nms_mode = MCV_FPX_5_TAP_NMS;
+        fpx_config.score_threshold = 2100;
+        fpx_config.robustness = 50;  // 0-127, default 10
 
-    int feature_buf_size;
-    if (mcv_fpx_init(fpx_config, &feature_buf_size)) {
-        return -1;
+        int feature_buf_size;
+        if (mcv_fpx_init(fpx_config, &feature_buf_size)) {
+            return -1;
+        }
+
+        // malloc required memory for feature output
+        printf("allocating %d bytes for features\n", feature_buf_size);
+        mcv_features.resize(n_cameras);
+
+        for (int i = 0; i <n_cameras; i++){
+            mcv_features[i] = (mcv_fpx_feature_t*)malloc(feature_buf_size);
+        }
+
+        if(mcv_dcm_init(1280, 800, n_cameras)){
+            return -1;
+        }
+
+        has_initialized = true;
     }
-
-    // malloc required memory for feature output
-    printf("allocating %d bytes for features\n", feature_buf_size);
-    mcv_features.resize(n_cameras);
-
-    for (int i = 0; i <n_cameras; i++){
-        mcv_features[i] = (mcv_fpx_feature_t*)malloc(feature_buf_size);
-    }
-
-    if(mcv_dcm_init(1280, 800, n_cameras)){
-		return -1;
-	}
 
     return 0;
 }
@@ -1317,7 +1349,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.min_px_dist = min_px_dist;
     vio_manager_options.knn_ratio = knn_ratio;
     vio_manager_options.downsample_cameras = downsample_cams;
-    vio_manager_options.use_multi_threading_subs = use_multithreading;
+    // vio_manager_options.use_multi_threading_subs = use_multithreading;
 
     /// FEATURE INITIALIZER OPTIONS ///
     vio_manager_options.featinit_options.triangulate_1d = triangulate_1d;
@@ -1372,8 +1404,6 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.state_options.num_cameras = actual_index;
 
     /// MCV feature extraction
-    // TODO ask if i can run two of these at once, otherwise its too slow
-    // setup and initalize stuff
     int ret = setup_fpx(actual_index);  // disregard return value for now
     // assign the ptr
     vio_manager_options.mcv_feature_ptr = &mcv_features;
@@ -1520,7 +1550,7 @@ static int connect_client_pipes(void) {
                 fprintf(stderr, "ERROR: FAILED TO OPEN %s\n", full_pipe);
                 return -1;
             }
-            pipe_client_set_pipe_size(channel_number, 1280 * 800 * 1.5 * 2 * 60);
+            // pipe_client_set_pipe_size(channel_number, 1280 * 800 * 1.5 * 2 * 60);
 
             // if stereo, the right camera is going to use id+1 for its images, so we need to make space for that
             if (cam_info_vec[i].cam_mode == STEREO) {
@@ -1593,9 +1623,15 @@ int main(int argc, char* argv[]) {
     // Connect to the client pipes and start getting data
     if (connect_client_pipes() < 0) _quit(0);
 
-    pthread_attr_t tattr;
-    pthread_attr_init(&tattr);
-    pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // temp disable
+    // open vins will occasionally stall out on init, and the health monitor
+    // will then cause vvpx4 to switch out of position control
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    // pthread_attr_t tattr;
+    // pthread_attr_init(&tattr);
+    // pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
 
     // run until start/stop module catches a signal and changes main_running to 0
     while (main_running) usleep(5000000);
