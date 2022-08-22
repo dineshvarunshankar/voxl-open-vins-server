@@ -1,3 +1,6 @@
+0.2.2
+    * added support for apq8096
+    * fixing dependency structure, using voxl-eigen3 for all and voxl-boost for apq
 0.2.1
     * flipped open vins world, now correcting output pose, velocity, angular velocity, and rotation
     * bug fix radians to degrees for inspect tool

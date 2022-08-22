@@ -13,11 +13,21 @@ libmodal-json
 libmodal-pipe
 voxl-mpa-tools
 voxl-opencv
-voxl-open-vins
 libmodal-cv
+libboost-filesystem-dev:arm64
+libboost-thread-dev:arm64
+libboost-date-time-dev:arm64
+voxl-open-vins
 "
 
-DEPS_APQ8096=""
+DEPS_APQ8096="
+libmodal-json
+libmodal-pipe
+voxl-mpa-tools
+voxl-opencv
+voxl-boost
+voxl-open-vins
+"
 
 ## this list is just for tab-completion
 ## it's not an exhaustive list of platforms available.

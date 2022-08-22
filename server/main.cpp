@@ -157,9 +157,11 @@ static bool show_extra_points_on_overlay = true;
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 std::string log_path = "";
 
+#ifdef BUILD_QRB5165
 // mcv feature extraction variables
 std::vector<mcv_fpx_feature_t*> mcv_features;
 mcv_fpx_config_t fpx_config;
+#endif
 
 // printed if some invalid argument was given
 static void _print_usage(void) {
@@ -328,6 +330,7 @@ static void _quit(int ret) {
     // Remove this process ID file
     remove_pid_file(PROCESS_NAME);
 
+    #ifdef BUILD_QRB5165
     // de-allocate feature buffers
     if (!mcv_features.empty()){
         for (size_t i = 0; i < mcv_features.size(); i++){
@@ -337,6 +340,7 @@ static void _quit(int ret) {
 
     mcv_fpx_deinit();
     mcv_dcm_deinit();
+    #endif
 
     if (ret == 0)
         printf("Exiting Cleanly\n");
@@ -556,6 +560,7 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string,
     // 	pthread_mutex_unlock(&mv_mtx);
     // 	return;
     // }
+
     if (strncmp(string, RESET_VIO_HARD, strlen(RESET_VIO_HARD)) == 0) {
         printf("Client requested hard reset\n");
         _hard_reset(false);  // close and restart the object
@@ -635,9 +640,9 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
     return;
 }
 
-#define PLATFORM_QRB5165
 
-#ifdef PLATFORM_QRB5165
+#ifdef BUILD_QRB5165
+
 // for qrb5165 only (right now) set the camera processing thread to run on
 // CPU 7, big boy
 static void _check_and_set_affinity(void) {
@@ -675,7 +680,8 @@ static void _check_and_set_affinity(void) {
 #endif
 
 static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
-#ifdef PLATFORM_QRB5165
+#ifdef BUILD_QRB5165
+
     _check_and_set_affinity();
 #endif
 
@@ -1036,13 +1042,6 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     s.vel_imu_wrt_vio[2] = -s.vel_imu_wrt_vio[2];
     s.vel_imu_wrt_vio[1] = -s.vel_imu_wrt_vio[1];
 
-    // s.T_imu_wrt_vio[0] = -s.T_imu_wrt_vio[0];
-    // float holder =  s.T_imu_wrt_vio[1];
-    // s.T_imu_wrt_vio[1] = -s.T_imu_wrt_vio[1]; 
-    // s.T_imu_wrt_vio[0] = -holder;
-    //-s.T_imu_wrt_vio[1];
-    // s.T_imu_wrt_vio[2] = -s.T_imu_wrt_vio[2];
-
     // pose covariance diagonals, 6 entries
     s.pose_covariance[0] = (float)cov_plus(0, 0);
     s.pose_covariance[6] = (float)cov_plus(1, 1);
@@ -1176,7 +1175,9 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         char output_string[128];
         sprintf(output_string, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
                 s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);
-        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, 9);
+        // cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, 9);
+        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, 9); //apq tracking cam only
+
 
         // draw in-state and out-of-state points
         for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
@@ -1227,7 +1228,9 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
         sprintf(output_string, "ex(ms): %6.1f Gain: %5d %s",
                 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
-        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9);
+        // cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9);
+        cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9); //apq tracking only
+
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*)draw_frame);
@@ -1235,6 +1238,8 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
     return;
 }
+
+#ifdef BUILD_QRB5165
 
 static int setup_fpx(int n_cameras) {
     static bool has_initialized = false;
@@ -1273,6 +1278,7 @@ static int setup_fpx(int n_cameras) {
 
     return 0;
 }
+#endif
 
 static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     ov_msckf::VioManagerOptions vio_manager_options;
@@ -1403,10 +1409,14 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.init_options.num_cameras = actual_index;
     vio_manager_options.state_options.num_cameras = actual_index;
 
+    #ifdef BUILD_QRB5165
+
     /// MCV feature extraction
     int ret = setup_fpx(actual_index);  // disregard return value for now
     // assign the ptr
     vio_manager_options.mcv_feature_ptr = &mcv_features;
+
+    #endif
 
     return vio_manager_options;
 }

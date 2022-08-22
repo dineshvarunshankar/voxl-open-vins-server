@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.3)
 
 include(GNUInstallDirs)
 
+option(BUILD_QRB5165 "Build the qrb5165 binary" OFF)
+
+if(BUILD_QRB5165)
+    add_definitions(-DBUILD_QRB5165)
+endif()
+
+message(STATUS "qrb build: " ${BUILD_QRB5165})
+
 # Set the compiler flags
 add_compile_options(-Wall -Wextra -Wuninitialized -Wno-unused-variable -Wno-double-promotion -Wno-unused-parameter -Wmissing-declarations -Wno-unused-function -Wno-maybe-uninitialized)
 
@@ -14,7 +22,7 @@ find_package(OpenCV 4 QUIET)
 if (NOT OpenCV_FOUND)
     find_package(OpenCV 3 REQUIRED)
 endif()
-find_package(Boost REQUIRED )
+find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
 
 # Find all the modal AI packages
 find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
@@ -66,12 +74,14 @@ target_link_libraries(${SERVERNAME}
     ${LIBOV_MSCKF}
     ${LIB_CERES}
     ${OpenCV_LIBRARIES}
-    /usr/lib64/libmodalcv.so
-    # link against specific boost components needed ONLY
-    boost_system
-    boost_date_time
-    boost_filesystem
 )
+
+if(BUILD_QRB5165)
+    target_link_libraries(${SERVERNAME} /usr/lib64/libmodalcv.so boost_system boost_date_time boost_filesystem)
+else()
+    target_link_libraries(${SERVERNAME} ${Boost_LIBRARIES})
+endif()
+
 
 # The stuff to install 
 install(

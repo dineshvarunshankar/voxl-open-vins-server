@@ -10,8 +10,10 @@ TOOLCHAIN_QRB5165="/opt/cross_toolchain/aarch64-gnu-7.toolchain.cmake"
 EXTRA_OPTS=""
 
 ## this list is just for tab-completion
-AVAILABLE_PLATFORMS="qrb5165 native"
+AVAILABLE_PLATFORMS="apq8096 qrb5165 native"
 
+# qrb5165 compiler definition, used for qrb5165 specific usage
+BUILD_QRB5165="ON"
 
 print_usage(){
 	echo ""
@@ -31,25 +33,19 @@ print_usage(){
 	echo ""
 }
 
-# # apply patches
-# echo "Applying MAI Patches"
-# patch -uN 3rd_party/open_vins/ov_core/src/init/InertialInitializer.cpp -i patches/inertial_initializer_debug_prints.patch
-# patch -uN 3rd_party/open_vins/ov_msckf/src/core/VioManager.cpp -i patches/vio_manager_cam_ids.patch
-# echo "Done Applying Patches"
-
-
 case "$1" in
-	# apq8096)
-	# 	mkdir -p build32
-	# 	cd build32
-	# 	cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_APQ8096_32} ${EXTRA_OPTS} -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -std=c++11 -L  /usr/arm-linux-gnueabi-2.23/lib -I  /usr/arm-linux-gnueabi-2.23/include" ../
-	# 	make -j$(nproc)
-	# 	cd ../
-	# 	;;
+	apq8096)
+		mkdir -p build64
+		cd build64
+		BUILD_QRB5165="OFF"
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_APQ8096_64} -DBUILD_QRB5165=${BUILD_QRB5165} -DBOOST_ROOT="/usr/include/boost64/" -DCMAKE_BUILD_TYPE=Release ${EXTRA_OPTS} ../
+		make -j$(nproc)
+		cd ../
+		;;
 	qrb5165)
 		mkdir -p build64
 		cd build64
-		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165} -DCMAKE_BUILD_TYPE=Release ${EXTRA_OPTS} ../
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165} -DBUILD_QRB5165=${BUILD_QRB5165} -DCMAKE_BUILD_TYPE=Release ${EXTRA_OPTS} ../
 		make -j$(nproc)
 		cd ../
 		;;

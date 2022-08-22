@@ -30,9 +30,7 @@ list(APPEND ALL_TARGETS ${TARGET})
 find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
 find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 
-target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} 
-    /usr/lib64/libmodalcv.so
-)
+target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
 
 # tell the linker not to worry about missing symbols in libraries
 set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
