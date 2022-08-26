@@ -11,9 +11,7 @@
 DEPS_QRB5165="
 libmodal-json
 libmodal-pipe
-voxl-mpa-tools
 voxl-opencv
-libmodal-cv
 libboost-filesystem-dev:arm64
 libboost-thread-dev:arm64
 libboost-date-time-dev:arm64
@@ -23,7 +21,6 @@ voxl-open-vins
 DEPS_APQ8096="
 libmodal-json
 libmodal-pipe
-voxl-mpa-tools
 voxl-opencv
 voxl-boost
 voxl-open-vins

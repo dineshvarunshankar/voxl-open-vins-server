@@ -24,11 +24,9 @@ if (NOT OpenCV_FOUND)
 endif()
 find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
 
-# Find all the modal AI packages
+# Find extras
 find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
 find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
-# find_library(MODAL_CV_LIBRARY modalcv REQUIRED HINTS /usr/lib64)
-find_library(VOXL_COMMON_CONFIG_LIBRARY voxl_common_config REQUIRED HINTS /usr/lib64)
 find_library(LIBOV_CORE NAMES libov_core_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
 find_library(LIBOV_MSCKF NAMES libov_msckf_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
 find_library(LIB_CERES NAMES libceres.so.1 REQUIRED HINTS /usr/lib /usr/lib64 )
@@ -58,7 +56,6 @@ include_directories(
     ./
     ${OpenCV_INCLUDE_DIRS}
     ${Boost_INCLUDE_DIRS}
-    ${voxl_common_config_INCLUDE_DIRS}
     /usr/local/include/
     /usr/include/boost
 )
@@ -68,8 +65,6 @@ target_link_libraries(${SERVERNAME}
     pthread
     ${MODAL_JSON_LIBRARY}
     ${MODAL_PIPE_LIBRARY}
-    # ${MODAL_CV_LIBRARY}
-    ${VOXL_COMMON_CONFIG_LIBRARY}
     ${LIBOV_CORE}
     ${LIBOV_MSCKF}
     ${LIB_CERES}
@@ -77,7 +72,7 @@ target_link_libraries(${SERVERNAME}
 )
 
 if(BUILD_QRB5165)
-    target_link_libraries(${SERVERNAME} /usr/lib64/libmodalcv.so boost_system boost_date_time boost_filesystem)
+    target_link_libraries(${SERVERNAME} boost_system boost_date_time boost_filesystem)
 else()
     target_link_libraries(${SERVERNAME} ${Boost_LIBRARIES})
 endif()

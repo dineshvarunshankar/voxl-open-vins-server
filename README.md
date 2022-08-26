@@ -5,9 +5,9 @@ VIO solution for VOXL based on open_vins (https://github.com/rpng/open_vins)
 dependencies:
 * libmodal-json
 * libmodal-pipe
-* voxl-mpa-tools
 * voxl-opencv
-* voxl-open-vins
+* voxl-boost
+* voxl-eigen3
 
 This README covers building this package. See docs.modalai.com for usage(eventually).
 

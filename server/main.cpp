@@ -42,6 +42,7 @@
 #include <thread>
 
 #include "cCharacter.h"
+
 #include "config_file.h"
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
@@ -66,10 +67,13 @@
 
 // client channels and config
 #define IMU_CH 0
+#define FEATURE_CH 1
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (1 * 1024 * 1024)  // give ourselves huge buffers
 #define CAM_PIPE_SIZE (256 * 1024 * 1024)         // give ourselves huge buffers
 #define PROCESS_NAME "open-vins-server"
+#define FEATURE_NAME "tracked_feats"
+#define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
 
 // after 300ms with no response, the health monitor thread assumes mvVISLAM
 // has locked up while processing a frame and starts sending messages indicating
@@ -107,14 +111,14 @@ static pthread_t health_thread;
 // cam time is middle of frame. Also last pose to have been received from mvvislam
 static volatile int64_t last_imu_timestamp_ns = 0;
 // this will need to be populated per camera before we start referencing it
-static std::vector<int64_t> last_cam_timestamps_ns(MAX_CAMERAS);
-static std::vector<camera_setup> camera_properties(16);
 static volatile int64_t last_real_pose_timestamp_ns = 0;
 static volatile int64_t last_sent_timestamp_ns = 0;
 
 // state of imu and camera connections
 static volatile int is_imu_connected = 0;
 static volatile int is_cam_connected = 0;
+static volatile int has_received_all_calib = 0;
+static volatile int has_received_all_params = 0;
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -149,19 +153,32 @@ static camera_image_metadata_t draw_meta;
 // set any error codes here for publishing in the data structure
 static uint32_t global_error_codes = 0;
 
+typedef struct camera_info {
+    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
+    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
+    bool is_fisheye;
+    size_t cam_id;
+} camera_info;
+
+static std::vector<camera_info> cam_info_vec;
+static char imu_name[CHAR_BUF_SIZE] = "imu"; // todo read in with calib data
+
+static size_t num_cams = 0;
+
+
+#define VFT_CMD_START   "start"
+#define VFT_CMD_RESTART "restart"
+#define VFT_CMD_PAUSE   "pause"
+
 // function prototypes
 static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images);
+// static void _publish();
+static bool show_extra_points_on_overlay = true;
+
 static int _hard_reset(bool is_locked);
 
-static bool show_extra_points_on_overlay = true;
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 std::string log_path = "";
-
-#ifdef BUILD_QRB5165
-// mcv feature extraction variables
-std::vector<mcv_fpx_feature_t*> mcv_features;
-mcv_fpx_config_t fpx_config;
-#endif
 
 // printed if some invalid argument was given
 static void _print_usage(void) {
@@ -179,8 +196,6 @@ run manually with the following debug options\n\
                               log is from a different setup.\n\
                               log path shoulf be absolute to the start of the dir\n\
                               i.e. /data/voxl-logger/log0001 (with or w/out last /)\n\
--o, --debug-overlay         show extra points on the overlay, not just in-state ones\n\
-                              this can be enabled in the config file also\n\
 -p, --position              print position and rotation\n\
 -s, --debug-crash           print lots of numbers to track down location of crashes\n\
 -t, --timing-cam            enable timing prints for camera processing\n\
@@ -203,7 +218,6 @@ static bool _parse_opts(int argc, char* argv[]) {
             {"help", no_argument, 0, 'h'},
             {"timing-imu", no_argument, 0, 'i'},
             {"log_path", required_argument, 0, 'l'},
-            {"debug-overlay", no_argument, 0, 'o'},
             {"position", no_argument, 0, 'p'},
             {"timing-cam", no_argument, 0, 't'},
             {"verbosity", required_argument, 0, 'v'},
@@ -214,7 +228,7 @@ static bool _parse_opts(int argc, char* argv[]) {
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "cdhil:optv:", long_options, &option_index);
+        int c = getopt_long(argc, argv, "cdhil:ptv:", long_options, &option_index);
 
         // Detect the end of the options.
         if (c == -1) {
@@ -249,10 +263,6 @@ static bool _parse_opts(int argc, char* argv[]) {
             case 'i':
                 printf("Enabling debug imu timing mode\n");
                 en_debug_timing_imu = 1;
-                break;
-
-            case 'o':
-                show_extra_points_on_overlay = 1;
                 break;
 
             case 'p':
@@ -330,74 +340,12 @@ static void _quit(int ret) {
     // Remove this process ID file
     remove_pid_file(PROCESS_NAME);
 
-    #ifdef BUILD_QRB5165
-    // de-allocate feature buffers
-    if (!mcv_features.empty()){
-        for (size_t i = 0; i < mcv_features.size(); i++){
-            free(mcv_features[i]);
-        }
-    } 
-
-    mcv_fpx_deinit();
-    mcv_dcm_deinit();
-    #endif
-
     if (ret == 0)
         printf("Exiting Cleanly\n");
     else
         printf("error code\n");
     exit(ret);
     return;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// this should be a combination of covariance reporting/analysis AND
-// basically how "spread" are our features across the FOV
-///////////////////////////////////////////////////////////////////////////////
-static int32_t _vio_quality(Eigen::Matrix<double, 12, 12>& cov_plus, std::vector<pixel_features>& curr_pixel_locs, unsigned int n_cameras) {
-    // vio quality uses covariance and a reset counter
-    // the whole covarience matrix should be zero in case of blowup
-    if (cov_plus(3, 3) <= 0.0f || cov_plus(4, 4) <= 0.0f || cov_plus(5, 5) <= 0.0f) {
-        return -1.0f;
-    }
-
-    // pick the maximum (worst) of the velocity diagonal entries
-    float max = cov_plus(6, 6);
-    if (cov_plus(7, 7) > max) max = cov_plus(7, 7);
-    if (cov_plus(8, 8) > max) max = cov_plus(8, 8);
-
-    // covariance is very small. Scale it by 10^5 to make the output more readable
-    float conf = 0.00001f / max;
-
-    std::vector<int> feats_per_cam(n_cameras, 0);
-    int feat_count = 0;
-    // check the spread of our features
-    for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
-        if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID) {
-            feat_count++;
-            feats_per_cam[curr_pixel_locs[i].camera_id]++;
-        }
-    }
-
-    float avg_ratio = 1.;
-    for (unsigned int i = 0; i < n_cameras; i++) {
-        avg_ratio += (feats_per_cam[i] / n_cameras);
-
-        // if (feats_per_cam[i] < (float)feat_count/3) {
-            // min_ratio = (feats_per_cam[i] / (float)feat_count);
-        // }
-    }
-
-    // avg_ratio /= 
-
-    conf *= (feat_count*8 / (avg_ratio));
-
-    // now scale up to 100
-    conf *= 100;
-    // cap at 99, the flicker between 2 and three digits is annoying in the overlay
-    if (conf > 100) conf = 99;
-
-    return (int32_t)conf;
 }
 
 // pose data is published from the same thread that does the camera processing
@@ -498,52 +446,6 @@ static int _hard_reset(bool is_locked) {
     return 0;
 }
 
-// convert roll/pitch/yaw in degrees from extrinsics config file to axis-angle
-static int _tait_bryan_xyz_intrinsic_to_axis_angle(double tb_deg[3], float aa[3]) {
-    if (tb_deg == NULL || aa == NULL) {
-        fprintf(stderr, "ERROR: in %s, received NULL pointer\n", __FUNCTION__);
-        return -1;
-    }
-
-    // convert from degree to rad
-    double tb_rad[3];
-    tb_rad[0] = tb_deg[0] * M_PI / 180.0;
-    tb_rad[1] = tb_deg[1] * M_PI / 180.0;
-    tb_rad[2] = tb_deg[2] * M_PI / 180.0;
-
-    double c1 = cos(tb_rad[0] / 2.0);
-    double s1 = sin(tb_rad[0] / 2.0);
-    double c2 = cos(tb_rad[1] / 2.0);
-    double s2 = sin(tb_rad[1] / 2.0);
-    double c3 = cos(tb_rad[2] / 2.0);
-    double s3 = sin(tb_rad[2] / 2.0);
-    double c1c2 = c1 * c2;
-    double s1s2 = s1 * s2;
-    double s1c2 = s1 * c2;
-    double c1s2 = c1 * s2;
-
-    // XYZ
-    double w = c1c2 * c3 - s1s2 * s3;
-    double x = s1c2 * c3 + c1s2 * s3;
-    double y = c1s2 * c3 - s1c2 * s3;
-    double z = c1c2 * s3 + s1s2 * c3;
-
-    double norm = x * x + y * y + z * z;
-    if (norm < 0.0001) {
-        aa[0] = 0.0f;
-        aa[1] = 0.0f;
-        aa[2] = 0.0f;
-        return 0;
-    }
-
-    double angle = 2.0 * acos(w);
-    double scale = angle / sqrt(norm);
-    aa[0] = x * scale;
-    aa[1] = y * scale;
-    aa[2] = z * scale;
-    return 0;
-}
-
 // control listens for reset commands
 static void _control_pipe_cb(__attribute__((unused)) int ch, char* string,
                              int bytes, __attribute__((unused)) void* context) {
@@ -590,6 +492,167 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
     return;
 }
 
+
+#define VOXL_FT_MAGIC_NUMBER (0x54555249)
+#define VOXL_CALIB_MAGIC_NUMBER (0x43414C49)
+#define VOXL_PARAM_MAGIC_NUMBER (0x50415241)
+
+
+typedef struct Feature {
+    size_t id;
+    size_t cam_id;
+    float x;
+    float y;
+} __attribute((packed))__Feature;
+
+// this is our meta
+// follow it with a vector of feats
+typedef struct FeatureOutput{
+    uint32_t magic_number;
+    int64_t timestamp_ns; // will match image timestamp
+    uint32_t num_feats;
+} __attribute((packed))__FeatureOutput;
+
+typedef struct CalibrationPacket {
+    uint32_t magic_number;
+    int64_t timestamp_ns; // just in case
+    size_t cam_id;
+    size_t num_cams;
+    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
+    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
+    bool is_fisheye;
+} CalibrationPacket;
+
+typedef struct ParamPacket {
+    uint32_t magic_number;
+    char imu_name[CHAR_BUF_SIZE];
+    int num_features_to_track;
+} ParamPacket;
+
+static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
+    static std::vector<cv::Mat> cached_images;
+    static camera_image_metadata_t cached_meta;
+    // first check is for the magic number of our packet
+    uint32_t magic_num = *(uint32_t*)data;
+    
+    switch (magic_num)
+    {
+    case VOXL_FT_MAGIC_NUMBER:{
+        // now cast it to the proper type
+        FeatureOutput* feat_out = (FeatureOutput*)data;
+        ov_core::ProcessedCameraData vio_manager_data;
+
+        vio_manager_data.timestamp = feat_out->timestamp_ns / 1000000000.0;
+
+        std::vector<ov_core::MaiFeature> feat_vec(feat_out->num_feats);
+        void* d_start = data + sizeof(FeatureOutput);
+        feat_vec.assign((ov_core::MaiFeature*)d_start, (ov_core::MaiFeature*)d_start+feat_out->num_feats);
+        vio_manager_data.feats = feat_vec;
+
+        for (size_t i = 0; i < feat_out->num_feats; i++){
+            if(std::find(vio_manager_data.sensor_ids.begin(), vio_manager_data.sensor_ids.end(), feat_vec[i].cam_id) != vio_manager_data.sensor_ids.end()) 
+                continue;
+            else 
+                vio_manager_data.sensor_ids.push_back(feat_vec[i].cam_id);
+        }
+
+        std::lock_guard<std::mutex> lg(vio_manager_mutex);
+        if (vio_manager == nullptr) return;
+
+        int64_t time_before = _apps_time_monotonic_ns();
+        vio_manager->feed_measurement_processed_camera(vio_manager_data);    
+        int64_t process_time = _apps_time_monotonic_ns() - time_before;
+
+        if (process_time > 500000000) {
+            // if image processing took more than half a second, something went wrong
+            // and we should drop frames
+            global_error_codes |= ERROR_CODE_DROPPED_CAM;
+            pipe_client_flush(ch);
+            fprintf(stderr, "ERROR: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
+            fprintf(stderr, "Flushing camera frames\n");
+        } else if (process_time > 50000000) {
+            // warn if image processing was a little slow, this happens from time
+            // to time and isn't a big deal
+            fprintf(stderr, "WARNING: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
+        }
+
+        // after the first feed i think, ov needs other data first
+        is_cam_connected = true;
+
+        _publish(cached_meta, cached_images);
+
+        break;
+    }
+    case VOXL_CALIB_MAGIC_NUMBER:{
+        printf("Received Calibration Packet\n");
+        // now we need to fill our cam_info_vec with this info
+        CalibrationPacket* cp = (CalibrationPacket*)data;
+        
+        size_t cam_index = 0;
+        size_t cam_id = cp->cam_id;
+
+        num_cams = cp->num_cams;
+
+        camera_info curr_info;
+        curr_info.is_fisheye = cp->is_fisheye;
+        curr_info.cam_wrt_imu = cp->cam_wrt_imu;
+        curr_info.cam_calib_intrinsic = cp->cam_calib_intrinsic;
+        curr_info.cam_id = cp->cam_id;
+
+        cam_info_vec.push_back(curr_info);
+
+        if (cam_info_vec.size() == num_cams){
+            has_received_all_calib = 1;
+        }
+    }
+    case CAMERA_MAGIC_NUMBER: {
+        std::lock_guard<std::mutex> lg(vio_manager_mutex);
+
+        cached_images.clear();
+        camera_image_metadata_t* meta = (camera_image_metadata_t*)data;
+        cached_meta = *meta;
+
+        void* d_start = data + sizeof(camera_image_metadata_t);
+
+        // majority of the time we should receive this type
+        if (meta->format == IMAGE_FORMAT_RAW8) {
+            cv::Mat img(meta->height, meta->width, CV_8UC1, d_start);
+            cached_images.push_back(img);
+        }
+        // this is weird and should not happen often, as we are tracking only in the grey plane
+        else if (meta->format == IMAGE_FORMAT_STEREO_NV12 || meta->format == IMAGE_FORMAT_STEREO_NV21) {
+            cv::Mat img(meta->height, meta->width, CV_8UC1, d_start);
+            cv::Mat img2(meta->height, meta->width, CV_8UC1, d_start + (meta->height * meta->width)*(3/2)); // yuv (3/2)
+            cached_images.push_back(img);
+            cached_images.push_back(img2);
+        }
+        else if (meta->format == IMAGE_FORMAT_STEREO_RAW8){
+            cv::Mat img(meta->height, meta->width, CV_8UC1, d_start);
+            cv::Mat img2(meta->height, meta->width, CV_8UC1, d_start + (meta->height * meta->width));
+            cached_images.push_back(img);
+            cached_images.push_back(img2);
+        }
+    }
+        break;
+
+    case VOXL_PARAM_MAGIC_NUMBER: {
+        printf("Received Param Packet\n");
+
+        ParamPacket* pp = (ParamPacket*)data;
+        strncpy(imu_name, pp->imu_name, CHAR_BUF_SIZE);
+        num_pts = pp->num_features_to_track;
+        
+        // stop blocking
+        if (has_received_all_calib) has_received_all_params = 1;
+    }
+        break;
+
+    default:
+        break;
+    }
+}
+
+
 // imu callback registered to the imu server
 static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
     int n_packets;
@@ -627,6 +690,7 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
         vio_manager_data.am(0, 0) = data_array[i].accl_ms2[0];
         vio_manager_data.am(1, 0) = -data_array[i].accl_ms2[1];
         vio_manager_data.am(2, 0) = -data_array[i].accl_ms2[2];
+
 
         vio_manager->feed_measurement_imu(vio_manager_data);
 
@@ -678,153 +742,6 @@ static void _check_and_set_affinity(void) {
     return;
 }
 #endif
-
-static void _new_camera_data_handler(int ch, camera_image_metadata_t meta, char* frame, __attribute__((unused)) void* context) {
-#ifdef BUILD_QRB5165
-
-    _check_and_set_affinity();
-#endif
-
-    int64_t time_start = _apps_time_monotonic_ns();
-
-    int camera_index = ch - CAMERA_CH_START_OFFSET;
-
-    // Make the timestamp be the center of the exposure
-    int64_t cam_timestamp_ns = meta.timestamp_ns;
-    cam_timestamp_ns += meta.exposure_ns / 2;
-
-    // proactively monitor frames for bug delay. If its too bad, we are gonna lose some data so we might
-    if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 500000000)) {
-        global_error_codes |= ERROR_CODE_DROPPED_CAM;
-        pipe_client_flush(ch);
-        fprintf(stderr, "ERROR detected frame older than 0.5s, flushing cam pipe\n");
-        return;
-    }
-
-    // flag that camera data is active, skip frame is imu is disconnected
-    is_cam_connected = 1;
-    global_error_codes &= ~ERROR_CODE_CAM_MISSING;
-    if (!is_imu_connected) return;
-
-    // don't let image go in until IMU has caught up
-    // if cam-imu alignment is POSITIVE that means the camera timestamp is early
-    // and the image was actually taken after the reported timestamp
-    while (last_imu_timestamp_ns < (cam_timestamp_ns + last_time_alignment_ns)) {
-        // don't get stuck here forever
-        if (!main_running) return;
-        if (!is_imu_connected) return;
-        if (cam_timestamp_ns < (_apps_time_monotonic_ns() - 300000000)) {
-            global_error_codes |= ERROR_CODE_DROPPED_CAM;
-            pipe_client_flush(ch);
-            // pipe_client_set_pipe_size(ch, 1280 * 800 * 1.5 * 2 * 60);
-            fprintf(stderr, "ERROR waited more than 0.3 seconds for imu to catch up, flushing camera pipe\n");
-            return;
-        }
-        usleep(5000);
-    }
-
-    ov_core::CameraData vio_manager_data;
-
-    vio_manager_data.timestamp = cam_timestamp_ns / 1000000000.0;
-    vio_manager_data.sensor_ids.push_back(camera_index);
-
-    if (meta.format == IMAGE_FORMAT_RAW8) {
-        // Unpack the data into an opencv image Mat
-        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        // Create a mask for the ingestion.  We want the full image to be ingested
-        static cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-
-        vio_manager_data.images.push_back(img);
-        vio_manager_data.masks.push_back(mask);
-    } else if (meta.format == IMAGE_FORMAT_STEREO_RAW8) {
-        // Unpack the data into opencv image Mats
-        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height));
-
-        // Create masks for the ingestion. We want both full images to be ingested
-        static cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-        static cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-
-        if (camera_properties[camera_index] == STEREO_LEFT_ONLY) {
-            vio_manager_data.images.push_back(img);
-            vio_manager_data.masks.push_back(mask);
-        } else if (camera_properties[camera_index] == STEREO_RIGHT_ONLY) {
-            vio_manager_data.images.push_back(img2);
-            vio_manager_data.masks.push_back(mask2);
-        } else {
-            meta.width *= 2;
-            vio_manager_data.sensor_ids.push_back(camera_index + 1);
-            vio_manager_data.images.push_back(img);
-            vio_manager_data.masks.push_back(mask);
-            vio_manager_data.images.push_back(img2);
-            vio_manager_data.masks.push_back(mask2);
-        }
-    } else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
-        // Unpack the data into opencv image Mats
-        cv::Mat img(meta.height, meta.width, CV_8UC1, frame);
-        cv::Mat img2(meta.height, meta.width, CV_8UC1, frame + (meta.width * meta.height * 3 / 2));
-
-        // Create masks for the ingestion. We want both full images to be ingested
-        static cv::Mat mask(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-        static cv::Mat mask2(meta.height, meta.width, CV_8UC1, cv::Scalar(0));
-
-        if (camera_properties[camera_index] == STEREO_LEFT_ONLY) {
-            vio_manager_data.images.push_back(img);
-            vio_manager_data.masks.push_back(mask);
-        } else if (camera_properties[camera_index] == STEREO_RIGHT_ONLY) {
-            vio_manager_data.images.push_back(img2);
-            vio_manager_data.masks.push_back(mask2);
-        } else {
-            meta.size_bytes = meta.height * meta.width;
-            vio_manager_data.sensor_ids.push_back(camera_index + 1);
-            vio_manager_data.images.push_back(img);
-            vio_manager_data.masks.push_back(mask);
-            vio_manager_data.images.push_back(img2);
-            vio_manager_data.masks.push_back(mask2);
-        }
-    }
-
-    // Ingest the data
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
-
-    int64_t time_before = _apps_time_monotonic_ns();
-    vio_manager->feed_measurement_camera(vio_manager_data);
-    int64_t process_time = _apps_time_monotonic_ns() - time_before;
-
-    // save details of the last image we passed into ov
-    last_cam_timestamps_ns[camera_index] = cam_timestamp_ns;
-    last_frame_frame_id = meta.frame_id;
-    last_frame_timestamp_ns = meta.timestamp_ns;
-
-    if (process_time > 500000000) {
-        // if image processing took more than half a second, something went wrong
-        // and we should drop frames
-        global_error_codes |= ERROR_CODE_DROPPED_CAM;
-        pipe_client_flush(ch);
-        fprintf(stderr, "ERROR: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
-        fprintf(stderr, "Flushing camera frames\n");
-    } else if (process_time > 50000000) {
-        // warn if image processing was a little slow, this happens from time
-        // to time and isn't a big deal
-        fprintf(stderr, "WARNING: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
-    }
-
-    // so basically when we call this, we need to make sure that we update the meta for the size of our entire concatted image
-    // meta is going to be updated in the handling per image type, if stereo we gotta multiply the width by 2 and recalc size bytes if nv
-    time_before = _apps_time_monotonic_ns();
-    _publish(meta, vio_manager_data.images);
-    int64_t publish_time = _apps_time_monotonic_ns() - time_before;
-    int64_t total_time = _apps_time_monotonic_ns() - time_start;
-
-    if (en_debug_timing_cam) {
-        fprintf(stderr, "\nTIMING INFO:\n");
-        fprintf(stderr, "OV image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
-        fprintf(stderr, "PUBLISH image time: %6.2fms\n", ((double)publish_time) / 1000000.0);
-        fprintf(stderr, "TOTAL IMAGE PROC TIME: %6.2fms\n", ((double)total_time) / 1000000.0);
-    }
-
-    return;
-}
 
 // return 0 if all is well, otherwise return the reason for blowup
 static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state, Eigen::Matrix<double, 12, 12> cov_plus, int good_features) {
@@ -1001,7 +918,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     last_sent_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
     // populate some other data
-    s.quality = _vio_quality(cov_plus, curr_pixel_locs, images.size());  // quality metric still needs work
+    s.quality = 50;//_vio_quality(cov_plus, curr_pixel_locs, images.size());  // quality metric still needs work
 
     s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
     d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
@@ -1026,7 +943,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
     // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
-    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[images.size()-1]->quat().transpose()) * current_state->_calib_IMUtoCAM[images.size()-1]->pos()) * -1).cast<float>();
+    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
 
 
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
@@ -1077,6 +994,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         d.features[k].tsf[0] = static_cast<float>(curr_slam_features[k].x());
         d.features[k].tsf[1] = -(static_cast<float>(curr_slam_features[k].y()));
         d.features[k].tsf[2] = -(static_cast<float>(curr_slam_features[k].z()));
+        d.features[k].point_quality = HIGH;
     }
     if (k < VIO_MAX_REPORTED_FEATURES) {
         for (unsigned int i = 0; i < msckf_last_features.size(); i++) {
@@ -1178,14 +1096,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         // cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, 9);
         cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, 9); //apq tracking cam only
 
-
         // draw in-state and out-of-state points
         for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
             if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID)
-                cv::drawMarker(images[curr_pixel_locs[i].camera_id], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
             else if (show_extra_points_on_overlay) {
-                cv::drawMarker(images[curr_pixel_locs[i].camera_id], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
-                // fprintf(stderr, "Drawing oos point at: %d,%d\n", (int)curr_pixel_locs[i].location.x, (int)curr_pixel_locs[i].location.y);
+                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
                 n_oos_points++;
             }
         }
@@ -1215,6 +1131,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         uint8_t* start_of_img = draw_frame + (draw_meta.width * DRAW_BONUS_ROWS_TOP);
         memcpy(start_of_img, combo_image.data, orig_bytes);
 
+        ///////////////////////////////////////////////////////////////////////////
+        // TODO FIGURE OUT WHY THE TOP OF MY IMAGE IS JACKED UP
+        ///////////////////////////////////////////////////////////////////////////
+        memset(start_of_img, 0, draw_meta.width * 5);
+        // this line should not be here
+
         // blank out bottom rows
         uint8_t* start_of_bottom = draw_frame + (draw_meta.width * DRAW_BONUS_ROWS_TOP) + orig_bytes;
         memset(start_of_bottom, 0, draw_meta.width * DRAW_BONUS_ROWS_BOT);
@@ -1239,46 +1161,6 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     return;
 }
 
-#ifdef BUILD_QRB5165
-
-static int setup_fpx(int n_cameras) {
-    static bool has_initialized = false;
-    ////////////////////////////////////////////////////////////////////////////
-    // initialize feature point extractor
-    ////////////////////////////////////////////////////////////////////////////
-    if (!has_initialized){
-        mcv_fpx_config_t fpx_config;
-        fpx_config.width = 1280;  // TODO pull this dynamically
-        fpx_config.height = 800;  // TODO pull this dynamically
-        // fpx_config.mode = MCV_FPX_PEAK_8x8;
-        fpx_config.mode = MCV_FPX_ZONE;
-        fpx_config.nms_mode = MCV_FPX_5_TAP_NMS;
-        fpx_config.score_threshold = 2100;
-        fpx_config.robustness = 50;  // 0-127, default 10
-
-        int feature_buf_size;
-        if (mcv_fpx_init(fpx_config, &feature_buf_size)) {
-            return -1;
-        }
-
-        // malloc required memory for feature output
-        printf("allocating %d bytes for features\n", feature_buf_size);
-        mcv_features.resize(n_cameras);
-
-        for (int i = 0; i <n_cameras; i++){
-            mcv_features[i] = (mcv_fpx_feature_t*)malloc(feature_buf_size);
-        }
-
-        if(mcv_dcm_init(1280, 800, n_cameras)){
-            return -1;
-        }
-
-        has_initialized = true;
-    }
-
-    return 0;
-}
-#endif
 
 static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     ov_msckf::VioManagerOptions vio_manager_options;
@@ -1348,7 +1230,6 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
 
     /// TRACKER + EXTRACTOR OPTIONS ///
     vio_manager_options.use_klt = use_klt;
-    vio_manager_options.num_pts = num_pts;
     vio_manager_options.fast_threshold = fast_threshold;
     vio_manager_options.grid_x = grid_x;
     vio_manager_options.grid_y = grid_y;
@@ -1372,61 +1253,44 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     vio_manager_options.featinit_options.max_cond_number = max_cond_number;
 
     /// CAMERA INTRINSICS + EXTRINSICS ///
-    int actual_index = 0;
+    // these need to come from voxl-feature-tracker now
+    while (main_running){
+        // fprintf(stderr, "WAITING TO FILL UP THE CONFIG\n");
+        if (has_received_all_params == 1) break;
+        usleep(50000); 
+    }    
+
+    std::lock_guard<std::mutex> lg(vio_manager_mutex);
+    vio_manager_options.num_pts = num_pts;
+
     std::shared_ptr<ov_core::CamBase> cam_calib_intrinsic;
-    for (size_t i = 0; i < MAX_CAMERAS; i++) {
-        // Set the camera type
-        if (cam_info_vec[i].enable) {
-            if (cam_info_vec[i].cam_mode == STEREO_RIGHT_ONLY) {
-                // if right only, we need to just skip the left camera properties
-                cam_info_vec[i + 1].enable = true;
-                continue;
-            }
-            // ov uses camequi model to represent fisheye cameras, and the radtan model for standard lenses
-            if (cam_info_vec[i].is_fisheye) {
-                cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
-            } else {
-                cam_calib_intrinsic = std::make_shared<ov_core::CamRadtan>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
-            }
-            // The camera intrinsics
-            cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
-            vio_manager_options.camera_intrinsics[actual_index] = cam_calib_intrinsic;
-            vio_manager_options.camera_extrinsics[actual_index] = cam_info_vec[i].cam_wrt_imu;
-            last_cam_timestamps_ns.push_back(0);
-
-            if (cam_info_vec[i].cam_mode == STEREO_LEFT_ONLY) {
-                // if left only, we need to just bounce over the next item in our vector
-                i += 1;
-            }
-
-            actual_index++;
+    for (size_t i = 0; i < cam_info_vec.size(); i++) {
+        // ov uses camequi model to represent fisheye cameras, and the radtan model for standard lenses
+        if (cam_info_vec[i].is_fisheye) {
+            cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
+        } else {
+            cam_calib_intrinsic = std::make_shared<ov_core::CamRadtan>(cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(9, 0));
         }
+        // The camera intrinsics
+        cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
+        vio_manager_options.camera_intrinsics[i] = cam_calib_intrinsic;
+        vio_manager_options.camera_extrinsics[i] = cam_info_vec[i].cam_wrt_imu;
     }
 
     vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
     vio_manager_options.init_options.camera_extrinsics = vio_manager_options.camera_extrinsics;
     // this needs to be set in both locations, for some reason the updaters address both in different stages
-    vio_manager_options.init_options.num_cameras = actual_index;
-    vio_manager_options.state_options.num_cameras = actual_index;
-
-    #ifdef BUILD_QRB5165
-
-    /// MCV feature extraction
-    int ret = setup_fpx(actual_index);  // disregard return value for now
-    // assign the ptr
-    vio_manager_options.mcv_feature_ptr = &mcv_features;
-
-    #endif
+    vio_manager_options.init_options.num_cameras = cam_info_vec.size();
+    vio_manager_options.state_options.num_cameras = cam_info_vec.size();
 
     return vio_manager_options;
 }
 
-static void _cam_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
-    fprintf(stderr, "WARNING: disconnected from camera server, resetting VIO\n");
+static void _feat_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
+    fprintf(stderr, "WARNING: disconnected from feature server, resetting VIO\n");
 
     std::lock_guard<std::mutex> lg(vio_manager_mutex);
     global_error_codes |= ERROR_CODE_CAM_MISSING;
-    last_cam_timestamps_ns.assign(last_cam_timestamps_ns.size(), 0);
     is_cam_connected = 0;
     ov_msckf::VioManagerOptions vio_manager_options = generate_open_vins_manager_options();
     // HARD RESET
@@ -1448,14 +1312,6 @@ static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((un
 }
 
 static int create_server_pipes(void) {
-    // create a list of all connected camera names
-    std::string cam_list;
-    for (size_t i = 0; i < MAX_CAMERAS; i++) {
-        if (cam_info_vec[i].enable && cam_info_vec[i].name[0] != '\0') {
-            if (!cam_list.empty()) cam_list.append(", ");
-            cam_list.append(cam_info_vec[i].name);
-        }
-    }
     int flags = SERVER_FLAG_EN_CONTROL_PIPE;
 
     // init extended pipe
@@ -1475,7 +1331,6 @@ static int create_server_pipes(void) {
     // add in optional fields to the info JSON file
     cJSON* json = pipe_server_get_info_json_ptr(EXTENDED_CH);
     cJSON_AddStringToObject(json, "imu", imu_name);
-    cJSON_AddStringToObject(json, "cam", cam_list.c_str());
     pipe_server_update_info(EXTENDED_CH);
     pipe_server_set_control_cb(EXTENDED_CH, _control_pipe_cb, NULL);
     pipe_server_set_available_control_commands(EXTENDED_CH, OV_VIO_CONTROL_COMMANDS);
@@ -1497,7 +1352,6 @@ static int create_server_pipes(void) {
     // add in optional fields to the info JSON file
     json = pipe_server_get_info_json_ptr(SIMPLE_CH);
     cJSON_AddStringToObject(json, "imu", imu_name);
-    cJSON_AddStringToObject(json, "cam", cam_list.c_str());
     pipe_server_update_info(SIMPLE_CH);
     pipe_server_set_control_cb(SIMPLE_CH, _control_pipe_cb, NULL);
     pipe_server_set_available_control_commands(SIMPLE_CH, OV_VIO_CONTROL_COMMANDS);
@@ -1525,6 +1379,7 @@ static int create_server_pipes(void) {
 }
 
 static int connect_client_pipes(void) {
+    fprintf(stderr, "connecting client pipes\n");
     // connect to imu
     char full_pipe[CHAR_BUF_SIZE];
     if (pipe_expand_location_string(imu_name, full_pipe) < 0) {
@@ -1539,38 +1394,6 @@ static int connect_client_pipes(void) {
         return -1;
     }
 
-    int actual_index = 0;
-
-    // Connect to all the camera pipes
-    for (size_t i = 0; i < MAX_CAMERAS; i++) {
-        if (cam_info_vec[i].enable && cam_info_vec[i].name[0] != '\0') {
-            memset(full_pipe, '\0', CHAR_BUF_SIZE);
-            int channel_number = CAMERA_CH_START_OFFSET + actual_index;
-            camera_properties[actual_index] = cam_info_vec[i].cam_mode;
-
-            if (pipe_expand_location_string(cam_info_vec[i].name, full_pipe) < 0) {
-                fprintf(stderr, "ERROR: unable to expand location string with camera %s\n", cam_info_vec[i].name);
-                return -1;
-            }
-
-            pipe_client_set_disconnect_cb(channel_number, _cam_disconnect_cb, NULL);
-            pipe_client_set_camera_helper_cb(channel_number, _new_camera_data_handler, NULL);
-            int flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-            if (pipe_client_open(channel_number, full_pipe, PROCESS_NAME, flags, 1280 * 800 * 30) != 0) {
-                fprintf(stderr, "ERROR: FAILED TO OPEN %s\n", full_pipe);
-                return -1;
-            }
-            // pipe_client_set_pipe_size(channel_number, 1280 * 800 * 1.5 * 2 * 60);
-
-            // if stereo, the right camera is going to use id+1 for its images, so we need to make space for that
-            if (cam_info_vec[i].cam_mode == STEREO) {
-                actual_index += 1;
-                // also need to skip the NEXT camera in the vector, since it should be the same topic, just a pair
-                i += 1;
-            }
-            actual_index += 1;  // regular bump
-        }
-    }
     return 0;
 }
 
@@ -1617,18 +1440,20 @@ int main(int argc, char* argv[]) {
     printf("Loading our own config file\n");
     if (config_file_read() < 0) _quit(-1);
 
-    printf("Loading extrinsics config file\n");
-    if (load_extrinsics_file() < 0) _quit(-1);
+    // connect to our feature tracker
+    pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
+    pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_handler, NULL);
 
-    printf("Loading intrinsics config file\n");
-    if (load_intrinsics_file() < 0) _quit(-1);
+    if (pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER, 1280 * 800 * 64) != 0) {
+        _quit(-1);
+    }
+
+    // Create the server pipes
+    if (create_server_pipes() < 0) _quit(0);
 
     // Create the VIO Manager
     vio_manager_options = generate_open_vins_manager_options();
     vio_manager = std::unique_ptr<ov_msckf::VioManager>(new ov_msckf::VioManager(vio_manager_options));
-
-    // Create the server pipes
-    if (create_server_pipes() < 0) _quit(0);
 
     // Connect to the client pipes and start getting data
     if (connect_client_pipes() < 0) _quit(0);
@@ -1642,6 +1467,9 @@ int main(int argc, char* argv[]) {
     // pthread_attr_t tattr;
     // pthread_attr_init(&tattr);
     // pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
+
+    // send a command BACK out to our feature tracker to startup
+    pipe_client_send_control_cmd(FEATURE_CH, VFT_CMD_START);
 
     // run until start/stop module catches a signal and changes main_running to 0
     while (main_running) usleep(5000000);

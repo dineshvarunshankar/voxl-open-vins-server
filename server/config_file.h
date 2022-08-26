@@ -50,11 +50,6 @@
  * \n\
  * *NOTE*: all time variables are measured in seconds\n\
  * \n\
- * Per camera that is enabled, we need:\n\
- *  the name of the phsycial pipe i.e. tracking, NOT /run/mpa/tracking\n\
- *  the setup for the camera: can be MONO, STEREO, STEREO_LEFT_ONLY, STEREO_RIGHT_ONLY\n\
- *  the extrinsics name extensions for the camera, two fields available for case of stereo pairs\n\
- * Imu is the same, just need the name (typically imu_apps/imu_px4/imu0/imu1)\n\
  * OpenVins param breakdown:\n\
  * \n\
  * do_fej: whether or not to do first estimate Jacobians\n\
@@ -122,28 +117,6 @@
  */\n"
 
 
-typedef enum camera_mode {
-    UNKNOWN = -1,
-    MONO = 0,
-    STEREO = 1,
-    STEREO_LEFT_ONLY = 2, 
-    STEREO_RIGHT_ONLY = 3
-} camera_setup;
-
-
-typedef struct camera_info {
-    bool enable;
-    char name[CHAR_BUF_SIZE];
-    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
-    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
-    bool is_fisheye;
-    camera_mode cam_mode;
-    char extrinsics_extension_first[CHAR_BUF_SIZE];  // since there can be a stereo pair enabled here, we need to know the extensions for 
-    char extrinsics_extension_second[CHAR_BUF_SIZE]; // both cameras in the pair, as it may vary
-} camera_info;
-
-extern std::vector<camera_info> cam_info_vec;
-extern char imu_name[CHAR_BUF_SIZE];
 
 // auto reset parameters
 extern int en_auto_reset;
@@ -237,12 +210,6 @@ int config_file_read(void);
 
 // prints the current configuration values to the screen.
 int config_file_print(void);
-
-// load the extrinsics config files per enabled cam 
-int load_extrinsics_file();
-
-// load the intrinsics config files per enabled cam
-int load_intrinsics_file();
 
 
 #endif // end CONFIG_FILE_H
