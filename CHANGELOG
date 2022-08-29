@@ -1,3 +1,6 @@
+0.2.3
+    * added improved quality metric (only function for single cam)
+    * updated to new pixel_loc_features ov structure
 0.2.2
     * added support for apq8096
     * fixing dependency structure, using voxl-eigen3 for all and voxl-boost for apq

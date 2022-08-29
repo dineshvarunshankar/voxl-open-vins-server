@@ -44,6 +44,7 @@
 #include "cCharacter.h"
 
 #include "config_file.h"
+#include "quality.h"
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
@@ -836,13 +837,19 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     }
 
     // get features
-    // not sure how to calculate quality of these features, may need to expose another function for some
-    // better access to the feature database
-    std::vector<Eigen::Vector3d> msckf_last_features = vio_manager->get_good_features_MSCKF();
-    std::vector<Eigen::Vector3d> curr_slam_features = vio_manager->get_features_SLAM();
-    std::vector<pixel_features> curr_pixel_locs = vio_manager->get_pixel_loc_features();
+    // this function will give us back as much info as available for features in various stages of the overall state
+    std::vector<output_feature> curr_pixel_locs = vio_manager->get_pixel_loc_features();
 
-    n_good_points = msckf_last_features.size() + curr_slam_features.size();
+    for(size_t d=0;d<curr_pixel_locs.size();d++){
+        
+		if(curr_pixel_locs[d].point_quality == 2 && curr_pixel_locs[d].pix_loc[0]>0.0f && curr_pixel_locs[d].pix_loc[1]>0.0f){
+			n_good_points++;
+			//printf("%2d %7.1f %7.1f %7.1f %7.1f\n", n_good_points, (double)pPoints[i].depth, (double)pPoints[i].depthErrorStdDev, pPoints[i].pixLoc[0], pPoints[i].pixLoc[1]);
+		}
+		if(curr_pixel_locs[d].point_quality == 1){
+			n_oos_points++;
+		}
+	}
 
     // record that we just got a successful pose and point cloud
     last_real_pose_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
@@ -918,12 +925,10 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     last_sent_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
     // populate some other data
-    s.quality = 50;//_vio_quality(cov_plus, curr_pixel_locs, images.size());  // quality metric still needs work
-
     s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
     d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
     last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
-    s.n_feature_points = n_good_points;  // not sure yet
+    s.n_feature_points = n_good_points;
     d.last_cam_frame_id = last_frame_frame_id;
     d.last_cam_timestamp_ns = last_frame_timestamp_ns;
 
@@ -942,9 +947,8 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
-    // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+    // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[1]->quat().transpose()) * current_state->_calib_IMUtoCAM[1]->pos()) * -1).cast<float>();
     Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
-
 
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 3) = current_state->_imu->bias_a_fej().cast<float>();
@@ -984,27 +988,18 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
     // limit the number of features to what fits in our pipe packet
     // TODO figure out why these viz weirdly
-    d.n_total_features = curr_slam_features.size() + msckf_last_features.size();
+    d.n_total_features = (int)curr_pixel_locs.size();
     if (d.n_total_features > VIO_MAX_REPORTED_FEATURES) {
         d.n_total_features = VIO_MAX_REPORTED_FEATURES;
     }
-    unsigned int k;
-    for (k = 0; k < curr_slam_features.size(); k++) {
-        if (k >= VIO_MAX_REPORTED_FEATURES) break;
-        d.features[k].tsf[0] = static_cast<float>(curr_slam_features[k].x());
-        d.features[k].tsf[1] = -(static_cast<float>(curr_slam_features[k].y()));
-        d.features[k].tsf[2] = -(static_cast<float>(curr_slam_features[k].z()));
-        d.features[k].point_quality = HIGH;
-    }
-    if (k < VIO_MAX_REPORTED_FEATURES) {
-        for (unsigned int i = 0; i < msckf_last_features.size(); i++) {
-            if (k >= VIO_MAX_REPORTED_FEATURES) break;
-            d.features[i].tsf[0] = static_cast<float>(msckf_last_features[i].x());
-            d.features[i].tsf[1] = -(static_cast<float>(msckf_last_features[i].y()));
-            d.features[i].tsf[2] = -(static_cast<float>(msckf_last_features[i].z()));
-            k++;
-        }
-    }
+
+    // NOTE: TODO FIX THIS
+    // since we flip the entire world, these reps need the same transformation
+    memcpy(d.features, curr_pixel_locs.data(), d.n_total_features*sizeof(vio_feature_t));
+
+    // todo add support for multicam here
+	s.quality = calc_quality(s.state, s.velocity_covariance, images[0].rows,\
+					images[0].cols, d.n_total_features, d.features);
 
     // fill in simplified struct inside the extended packet
     memcpy(&d.v, &s, sizeof(vio_data_t));
@@ -1089,6 +1084,9 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         // blank out the top rows
         memset(draw_frame, 0, draw_meta.width * DRAW_BONUS_ROWS_TOP);
 
+        // todo replace with cv::put text
+        // steal from tflite example
+
         // write strings for top bar
         char output_string[128];
         sprintf(output_string, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
@@ -1098,10 +1096,10 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
 
         // draw in-state and out-of-state points
         for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
-            if (curr_pixel_locs[i].state_indicator == INS_FEAT_ID)
-                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
+            if (curr_pixel_locs[i].point_quality == 2) // 2 is instate
+                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
             else if (show_extra_points_on_overlay) {
-                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].location.x, curr_pixel_locs[i].location.y), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
+                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
                 n_oos_points++;
             }
         }
@@ -1152,7 +1150,6 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
                 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
         // cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5 + draw_meta.width / 3, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9);
         cCharacter_dwrite_white(draw_frame, draw_meta.width, draw_meta.height, output_string, 5, (draw_meta.height - DRAW_BONUS_ROWS_BOT) + 9); //apq tracking only
-
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*)draw_frame);
@@ -1462,11 +1459,12 @@ int main(int argc, char* argv[]) {
     // temp disable
     // open vins will occasionally stall out on init, and the health monitor
     // will then cause vvpx4 to switch out of position control
+    // comment the below thread creation if this behavior occurs
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    // pthread_attr_t tattr;
-    // pthread_attr_init(&tattr);
-    // pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
+    pthread_attr_t tattr;
+    pthread_attr_init(&tattr);
+    pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
 
     // send a command BACK out to our feature tracker to startup
     pipe_client_send_control_cmd(FEATURE_CH, VFT_CMD_START);
