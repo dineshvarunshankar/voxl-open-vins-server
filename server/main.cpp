@@ -45,6 +45,7 @@
 
 #include "config_file.h"
 #include "quality.h"
+#include "common.h"
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
@@ -310,15 +311,6 @@ static bool _parse_opts(int argc, char* argv[]) {
     return false;
 }
 
-static int64_t _apps_time_monotonic_ns() {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
-        fprintf(stderr, "ERROR calling clock_gettime\n");
-        return -1;
-    }
-    return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
-}
-
 static void _nanosleep(uint64_t ns) {
     struct timespec req, rem;
     req.tv_sec = ns / 1000000000;
@@ -494,42 +486,6 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 }
 
 
-#define VOXL_FT_MAGIC_NUMBER (0x54555249)
-#define VOXL_CALIB_MAGIC_NUMBER (0x43414C49)
-#define VOXL_PARAM_MAGIC_NUMBER (0x50415241)
-
-
-typedef struct Feature {
-    size_t id;
-    size_t cam_id;
-    float x;
-    float y;
-} __attribute((packed))__Feature;
-
-// this is our meta
-// follow it with a vector of feats
-typedef struct FeatureOutput{
-    uint32_t magic_number;
-    int64_t timestamp_ns; // will match image timestamp
-    uint32_t num_feats;
-} __attribute((packed))__FeatureOutput;
-
-typedef struct CalibrationPacket {
-    uint32_t magic_number;
-    int64_t timestamp_ns; // just in case
-    size_t cam_id;
-    size_t num_cams;
-    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
-    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
-    bool is_fisheye;
-} CalibrationPacket;
-
-typedef struct ParamPacket {
-    uint32_t magic_number;
-    char imu_name[CHAR_BUF_SIZE];
-    int num_features_to_track;
-} ParamPacket;
-
 static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
     static std::vector<cv::Mat> cached_images;
     static camera_image_metadata_t cached_meta;
@@ -540,13 +496,13 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     {
     case VOXL_FT_MAGIC_NUMBER:{
         // now cast it to the proper type
-        FeatureOutput* feat_out = (FeatureOutput*)data;
+        vft_feature_packet* feat_out = (vft_feature_packet*)data;
         ov_core::ProcessedCameraData vio_manager_data;
 
         vio_manager_data.timestamp = feat_out->timestamp_ns / 1000000000.0;
 
         std::vector<ov_core::MaiFeature> feat_vec(feat_out->num_feats);
-        void* d_start = data + sizeof(FeatureOutput);
+        void* d_start = data + sizeof(vft_feature);
         feat_vec.assign((ov_core::MaiFeature*)d_start, (ov_core::MaiFeature*)d_start+feat_out->num_feats);
         vio_manager_data.feats = feat_vec;
 
@@ -587,7 +543,7 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     case VOXL_CALIB_MAGIC_NUMBER:{
         printf("Received Calibration Packet\n");
         // now we need to fill our cam_info_vec with this info
-        CalibrationPacket* cp = (CalibrationPacket*)data;
+        vft_calib_packet* cp = (vft_calib_packet*)data;
         
         size_t cam_index = 0;
         size_t cam_id = cp->cam_id;
@@ -639,7 +595,7 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     case VOXL_PARAM_MAGIC_NUMBER: {
         printf("Received Param Packet\n");
 
-        ParamPacket* pp = (ParamPacket*)data;
+        vft_param_packet* pp = (vft_param_packet*)data;
         strncpy(imu_name, pp->imu_name, CHAR_BUF_SIZE);
         num_pts = pp->num_features_to_track;
         
