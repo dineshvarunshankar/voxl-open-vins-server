@@ -501,8 +501,16 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
 
         vio_manager_data.timestamp = feat_out->timestamp_ns / 1000000000.0;
 
+        if (feat_out->num_feats == 0){
+            fprintf(stderr, "ERROR RECEIVED PACKET WITH 0 FEATURES\n");
+            std::lock_guard<std::mutex> lg(vio_manager_mutex);
+            _publish(cached_meta, cached_images);
+
+            return;
+        }
+
         std::vector<ov_core::MaiFeature> feat_vec(feat_out->num_feats);
-        void* d_start = data + sizeof(vft_feature);
+        void* d_start = data + sizeof(vft_feature_packet);
         feat_vec.assign((ov_core::MaiFeature*)d_start, (ov_core::MaiFeature*)d_start+feat_out->num_feats);
         vio_manager_data.feats = feat_vec;
 
@@ -517,7 +525,7 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
         if (vio_manager == nullptr) return;
 
         int64_t time_before = _apps_time_monotonic_ns();
-        vio_manager->feed_measurement_processed_camera(vio_manager_data);    
+        vio_manager->feed_measurement_processed_camera(vio_manager_data);
         int64_t process_time = _apps_time_monotonic_ns() - time_before;
 
         if (process_time > 500000000) {
@@ -562,6 +570,7 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
             has_received_all_calib = 1;
         }
     }
+        break;
     case CAMERA_MAGIC_NUMBER: {
         std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
@@ -677,7 +686,7 @@ static void _check_and_set_affinity(void) {
 
     /* Set affinity mask to include CPUs 7 only */
     CPU_ZERO(&cpuset);
-    CPU_SET(7, &cpuset);
+    CPU_SET(6, &cpuset);
 
     if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
         perror("pthread_setaffinity_np");
@@ -954,9 +963,12 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     memcpy(d.features, curr_pixel_locs.data(), d.n_total_features*sizeof(vio_feature_t));
 
     // todo add support for multicam here
-	s.quality = calc_quality(s.state, s.velocity_covariance, images[0].rows,\
-					images[0].cols, d.n_total_features, d.features);
-
+    // also note - if we aren't receiving images, this is v dangerous
+    if (!images.empty()){
+	    s.quality = calc_quality(s.state, s.velocity_covariance, images[0].rows,\
+	    				images[0].cols, d.n_total_features, d.features);
+    }
+    else s.quality = 0;
     // fill in simplified struct inside the extended packet
     memcpy(&d.v, &s, sizeof(vio_data_t));
 
@@ -981,7 +993,7 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
     global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
 
     // if someone has subscribed to the overlay, draw it
-    if (pipe_server_get_num_clients(OVERLAY_CH) > 0) {
+    if (pipe_server_get_num_clients(OVERLAY_CH) > 0 && !images.empty()) {
         // grid can be 1x1, 2x2, or 3x3
         static int overlay_grid_side = 0;
         static bool remove_last_row = false;
@@ -1040,9 +1052,6 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         // blank out the top rows
         memset(draw_frame, 0, draw_meta.width * DRAW_BONUS_ROWS_TOP);
 
-        // todo replace with cv::put text
-        // steal from tflite example
-
         // write strings for top bar
         char output_string[128];
         sprintf(output_string, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
@@ -1053,9 +1062,9 @@ static void _publish(camera_image_metadata_t meta, std::vector<cv::Mat> images) 
         // draw in-state and out-of-state points
         for (unsigned int i = 0; i < curr_pixel_locs.size(); i++) {
             if (curr_pixel_locs[i].point_quality == 2) // 2 is instate
-                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(images[curr_pixel_locs[i].cam_id], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255, 255, 255), cv::MARKER_SQUARE, 8, 2);
             else if (show_extra_points_on_overlay) {
-                cv::drawMarker(images[0], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
+                cv::drawMarker(images[curr_pixel_locs[i].cam_id], cv::Point(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(127, 127, 127), cv::MARKER_DIAMOND, 4, 2);
                 n_oos_points++;
             }
         }
@@ -1381,6 +1390,11 @@ int main(int argc, char* argv[]) {
 
     // Set the main running flag to 1 to indicate that we are running
     main_running = 1;
+
+    // try to lock to bigger cores if we can
+    #ifdef BUILD_QRB5165
+    _check_and_set_affinity();
+    #endif
 
     /* make PID file to indicate your project is running
      * due to the check made on the call to rc_kill_existing_process() above
