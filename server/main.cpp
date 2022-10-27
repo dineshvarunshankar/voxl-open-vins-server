@@ -46,6 +46,7 @@
 #include "config_file.h"
 #include "quality.h"
 #include "common.h"
+#include "img_ringbuffer.h"
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
@@ -116,6 +117,8 @@ static pthread_t health_thread;
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
 static volatile int64_t last_imu_timestamp_ns = 0;
+static volatile int64_t last_feat_timestamp_ns = 0;
+std::mutex feat_ts_mutex;
 // this will need to be populated per camera before we start referencing it
 static volatile int64_t last_real_pose_timestamp_ns = 0;
 static volatile int64_t last_sent_timestamp_ns = 0;
@@ -166,6 +169,7 @@ static cv::Mat world_correction;
 static uint32_t global_error_codes = 0;
 
 typedef struct camera_info {
+    char name[128];
     Eigen::Matrix<double, 7, 1> cam_wrt_imu;
     Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
     bool is_fisheye;
@@ -192,6 +196,8 @@ static int _hard_reset(bool is_locked);
 
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 std::string log_path = "";
+
+RingBuffer *img_ringbuf;
 
 // printed if some invalid argument was given
 static void _print_usage(void) {
@@ -343,6 +349,8 @@ static void _quit(int ret) {
 
     // Remove this process ID file
     remove_pid_file(PROCESS_NAME);
+
+    if (img_ringbuf) free(img_ringbuf);
 
     if (ret == 0)
         printf("Exiting Cleanly\n");
@@ -499,7 +507,7 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 
 static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
     uint32_t magic_num = *(uint32_t*)data;
-    
+
     if (magic_num != VOXL_FT_MAGIC_NUMBER){
         fprintf(stderr, "ERROR: Received packet with invalid magic number\n");
         return;
@@ -536,6 +544,9 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     int64_t time_before = _apps_time_monotonic_ns();
     vio_manager->feed_measurement_processed_camera(vio_manager_data);
     int64_t process_time = _apps_time_monotonic_ns() - time_before;
+    feat_ts_mutex.lock();
+    last_feat_timestamp_ns = feat_out->timestamp_ns;
+    feat_ts_mutex.unlock();
 
     if (process_time > 500000000) {
         // if image processing took more than half a second, something went wrong
@@ -556,11 +567,30 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     _publish();
 }
 
-static void _overlay_helper_cb(__attribute__((unused)) int ch, camera_image_metadata_t meta, char* frame, void* context) {
-    std::lock_guard<std::mutex> lg(overlay_mutex);
-    cached_meta = meta;
-    // overlay is known to be RGB for clarity
-    cached_overlay = cv::Mat(meta.height, meta.width, CV_8UC3, frame);
+// helper callback for cams we are using in the system
+static void _cam_helper_cb(__attribute__((unused)) int ch, camera_image_metadata_t meta, char* frame, void* context) {
+    img_ringbuf_packet *curr_message = new img_ringbuf_packet;
+
+    curr_message->metadata = meta;
+
+    if (meta.format == IMAGE_FORMAT_RAW8 || meta.format == IMAGE_FORMAT_STEREO_RAW8) {
+        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes);
+    }
+    else if (meta.format == IMAGE_FORMAT_NV12 || meta.format == IMAGE_FORMAT_NV21) {
+        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes * 3 / 2);
+        curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+        curr_message->metadata.size_bytes = meta.width * meta.height;
+    }
+    else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
+        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.width * meta.height);
+        memcpy(curr_message->image_pixels + (meta.width * meta.height), (uint8_t*)frame + (meta.width * meta.height * 3 / 2), meta.width * meta.height);
+        curr_message->metadata.format = IMAGE_FORMAT_STEREO_RAW8;
+        curr_message->metadata.size_bytes = meta.width * meta.height * 2;
+    }
+
+    img_ringbuf->insert_data(curr_message);
+
+    free(curr_message);
 }
 
 // imu callback registered to the imu server
@@ -636,6 +666,8 @@ static void _check_and_set_affinity(void) {
     /* Set affinity mask to include CPUs 7 only */
     CPU_ZERO(&cpuset);
     CPU_SET(6, &cpuset);
+    CPU_SET(5, &cpuset);
+    CPU_SET(4, &cpuset);
 
     if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
         perror("pthread_setaffinity_np");
@@ -942,20 +974,69 @@ static void _publish() {
 
     // if someone has subscribed to the overlay, draw it
     if (pipe_server_get_num_clients(OVERLAY_CH) > 0) {
-        // steps:
-        // add padding copymakeborder on top and bottom of image
-        // add text
-        // repub, with draw meta and draw frame used
         cv::Mat overlay_cp;
 
-        std::lock_guard<std::mutex> lg(overlay_mutex);
-        overlay_cp = cached_overlay.clone();
+        img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
+
+        feat_ts_mutex.lock();
+        int ret = img_ringbuf->get_data_at_time(last_feat_timestamp_ns, curr_imgs);
+        feat_ts_mutex.unlock();
+        
+
+        if (ret < 0)  {
+        fprintf(stderr, "FAILED TO FETCH RINGBUF at time %ld\n", last_feat_timestamp_ns);
+        return;
+        }
+
+        // now, construct some cv::Mats with our images (we know them to be greyscale)
+        std::vector<cv::Mat> img_set;
+        if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8){
+            cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
+            cv::Mat img2(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels + (curr_imgs->metadata.width * curr_imgs->metadata.height));
+
+            // now expand them to rgb so we can add color
+            cv::Mat rgb, rgb2;
+            cv::Mat in[] = {img, img, img};
+            cv::merge(in, 3, rgb);
+
+            cv::Mat in2[] = {img2, img2, img2};
+            cv::merge(in2, 3, rgb2);
+
+            img_set.push_back(rgb);
+            img_set.push_back(rgb2);
+        }
+        else {
+            cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
+
+            // now expand to rgb so we can add color
+            cv::Mat rgb;
+            cv::Mat in[] = {img, img, img};
+            cv::merge(in, 3, rgb);
+            img_set.push_back(rgb);
+        }
+
+
+        for (size_t i = 0; i < curr_pixel_locs.size(); i++){
+            // slam landmark
+            if (curr_pixel_locs[i].point_quality == OV_HIGH){
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 0, 255), cv::MARKER_STAR, 12, 2);
+            }
+            // tracked feature
+            else {
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 255, 0), cv::MARKER_SQUARE, 8, 2);
+            }
+        }
+
+        if (img_set.size() == 1) overlay_cp = img_set[0];
+        else cv::hconcat(img_set[0], img_set[1], overlay_cp);
 
         cv::copyMakeBorder(overlay_cp, overlay_cp, DRAW_BONUS_ROWS_TOP, DRAW_BONUS_ROWS_BOT, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0));
 
-        draw_meta = cached_meta;
+        draw_meta = curr_imgs->metadata;
+        draw_meta.width = overlay_cp.cols;
         draw_meta.height += DRAW_BONUS_ROWS_TOP + DRAW_BONUS_ROWS_BOT;
         draw_meta.size_bytes = draw_meta.width * draw_meta.height * 3;
+        draw_meta.format = IMAGE_FORMAT_RGB;
 
         char str[256];
         sprintf(str, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
@@ -992,11 +1073,12 @@ static void _publish() {
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*)overlay_cp.data);
+
+        free(curr_imgs);
     }
 
     return;
 }
-
 
 static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
     ov_msckf::VioManagerOptions vio_manager_options;
@@ -1271,37 +1353,10 @@ static int read_external_configs(void){
         curr_info.cam_id = cam_id;
         cam_id++;
 
+        // fetch the name as well directly into this packet
+        ret = json_fetch_string(curr_cam, "cam name", curr_info.name, 128);
+
         cam_info_vec.push_back(curr_info);
-
-        // // now check for a stereo pair
-        // sprintf(cam_str, "cam %f", (double)i-.5);
-        // cJSON* item2 = cJSON_GetObjectItem(cams, cam_str);
-        // if(item2==NULL){
-        //     fprintf(stderr, "failed to get cam %f\n", (double)i-.5);
-        //     continue;
-        // }
-
-        // double arr_cam_wrt_imu_r[7];
-        // double arr_cam_calib_r[10];
-        // int is_fisheye_r;
-
-        // ret = json_fetch_fixed_vector(item, "ov_cam_wrt_imu", arr_cam_wrt_imu_r, 7);
-        // ret = json_fetch_fixed_vector(item, "ov_cam_cal", arr_cam_calib_r, 10);
-        // ret = json_fetch_bool(item, "fisheye", &is_fisheye_r);
-
-        // Eigen::Matrix<double, 7, 1> curr_cam_wrt_imu_r(arr_cam_wrt_imu_r);
-        // Eigen::Matrix<double, 10, 1> curr_cam_calib_intrinsic_r(arr_cam_calib_r);
-
-        //  // now populate our vector with this information
-        // camera_info curr_info_r;
-        // curr_info_r.is_fisheye = is_fisheye_r;
-        // curr_info_r.cam_wrt_imu = curr_cam_wrt_imu_r;
-        // curr_info_r.cam_calib_intrinsic = curr_cam_calib_intrinsic_r;
-        // curr_info_r.cam_id = cam_id;
-        // cam_id++;
-        // fprintf(stderr, "feed2\n");
-
-        // cam_info_vec.push_back(curr_info_r);
     }
 
     return ret;
@@ -1310,27 +1365,39 @@ static int read_external_configs(void){
 static int connect_client_pipes(void) {
     fprintf(stderr, "connecting client pipes\n");
 
-    // connect to imu
-    char full_pipe[CHAR_BUF_SIZE];
-    if (pipe_expand_location_string(imu_name, full_pipe) < 0) {
-        fprintf(stderr, "ERROR: unable to expand location string with imu %s\n", imu_name);
-        return -1;
-    }
+    img_ringbuf = (new RingBuffer(30));
 
+    // connect to imu
     pipe_client_set_disconnect_cb(IMU_CH, _imu_disconnect_cb, NULL);
     pipe_client_set_simple_helper_cb(IMU_CH, _new_imu_data_handler, NULL);
     int flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
-    if (pipe_client_open(IMU_CH, full_pipe, PROCESS_NAME, flags, IMU_RECOMMENDED_READ_BUF_SIZE) != 0) {
+    if (pipe_client_open(IMU_CH, imu_name, PROCESS_NAME, flags, IMU_RECOMMENDED_READ_BUF_SIZE) != 0) {
+            fprintf(stderr, "failed to open\n");
         return -1;
     }
 
     // connect to our feature tracker overlay
-    pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
-    pipe_client_set_camera_helper_cb(FEAT_OVERLAY_CH, _overlay_helper_cb, NULL);
-    flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-    if (pipe_client_open(FEAT_OVERLAY_CH, FEATURE_OVERLAY_LOCATION, PROCESS_NAME, flags, 1280 * 800 * 30) != 0) {
-        return -1;
+    // pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
+    // pipe_client_set_camera_helper_cb(FEAT_OVERLAY_CH, _overlay_helper_cb, NULL);
+    // flags = CLIENT_FLAG_EN_CAMERA_HELPER;
+    // if (pipe_client_open(FEAT_OVERLAY_CH, FEATURE_OVERLAY_LOCATION, PROCESS_NAME, flags, 1280 * 800 * 30) != 0) {
+    //     return -1;
+    // }
+
+    // connect to all configured cameras
+    for (size_t i = 0; i < 1; i++){ //cam_info_vec.size(); i++){
+        int ch = pipe_client_get_next_available_channel();
+        fprintf(stderr, "CLAIMING CHANNEL %d\n", ch);
+        // pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
+        pipe_client_set_camera_helper_cb(ch, _cam_helper_cb, NULL);
+        flags = CLIENT_FLAG_EN_CAMERA_HELPER;
+        int ret = pipe_client_open(ch, cam_info_vec[i].name, PROCESS_NAME, flags, 1280 * 800 * 4);
+        if (ret) {
+            fprintf(stderr, "failed to open %s\n", cam_info_vec[i].name);
+            return -1;
+        }
     }
+    fprintf(stderr, "returning clients\n");
 
     return 0;
 }
@@ -1412,7 +1479,9 @@ int main(int argc, char* argv[]) {
     pipe_client_send_control_cmd(FEATURE_CH, VFT_CMD_START);
 
     // run until start/stop module catches a signal and changes main_running to 0
+    fprintf(stderr, "starting main thread\n");
     while (main_running) usleep(5000000);
+    fprintf(stderr, "started main thread\n");
 
     // Shutdown Nicely
     _quit(0);
