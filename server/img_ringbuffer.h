@@ -49,8 +49,7 @@
 #define likely(x)	__builtin_expect (!!(x), 1)
 #endif
 
-#define MAX_IMAGE_SIZE  4147200            // 4k YUV image size, stereo pair
-
+#define MAX_IMAGE_SIZE  4147200
 
 ////////////////////////////////////////////////////////////////////////////////
 // image ringbuffer
@@ -86,7 +85,6 @@ class RingBuffer {
                 // write out other details
                 RingBuffer::size = size;
                 initialized = 1;
-                fprintf(stderr, "RINGBUFFER INITIALIZED\n");
             }
         }
 

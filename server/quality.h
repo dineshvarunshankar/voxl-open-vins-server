@@ -104,7 +104,7 @@ static void _add_feature_to_grid(float score, float* grid_scores, int x, int y)
  *
  * @return     The quality.
  */
-static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int n_features, vio_feature_t* features)
+static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w, int img_h, int n_features, int n_cams, vio_feature_t* features)
 {
 	int i;
 
@@ -125,15 +125,17 @@ static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int
 	grid_spacing_x = img_w/GRID_W;
 	grid_spacing_y = img_h/GRID_H;
 
-	float grid_scores[GRID_BLOCKS];
-	memset(grid_scores, 0, sizeof(float)*GRID_BLOCKS);
+	float grid_scores[n_cams][GRID_BLOCKS];
+	for (int i = 0; i < n_cams; i++){
+		memset(grid_scores[i], 0, sizeof(float)*GRID_BLOCKS);
+	}
 
 	// loop through features and save the best depth covariance for each
 	// block with a feature in it
 	for(i=0; i<n_features; i++){
 
 		// skip points not in state
-		if(features[i].point_quality != HIGH){
+		if(features[i].point_quality == LOW){
 			#ifdef DEBUG_QUALITY
 			fprintf(stderr, "skipping oos point with qual of %d\n", features[i].point_quality);
 			#endif
@@ -155,29 +157,45 @@ static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int
 		float stddev = features[i].depth_error_stddev;
 		if (stddev == -1.) continue;
 		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
-		_add_feature_to_grid(score, grid_scores, x, y);
+
+		if (features[i].point_quality == HIGH){
+			score += MAX_SCORE_PER_BLOCK/3.;
+			if (vel_norm < 0.05) score += MAX_SCORE_PER_BLOCK/3.;
+		}
+
+		_add_feature_to_grid(score, grid_scores[features[i].cam_id], x, y);
 	}
 
 #ifdef DEBUG_QUALITY
+	for (int m = 0; m < n_cams; m++){
 	printf("scores:\n");
-	for(i=0; i<GRID_H; i++){
-		for(int j=0; j<GRID_W; j++){
-			printf("%3.1f ", (double)grid_scores[(i*GRID_W)+j]);
+		for(i=0; i<GRID_H; i++){
+			for(int j=0; j<GRID_W; j++){
+				printf("%3.1f ", (double)grid_scores[m][(i*GRID_W)+j]);
+			}
+			printf("\n");
 		}
-		printf("\n");
 	}
-#endif
 
+#endif
+	float sum[n_cams] = {0.0f};
+
+	for (int m = 0; m < n_cams; m++){
+		for(i=0; i<GRID_BLOCKS; i++) sum[m] += grid_scores[m][i];
+	}
+
+	float best_sum = 0;
+	for (int m = 0; m < n_cams; m++){
+		if (sum[m] > best_sum) best_sum = sum[m];	
+	}
 	// calculate the total score
-	float sum = 0.0f;
-	for(i=0; i<GRID_BLOCKS; i++) sum += grid_scores[i];
 
 	// theoretical max score would be a perfect feature in every block.
 	// consider 100% quality to be half the blocks filled
 	float perfect_sum = MAX_SCORE_PER_BLOCK * (GRID_BLOCKS) * BLOCKS_FOR_100_PERCENT;
 	perfect_sum = perfect_sum*perfect_sum;
 
-	int quality = roundf((sum*sum / perfect_sum) * 100.0f);
+	int quality = roundf((best_sum*best_sum / perfect_sum) * 100.0f);
 
 	// bound the output. Remember 0 is a special value meaning unknown so
 	// don't report that since we calculating the quality.

@@ -102,7 +102,7 @@ double zupt_chi2_multiplier;
 double zupt_sigma_px;
 
 bool use_stereo;
-bool use_aruco;
+bool use_mask;
 
 /// ZUPT OPTIONS ///
 bool try_zupt;
@@ -110,18 +110,6 @@ double zupt_max_velocity;
 bool zupt_only_at_beginning;
 double zupt_noise_multiplier;
 double zupt_max_disparity;
-
-/// TRACKER + EXTRACTOR OPTIONS ///
-bool use_klt;
-int num_pts;
-int fast_threshold;
-int grid_x;
-int grid_y;
-int min_px_dist;
-double knn_ratio;
-bool downsample_cams;
-bool use_multithreading;
-bool use_mask;
 
 /// FEATURE INITIALIZER OPTIONS ///
 bool triangulate_1d;
@@ -208,19 +196,8 @@ int config_file_print(void) {
     printf("zupt noise multiplier:            %6.5f\n", zupt_noise_multiplier);
     printf("zupt max disparity:               %6.5f\n", zupt_max_disparity);
     printf("=================================================================\n");
-    printf("=======================TRACKER/EXTRACTOR=========================\n");
-    printf("use klt:                          %s\n", use_klt ? "true" : "false");
-    printf("num pts:                          %d\n", num_pts);
-    printf("fast threshold:                   %d\n", fast_threshold);
-    printf("grid x:                           %d\n", grid_x);
-    printf("grid y:                           %d\n", grid_y);
-    printf("min px dist:                      %d\n", min_px_dist);
-    printf("knn ratio:                        %6.5f\n", knn_ratio);
-    printf("downsample cams:                  %s\n", downsample_cams ? "true" : "false");
-    printf("use multithreading:               %s\n", use_multithreading ? "true" : "false");
     printf("use mask:                         %s\n", use_mask ? "true" : "false");
     printf("use stereo:                       %s\n", use_stereo ? "true" : "false");
-    printf("use aruco:                        %s\n", use_aruco ? "true" : "false");
     printf("=================================================================\n");
     printf("========================FEATURE INITIALIZER======================\n");
     printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
@@ -304,14 +281,6 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.0);
 
-    json_fetch_bool_with_default(parent, "use_klt", (int *)&use_klt, 1);
-    json_fetch_int_with_default(parent, "num_pts", &num_pts, 85);
-    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 65);
-    json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
-    json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
-    json_fetch_int_with_default(parent, "min_px_dist", &min_px_dist, 10);
-    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.70);
-
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
     json_fetch_int_with_default(parent, "max_runs", &max_runs, 1);
@@ -325,11 +294,8 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 0.08);
     json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 50000);
 
-    json_fetch_bool_with_default(parent, "downsample_cams", (int *)&downsample_cams, 0);
-    json_fetch_bool_with_default(parent, "use_multithreading", (int *)&use_multithreading, 1);
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
-    json_fetch_bool_with_default(parent, "use_aruco", (int *)&use_aruco, 0);
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

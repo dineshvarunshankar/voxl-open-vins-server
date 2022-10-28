@@ -169,6 +169,7 @@ extern double zupt_chi2_multiplier;
 extern double zupt_sigma_px;
 
 extern bool use_stereo;
+extern bool use_mask;
 
 /// ZUPT OPTIONS ///
 extern bool try_zupt;
@@ -176,19 +177,6 @@ extern double zupt_max_velocity;
 extern bool zupt_only_at_beginning;
 extern double zupt_noise_multiplier;
 extern double zupt_max_disparity;
-
-/// TRACKER + EXTRACTOR OPTIONS ///
-extern bool use_klt;
-extern int num_pts;
-extern int fast_threshold;
-extern int grid_x;
-extern int grid_y;
-extern int min_px_dist;
-extern double knn_ratio;
-extern bool downsample_cams;
-extern bool use_multithreading;
-extern bool use_mask;
-extern bool use_aruco;
 
 /// FEATURE INITIALIZER OPTIONS ///
 extern bool triangulate_1d;

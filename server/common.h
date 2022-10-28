@@ -74,6 +74,7 @@ typedef struct vft_feature {
     size_t cam_id;
     float x;
     float y;
+    unsigned char descriptor[32];
 } __attribute((packed))__vft_feature;
 
 
