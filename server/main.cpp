@@ -189,10 +189,10 @@ static int max_height = 0;
 
 // function prototypes
 static void _publish();
-// static void _publish();
 static bool show_extra_points_on_overlay = true;
 
 static int _hard_reset(bool is_locked);
+static int connect_client_pipes(void);
 
 static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT)};
 std::string log_path = "";
@@ -451,6 +451,8 @@ static int _hard_reset(bool is_locked) {
         fprintf(stderr, "Error creating vio_manager object\n");
         _quit(-1);
     }
+
+    if (connect_client_pipes() < 0) _quit(0);
 
     if (!is_locked) vio_manager_mutex.unlock();
     imu_lock_mutex.unlock();
@@ -1022,8 +1024,12 @@ static void _publish() {
 
 
         for (size_t i = 0; i < curr_pixel_locs.size(); i++){
+            // re-identified slam landmark
+            if (curr_pixel_locs[i].point_quality == OV_RE_HIGH){
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255, 0, 0), cv::MARKER_SQUARE, 8, 2);
+            }
             // slam landmark
-            if (curr_pixel_locs[i].point_quality == OV_HIGH){
+            else if (curr_pixel_locs[i].point_quality == OV_HIGH){
                 cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 0, 255), cv::MARKER_SQUARE, 8, 2);
             }
             // tracked feature

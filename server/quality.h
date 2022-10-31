@@ -158,7 +158,7 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 		if (stddev == -1.) continue;
 		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
 
-		if (features[i].point_quality == HIGH){
+		if (features[i].point_quality >= HIGH){
 			score += MAX_SCORE_PER_BLOCK/3.;
 			if (vel_norm < 0.05) score += MAX_SCORE_PER_BLOCK/3.;
 		}
