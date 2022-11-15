@@ -13,8 +13,8 @@ find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
 
 
 # tell the linker not to worry about missing symbols in libraries
-set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_CXX_FLAGS}")
+set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs -fsanitize=address -Wno-unused-result ${CMAKE_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs -fsanitize=address -Wno-unused-result ${CMAKE_CXX_FLAGS}")
 
 
 if (BUILD_FOR_X86)

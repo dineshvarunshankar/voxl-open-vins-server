@@ -70,9 +70,14 @@ brute force for now, take a list of params and pre compute a few hundred iterati
 #include <sys/stat.h>	// for mkdir
 #include <unistd.h>		// for access()
 #include <limits.h>		// for access()
+#include <vector>
+#include <map>
+#include <iostream>
+
 
 #include <modal_pipe_client.h>
 #include <modal_start_stop.h>
+#include <modal_json.h>
 
 
 
@@ -102,13 +107,18 @@ char process_paths[3][256] = {
 
 char process_args[3][256] = {
     "", 
-    "-s",
+    "",
     ""
 };
 
+std::map<std::string, std::vector<int>> param_table;
+static const int n_ov_params = 13;
+static const int n_ft_params = 6;
 
+static int n_total_params = 0;
 
 static std::string session_dir;
+
 
 
 static void _print_usage(void)
@@ -154,12 +164,12 @@ static int _parse_opts(int argc, char* argv[])
 
 		case 'h':
 			_print_usage();
-			break;
+            exit(-1);
 
 		default:
             fprintf(stderr, "ERROR: unsupported arg provided\n");
 			_print_usage();
-			return -1;
+			exit(-1);
 		}
 	}
 	return 0;
@@ -255,7 +265,7 @@ static int start_sub_processes(int processes_left){
             //Child stuff here
             // printf("Child %d, going to execute %s with args %s\n", processes_left, process_paths[3-processes_left], process_args[3-processes_left]);
             execl(process_paths[3-processes_left], process_paths[3-processes_left], process_args[3-processes_left], (char *)0);
-            usleep(50000);
+            usleep(500000);
         }
         else if(pid > 0)
         {
@@ -264,7 +274,7 @@ static int start_sub_processes(int processes_left){
 
             //parent
             // printf("Parent %d\n", processes_left);
-            usleep(50000);
+            usleep(500000);
             start_sub_processes(processes_left - 1);
         }
     }
@@ -281,6 +291,9 @@ static void close_subprocesses(){
 
 
 static int create_session_dir(){
+
+    system("voxl-set-cpu-mode performance");
+
     time_t rawtime;
     struct tm * timeinfo;
     char buffer[128];
@@ -330,8 +343,6 @@ static int log_results(){
     system(cmd);
     sprintf(cmd, "cp /etc/modalai/voxl-open-vins-server.conf %s", param_dir);
     system(cmd);
-    sprintf(cmd, "cp /etc/modalai/voxl-open-vins-server.conf %s", param_dir);
-    system(cmd);
 
     // create csv in new dir
 	char csv_path[512];
@@ -351,114 +362,141 @@ static int log_results(){
 }
 
 
-static int setup_param_tables(){
-    std::map<std::string, std::vector<int>> param_table;
-
+static void setup_param_tables(){
     // idea: each string param maps to a vector of ints that we can simply iterate through
+    // the index of the parameters vector is determined by:
+    // index % n_params % vector of this param size
+
+    n_total_params += (n_ov_params * n_ov_params * 97);
+    n_total_params += (n_ft_params * n_ov_params * 97);
 
     std::vector<int> bool_vec;
     for (int i = 0; i < 2; i++){
         bool_vec.push_back(i);
     }
 
-    param_table.insert("cam_to_imu_refinement", bool_vec);
-    param_table.insert("cam_intrins_refinement", bool_vec);
-    param_table.insert("cam_imu_ts_refinement", bool_vec);
+    param_table.insert({"cam_to_imu_refinement", bool_vec});
+    param_table.insert({"cam_intrins_refinement", bool_vec});
+    param_table.insert({"cam_imu_ts_refinement", bool_vec});
 
+    std::vector<int> win_vec;
     std::vector<int> rep_vec;
     for (int i = 0; i < 6; i++){
         rep_vec.push_back(i);
+        win_vec.push_back(i*2);
     }
 
-    param_table.insert("feat_rep_msckf", rep_vec);
-    param_table.insert("feat_rep_slam", rep_vec);
+    param_table.insert({"feat_rep_msckf", rep_vec});
+    param_table.insert({"feat_rep_slam", rep_vec});
 
     std::vector<int> clone_vec;
-    for (int i = 0; i < 50; i++){
+    for (int i = 2; i < 52; i++){
         clone_vec.push_back(i*2);
     }
 
-    param_table.insert("max_clone_size", clone_vec);
-    param_table.insert("max_slam_features", clone_vec);
-    param_table.insert("max_slam_in_update", clone_vec);
-    param_table.insert("max_msckf_in_update", clone_vec);
+    param_table.insert({"max_clone_size", clone_vec});
+    param_table.insert({"max_slam_features", clone_vec});
+    param_table.insert({"max_slam_in_update", clone_vec});
+    param_table.insert({"max_msckf_in_update", clone_vec});
 
     std::vector<int> chi2_vec;
     for (int i = 0; i < 10; i++){
         chi2_vec.push_back(i);
     }
 
-    param_table.insert("msckf_chi2_multiplier", chi2_vec);
-    param_table.insert("msckf_sigma_px", chi2_vec);
-    param_table.insert("slam_chi2_multiplier", chi2_vec);
-    param_table.insert("slam_sigma_px", chi2_vec);
+    param_table.insert({"msckf_chi2_multiplier", chi2_vec});
+    param_table.insert({"msckf_sigma_px", chi2_vec});
+    param_table.insert({"slam_chi2_multiplier", chi2_vec});
+    param_table.insert({"slam_sigma_px", chi2_vec});
 
+    std::vector<int> features_vec;
+    for (int i = 0; i < 25; i++){
+        features_vec.push_back(i*2);
+    }
 
+    param_table.insert({"num_features_to_track", features_vec});
 
+    param_table.insert({"grid_x", chi2_vec});
+    param_table.insert({"grid_y", chi2_vec});
 
+    std::vector<int> dist_vec;
+    for (int i = 0; i < 25; i++){
+        features_vec.push_back(i);
+    }
+
+    param_table.insert({"min_pix_dist", dist_vec});
+
+    std::vector<int> levels_vec;
+    for (int i = 0; i < 4; i++){
+        levels_vec.push_back(i);
+    }
+
+    param_table.insert({"pyramid_levels", levels_vec});
+    param_table.insert({"window_size", win_vec});
+
+    return;
 }
 
 
-static int update_params(int index){
-    int ret = 0;
+static int update_open_vins_params(int index){
 
-    ret = update_open_vins_params();
-    ret = update_feature_tracker_params();
-
-    return ret;
-}
-
-static int update_open_vins_params(){
     cJSON *parent = json_read_file(OV_CONFIG_FILE);
+
     if (parent == NULL) return -1;
 
     // cJSON_SetValuestring
     // cJSON_SetNumberValue
     // cJSON_SetIntValue
 
+    cJSON* cam_to_imu_refinement = cJSON_GetObjectItem(parent, "cam_to_imu_refinement");
+    cJSON_SetIntValue(cam_to_imu_refinement, param_table["cam_to_imu_refinement"][index % n_ov_params % param_table["cam_to_imu_refinement"].size()]);
 
-    // cJSON* cam_to_imu_refinement = cJSON_GetObjectItem(parent, "cam_to_imu_refinement");
-    // cJSON_SetIntValue(cam_to_imu_refinement, 0);
+    cJSON* cam_intrins_refinement = cJSON_GetObjectItem(parent, "cam_intrins_refinement");
+    cJSON_SetIntValue(cam_intrins_refinement, param_table["cam_intrins_refinement"][index % n_ov_params % param_table["cam_intrins_refinement"].size()]);
 
-    // cJSON* cam_intrins_refinement = cJSON_GetObjectItem(parent, "cam_intrins_refinement");
-    // cJSON_SetIntValue(cam_intrins_refinement, 0);
-
-    // cJSON* cam_imu_ts_refinement = cJSON_GetObjectItem(parent, "cam_imu_ts_refinement");
-    // cJSON_SetIntValue(cam_imu_ts_refinement, 0);
+    cJSON* cam_imu_ts_refinement = cJSON_GetObjectItem(parent, "cam_imu_ts_refinement");
+    cJSON_SetIntValue(cam_imu_ts_refinement, param_table["cam_imu_ts_refinement"][index % n_ov_params % param_table["cam_imu_ts_refinement"].size()]);
 
     cJSON* max_clone_size = cJSON_GetObjectItem(parent, "max_clone_size");
-    cJSON_SetIntValue(max_clone_size, 0);
-    // set this to some value from our lookup table
-    // just need to define some function that will map everything correctly
-    // use current trial index % num_params_to_try % sizeof param list for this param
+    cJSON_SetIntValue(max_clone_size, param_table["max_clone_size"][index % n_ov_params % param_table["max_clone_size"].size()]);
+
     cJSON* max_slam_features = cJSON_GetObjectItem(parent, "max_slam_features");
-    cJSON_SetIntValue(max_slam_features, 0);
+    cJSON_SetIntValue(max_slam_features, param_table["max_slam_features"][index % n_ov_params % param_table["max_slam_features"].size()]);
+
     cJSON* max_slam_in_update = cJSON_GetObjectItem(parent, "max_slam_in_update");
-    cJSON_SetIntValue(max_slam_in_update, 0);
+    cJSON_SetIntValue(max_slam_in_update, param_table["max_slam_in_update"][index % n_ov_params % param_table["max_slam_in_update"].size()]);
+
     cJSON* max_msckf_in_update = cJSON_GetObjectItem(parent, "max_msckf_in_update");
-    cJSON_SetIntValue(max_msckf_in_update, 0);
+    cJSON_SetIntValue(max_msckf_in_update, param_table["max_msckf_in_update"][index % n_ov_params % param_table["max_msckf_in_update"].size()]);
 
-    // cJSON* feat_rep_msckf = cJSON_GetObjectItem(parent, "feat_rep_msckf");
-    // cJSON_SetIntValue(feat_rep_msckf, 0);
-    // cJSON* feat_rep_slam = cJSON_GetObjectItem(parent, "feat_rep_slam");
-    // cJSON_SetIntValue(feat_rep_slam, 0);
+    cJSON* feat_rep_msckf = cJSON_GetObjectItem(parent, "feat_rep_msckf");
+    cJSON_SetIntValue(feat_rep_msckf, param_table["feat_rep_msckf"][index % n_ov_params % param_table["feat_rep_msckf"].size()]);
 
-    // cJSON* msckf_chi2_multiplier = cJSON_GetObjectItem(parent, "msckf_chi2_multiplier");
-    // cJSON_SetNumberValue(msckf_chi2_multiplier, 1.);
-    // cJSON* msckf_sigma_px = cJSON_GetObjectItem(parent, "msckf_sigma_px");
-    // cJSON_SetNumberValue(msckf_sigma_px, 1.);
+    cJSON* feat_rep_slam = cJSON_GetObjectItem(parent, "feat_rep_slam");
+    cJSON_SetIntValue(feat_rep_slam, param_table["feat_rep_slam"][index % n_ov_params % param_table["feat_rep_slam"].size()]);
 
-    // cJSON* slam_chi2_multiplier = cJSON_GetObjectItem(parent, "slam_chi2_multiplier");
-    // cJSON_SetNumberValue(slam_chi2_multiplier, 1.);
-    // cJSON* slam_sigma_px = cJSON_GetObjectItem(parent, "slam_sigma_px");
-    // cJSON_SetNumberValue(slam_sigma_px, 1.);
+    cJSON* msckf_chi2_multiplier = cJSON_GetObjectItem(parent, "msckf_chi2_multiplier");
+    cJSON_SetNumberValue(msckf_chi2_multiplier, param_table["msckf_chi2_multiplier"][index % n_ov_params % param_table["msckf_chi2_multiplier"].size()]);
 
-    cJSON* triangulate_1d = cJSON_GetObjectItem(parent, "triangulate_1d");
-    cJSON_SetIntValue(triangulate_1d, 0);
-    cJSON* refine_features = cJSON_GetObjectItem(parent, "refine_features");
-    cJSON_SetIntValue(refine_features, 0);
-    cJSON* max_runs = cJSON_GetObjectItem(parent, "max_runs");
-    cJSON_SetIntValue(max_runs, 0);
+    cJSON* msckf_sigma_px = cJSON_GetObjectItem(parent, "msckf_sigma_px");
+    cJSON_SetNumberValue(msckf_sigma_px, param_table["msckf_sigma_px"][index % n_ov_params % param_table["msckf_sigma_px"].size()]);
+
+    cJSON* slam_chi2_multiplier = cJSON_GetObjectItem(parent, "slam_chi2_multiplier");
+    cJSON_SetNumberValue(slam_chi2_multiplier, param_table["slam_chi2_multiplier"][index % n_ov_params % param_table["slam_chi2_multiplier"].size()]);
+
+    cJSON* slam_sigma_px = cJSON_GetObjectItem(parent, "slam_sigma_px");
+    cJSON_SetNumberValue(slam_sigma_px, param_table["slam_sigma_px"][index % n_ov_params % param_table["slam_sigma_px"].size()]);
+
+    if (index % n_ov_params % param_table["slam_sigma_px"].size() == param_table["slam_sigma_px"].size()-1) return -2;
+
+    // cJSON* triangulate_1d = cJSON_GetObjectItem(parent, "triangulate_1d");
+    // cJSON_SetIntValue(triangulate_1d, param_table["triangulate_1d"][index % n_ov_params % param_table["triangulate_1d"].size()]);
+
+    // cJSON* refine_features = cJSON_GetObjectItem(parent, "refine_features");
+    // cJSON_SetIntValue(refine_features, param_table["refine_features"][index % n_ov_params % param_table["refine_features"].size()]);
+
+    // cJSON* max_runs = cJSON_GetObjectItem(parent, "max_runs");
+    // cJSON_SetIntValue(max_runs, param_table["max_runs"][index % n_ov_params % param_table["max_runs"].size()]);
 
     // cJSON* min_dist = cJSON_GetObjectItem(parent, "min_dist");
     // cJSON_SetNumberValue(min_dist, 1.);
@@ -469,12 +507,59 @@ static int update_open_vins_params(){
     // cJSON* max_cond_number = cJSON_GetObjectItem(parent, "max_cond_number");
     // cJSON_SetNumberValue(max_cond_number, 1.);
 
+    json_write_to_file(OV_CONFIG_FILE, parent);
+
+    fprintf(stderr, "finishing ov param setter function\n");
+
+    cJSON_Delete(parent);
+
     return 0;
 }
 
 
-static int update_feature_tracker_params(){
-    
+static int update_feature_tracker_params(int index){
+    cJSON *parent = json_read_file(FT_CONFIG_FILE);
+    if (parent == NULL) return -1;
+
+    cJSON* num_features_to_track = cJSON_GetObjectItem(parent, "num_features_to_track");
+    cJSON_SetIntValue(num_features_to_track, param_table["num_features_to_track"][index % n_ft_params % param_table["num_features_to_track"].size()]);
+
+    cJSON* grid_x = cJSON_GetObjectItem(parent, "grid_x");
+    cJSON_SetIntValue(grid_x, param_table["grid_x"][index % n_ft_params % param_table["grid_x"].size()]);
+
+    std::cout << "grid x: " << param_table["grid_x"][index % n_ft_params % param_table["grid_x"].size()] << std::endl;
+
+    cJSON* grid_y = cJSON_GetObjectItem(parent, "grid_y");
+    cJSON_SetIntValue(grid_y, param_table["grid_y"][index % n_ft_params % param_table["grid_y"].size()]);
+
+    cJSON* min_pix_dist = cJSON_GetObjectItem(parent, "min_pix_dist");
+    cJSON_SetIntValue(min_pix_dist, param_table["min_pix_dist"][index % n_ft_params % param_table["min_pix_dist"].size()]);
+
+    std::cout << "min_pix_dist: " << param_table["min_pix_dist"][index % n_ft_params % param_table["min_pix_dist"].size()] << std::endl;
+
+
+    cJSON* pyramid_levels = cJSON_GetObjectItem(parent, "pyramid_levels");
+    cJSON_SetIntValue(pyramid_levels, param_table["pyramid_levels"][index % n_ft_params % param_table["pyramid_levels"].size()]);
+
+    cJSON* window_size = cJSON_GetObjectItem(parent, "window_size");
+    cJSON_SetIntValue(window_size, param_table["window_size"][index % n_ft_params % param_table["window_size"].size()]);
+
+    json_write_to_file(FT_CONFIG_FILE, parent);
+    cJSON_Delete(parent);
+
+    return 0;
+}
+
+
+static int update_params(int index){
+    int ret = 0;
+
+    ret = update_open_vins_params(index);
+    if (!update_feature_tracker_params(index)){
+        return -3;
+    }
+
+    return ret;
 }
 
 
@@ -502,27 +587,50 @@ int main(int argc, char* argv[])
 
     setup_ov_connection();
 
+    setup_param_tables();
+
     // make the base dir, ensure that it exists
 	_mkdir(OUTPUT_DIR);
-    for (int i = 0; i < 3; i++){
+
+    bool final_run = false;
+    int ret = 0;
+    for (int i = 0; i < 50; i++){
         start_sub_processes(3);
 
         // keep going until signal handler or callback sets the running flag to 0
         while(main_running) {
             usleep(200000);
+
             if (failure) break;
+
+            for (int i = 0; i < 3; i++){
+                if (!kill(sub_pid_list[i], 0)) {
+                    // fprintf(stderr, "pid: %d\n", sub_pid_list[i]);
+                    // perror("ERROR: ");
+                }
+                if (errno == ESRCH) {
+                    failure = true;
+                    break;
+                }
+            }
         }
 
         close_subprocesses();
 
         log_results();
 
-        update_open_vins_params();
-        update_feature_tracker_params();
+        if (final_run) break;
+
+        ret = update_params(i);
+        if (ret == -2){
+            final_run = true;
+        }
 
         reset_vars();
     }
     
+    main_running = 0;
+
     // all done, signal pipe read threads to stop
     printf("\nclosing and exiting\n");
     pipe_client_close_all();

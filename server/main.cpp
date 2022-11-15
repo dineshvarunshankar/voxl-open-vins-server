@@ -126,8 +126,6 @@ static volatile int64_t last_sent_timestamp_ns = 0;
 // state of imu and camera connections
 static volatile int is_imu_connected = 0;
 static volatile int is_cam_connected = 0;
-static volatile int has_received_all_calib = 0;
-static volatile int has_received_all_params = 0;
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -399,6 +397,8 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx) {
         // Otherwise, send out failure packets, this inlcudes global error codes
         // indicating if we are waiting for cam or IMU data
         if (delay_ns < STALL_TIMEOUT_NS && last_real_pose_timestamp_ns != 0) continue;
+
+        if (!is_initialized) continue;
 
         // flag that we've sent a packet with the current timestamp
         last_sent_timestamp_ns = current_time;
@@ -820,11 +820,10 @@ static void _publish() {
 
     // Grab the state, then fill our state_plus and covariance
     current_state = vio_manager->get_state();
-    // if (!vio_manager->get_propagator()->fast_state_propagate(current_state, current_state->_timestamp, state_plus, cov_plus)) {
-    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(last_imu_timestamp_ns) / 1e9, state_plus, cov_plus)) {
 
-        fprintf(stderr, "failed to fast propogate state\n");
-        return;
+    // this is for extra info only
+    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(_apps_time_monotonic_ns()) / 1e9, state_plus, cov_plus)) {
+        fprintf(stderr, "Warn: missing some data\n");
     }
 
     // correction matrix
@@ -856,6 +855,7 @@ static void _publish() {
     // check if its initialized or not
     if (!vio_manager->initialized()) {
         s.state = VIO_STATE_INITIALIZING;
+        memcpy(&d.v, &s, sizeof(vio_data_t));
         is_initialized = false;
         // send to both pipes
         pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
@@ -868,8 +868,8 @@ static void _publish() {
 
     // sometimes qvio will report covariance as invalid but state is still OKAY
     // this is NOT alright, in this case manually set the state to failed.
-    if (cov_plus(3, 3) <= 0.0f || cov_plus(4, 4) <= 0.0f || cov_plus(5, 5) <= 0.0f) {
-        fprintf(stderr, "ERROR: got negative covariance\n");
+    if (cov_plus(3, 3) < 0.0f || cov_plus(4, 4) < 0.0f || cov_plus(5, 5) < 0.0f) {
+        fprintf(stderr, "ERROR: diagonal went negative\n");
         s.state = VIO_STATE_FAILED;
     }
 
@@ -1291,7 +1291,7 @@ static int create_server_pipes(void) {
         OV_VIO_EXTENDED_LOCATION,   // location
         "ext_vio_data_t",           // type
         PROCESS_NAME,               // server_name
-        VIO_RECOMMENDED_PIPE_SIZE,  // size_bytes
+        CAM_PIPE_SIZE,  // size_bytes
         0                           // server_pid
     };
 

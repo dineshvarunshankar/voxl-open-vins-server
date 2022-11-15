@@ -112,7 +112,7 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 		return -1;
 	}
 
-	if(vel_cov[0]<=0.0f || vel_cov[6]<=0.0f || vel_cov[11]<=0.0f){
+	if(vel_cov[0]<0.0f || vel_cov[6]<0.0f || vel_cov[11]<0.0f){
 		fprintf(stderr, "negative covariance\n");
 		return -1;
 	}

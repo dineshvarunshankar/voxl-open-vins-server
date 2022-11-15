@@ -53,7 +53,7 @@ int RingBuffer::insert_data(img_ringbuf_packet* new_packet){
     }
     if(unlikely(new_packet->metadata.timestamp_ns <= latest_timestamp_ns)){
         buf_mutex.unlock();
-        fprintf(stderr,"ERROR in %s, detected timestamp out of order\n", __FUNCTION__);
+        fprintf(stderr,"ERROR in %s, detected timestamp out of order ov, %ld vs %ld\n", __FUNCTION__, new_packet->metadata.timestamp_ns,latest_timestamp_ns);
         return -1;
     }
 
