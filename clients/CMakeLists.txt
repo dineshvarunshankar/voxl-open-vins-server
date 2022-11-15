@@ -11,6 +11,12 @@ endif()
 # find_package(Boost REQUIRED )
 find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
 
+
+# tell the linker not to worry about missing symbols in libraries
+set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_CXX_FLAGS}")
+
+
 if (BUILD_FOR_X86)
     set(MODAL_PIPE_LIBRARY modal_pipe)
     set(MODAL_JSON_LIBRARY modal_json)
@@ -32,9 +38,12 @@ find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 
 target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
 
-# tell the linker not to worry about missing symbols in libraries
-set(CMAKE_C_FLAGS   "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_C_FLAGS}")
-set(CMAKE_CXX_FLAGS "-Wl,--unresolved-symbols=ignore-in-shared-libs ${CMAKE_CXX_FLAGS}")
+
+set(TARGET voxl-evaluate-vins)
+add_executable(${TARGET} voxl-evaluate-vins.cpp)
+list(APPEND ALL_TARGETS ${TARGET})
+
+target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
 
 
 install(

@@ -168,8 +168,17 @@ static cv::Mat world_correction;
 // set any error codes here for publishing in the data structure
 static uint32_t global_error_codes = 0;
 
+typedef enum camera_mode {
+    UNKNOWN = -1,
+    MONO = 0,
+    STEREO = 1,
+    STEREO_LEFT_ONLY = 2, 
+    STEREO_RIGHT_ONLY = 3
+} camera_mode;
+
 typedef struct camera_info {
     char name[128];
+    camera_mode mode;
     Eigen::Matrix<double, 7, 1> cam_wrt_imu;
     Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
     bool is_fisheye;
@@ -350,7 +359,7 @@ static void _quit(int ret) {
     // Remove this process ID file
     remove_pid_file(PROCESS_NAME);
 
-    if (img_ringbuf) free(img_ringbuf);
+    if (img_ringbuf) delete img_ringbuf;
 
     if (ret == 0)
         printf("Exiting Cleanly\n");
@@ -573,28 +582,56 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
 
 // helper callback for cams we are using in the system
 static void _cam_helper_cb(__attribute__((unused)) int ch, camera_image_metadata_t meta, char* frame, void* context) {
+    camera_mode* cm = (camera_mode*)context;
+
     img_ringbuf_packet *curr_message = new img_ringbuf_packet;
 
     curr_message->metadata = meta;
 
-    if (meta.format == IMAGE_FORMAT_RAW8 || meta.format == IMAGE_FORMAT_STEREO_RAW8) {
+    if (meta.format == IMAGE_FORMAT_RAW8){
         memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes);
     }
-    else if (meta.format == IMAGE_FORMAT_NV12 || meta.format == IMAGE_FORMAT_NV21) {
-        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes * 3 / 2);
+    else if (meta.format == IMAGE_FORMAT_STEREO_RAW8){
+        if (*cm == STEREO) memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes);
+        else if (*cm == STEREO_LEFT_ONLY) {
+            memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.size_bytes/2);
+            curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+            curr_message->metadata.size_bytes /= 2;
+        }
+        else if (*cm == STEREO_RIGHT_ONLY) {
+            memcpy(curr_message->image_pixels, (uint8_t*)frame+meta.size_bytes/2, meta.size_bytes/2);
+            curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+            curr_message->metadata.size_bytes /= 2;
+        }
+    }
+    else if (meta.format == IMAGE_FORMAT_NV12){
+        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.width * meta.height);
         curr_message->metadata.format = IMAGE_FORMAT_RAW8;
         curr_message->metadata.size_bytes = meta.width * meta.height;
     }
     else if (meta.format == IMAGE_FORMAT_STEREO_NV12 || meta.format == IMAGE_FORMAT_STEREO_NV21) {
-        memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.width * meta.height);
-        memcpy(curr_message->image_pixels + (meta.width * meta.height), (uint8_t*)frame + (meta.width * meta.height * 3 / 2), meta.width * meta.height);
-        curr_message->metadata.format = IMAGE_FORMAT_STEREO_RAW8;
-        curr_message->metadata.size_bytes = meta.width * meta.height * 2;
+        if (*cm == STEREO) {
+            memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.width * meta.height);
+            memcpy(curr_message->image_pixels + (meta.width * meta.height), (uint8_t*)frame + (meta.width * meta.height * 3 / 2), meta.width * meta.height);
+            curr_message->metadata.format = IMAGE_FORMAT_STEREO_RAW8;
+            curr_message->metadata.size_bytes = meta.width * meta.height * 2;
+        }
+        else if (*cm == STEREO_LEFT_ONLY) {
+            memcpy(curr_message->image_pixels, (uint8_t*)frame, meta.width * meta.height);
+            curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+            curr_message->metadata.size_bytes = meta.width * meta.height;
+        }
+        else if (*cm == STEREO_RIGHT_ONLY) {
+            memcpy(curr_message->image_pixels, (uint8_t*)frame+meta.size_bytes/2,  meta.width * meta.height);
+            curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+            curr_message->metadata.size_bytes = meta.width * meta.height;
+        }
     }
 
     img_ringbuf->insert_data(curr_message);
 
-    free(curr_message);
+    delete curr_message;
+
 }
 
 // imu callback registered to the imu server
@@ -783,7 +820,10 @@ static void _publish() {
 
     // Grab the state, then fill our state_plus and covariance
     current_state = vio_manager->get_state();
+    // if (!vio_manager->get_propagator()->fast_state_propagate(current_state, current_state->_timestamp, state_plus, cov_plus)) {
     if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(last_imu_timestamp_ns) / 1e9, state_plus, cov_plus)) {
+
+        fprintf(stderr, "failed to fast propogate state\n");
         return;
     }
 
@@ -906,8 +946,8 @@ static void _publish() {
     // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[1]->quat().transpose()) * current_state->_calib_IMUtoCAM[1]->pos()) * -1).cast<float>();
     Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
 
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 3) = current_state->_imu->bias_g_fej().cast<float>();
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 3) = current_state->_imu->bias_a_fej().cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) = current_state->_imu->bias_g_fej().cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) = current_state->_imu->bias_a_fej().cast<float>();
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // GRAVITY ALIGNMENT WITH QVIO
@@ -1049,7 +1089,14 @@ static void _publish() {
             cv::hconcat(img_set[0], img_set[1], overlay_cp);
         }
 
-        cv::copyMakeBorder(overlay_cp, overlay_cp, DRAW_BONUS_ROWS_TOP, DRAW_BONUS_ROWS_BOT, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0));
+        static float font_size = 1;
+        static float border_scale = 1;
+        if (overlay_cp.cols <= 640){
+            font_size = 0.7;
+            border_scale = 2;
+        }
+
+        cv::copyMakeBorder(overlay_cp, overlay_cp, DRAW_BONUS_ROWS_TOP/border_scale, DRAW_BONUS_ROWS_BOT/border_scale, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0));
 
         draw_meta = curr_imgs->metadata;
         draw_meta.width = overlay_cp.cols;
@@ -1057,19 +1104,21 @@ static void _publish() {
         draw_meta.size_bytes = draw_meta.width * draw_meta.height * 3;
         draw_meta.format = IMAGE_FORMAT_RGB;
 
+
+
         char str[256];
         sprintf(str, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
                 s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);        
         int baseline = 0;
-        cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, 1.5,1, &baseline);
+        cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size, font_size, &baseline);
 
         cv::putText(overlay_cp, //target image
             str, //text
             cv::Point((overlay_cp.cols - text_size.width)/2, text_size.height*3/2), //top-left position
             cv::FONT_HERSHEY_COMPLEX,
-            1.5,
+            font_size,
             cv::Scalar(255, 255, 255), //font color
-            1,
+            font_size,
             cv::LINE_AA);
 
         char oos_pts_string[32];
@@ -1080,21 +1129,21 @@ static void _publish() {
 
         sprintf(str, "ex(ms): %6.1f Gain: %5d %s",
                 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
-        text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, 1.5,1, &baseline);
+        text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size,font_size, &baseline);
 
         cv::putText(overlay_cp, //target image
             str, //text
             cv::Point((overlay_cp.cols - text_size.width)/2, overlay_cp.rows - text_size.height/2 + 2), //top-left position
             cv::FONT_HERSHEY_COMPLEX,
-            1.5,
+            font_size,
             cv::Scalar(255, 255, 255), //font color
-            1,
+            font_size,
             cv::LINE_AA);
 
         // draw out to pipe
         pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*)overlay_cp.data);
 
-        free(curr_imgs);
+        delete curr_imgs;
     }
     else skip_cnt++;
 
@@ -1300,6 +1349,22 @@ static int create_server_pipes(void) {
     return 0;
 }
 
+static camera_mode string_camera_mode_to_enum(char* str_cm){
+    if (!strncmp(str_cm, "MONO", sizeof("MONO"))){
+        return MONO;
+    }
+    if (!strncmp(str_cm, "STEREO", sizeof("STEREO"))){
+        return STEREO;
+    }
+    if (!strncmp(str_cm, "STEREO_LEFT_ONLY", sizeof("STEREO_LEFT_ONLY"))){
+        return STEREO_LEFT_ONLY;
+    }
+    if (!strncmp(str_cm, "STEREO_RIGHT_ONLY", sizeof("STEREO_RIGHT_ONLY"))){
+        return STEREO_RIGHT_ONLY;
+    }
+    else return UNKNOWN;
+}
+
 static int read_external_configs(void){
 
     // connect to our feature tracker
@@ -1309,6 +1374,8 @@ static int read_external_configs(void){
     if (pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER, 1280 * 800 * 64) != 0) {
         _quit(-1);
     }
+
+    usleep(5000);
 
     // grab the json from voxl-feature-tracker's info file
     cJSON* json = pipe_client_get_info_json(FEATURE_CH);
@@ -1349,7 +1416,8 @@ static int read_external_configs(void){
         if (curr_cam_calib_intrinsic(9,0) > max_height) max_height = curr_cam_calib_intrinsic(9,0); 
 
         if (!is_wrldc_set) {
-            world_correction = cv::Mat(3, 3, CV_64F, arr_world_correction);
+            world_correction = cv::Mat(3, 3, CV_64F);
+            memcpy(world_correction.data, arr_world_correction, 3*3*sizeof(double));
             is_wrldc_set = true;
         }
 
@@ -1364,8 +1432,16 @@ static int read_external_configs(void){
         // fetch the name as well directly into this packet
         ret = json_fetch_string(curr_cam, "cam name", curr_info.name, 128);
 
+        // fetch the mode
+        char mode_buf[128];
+        ret = json_fetch_string(curr_cam, "cam mode", mode_buf, 128);
+        curr_info.mode = string_camera_mode_to_enum(mode_buf);
+
         cam_info_vec.push_back(curr_info);
     }
+
+    // free up the json we got
+    free(json);
 
     return ret;
 }
@@ -1388,7 +1464,7 @@ static int connect_client_pipes(void) {
     for (size_t i = 0; i < 1; i++){ //cam_info_vec.size(); i++){
         int ch = pipe_client_get_next_available_channel();
         // pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
-        pipe_client_set_camera_helper_cb(ch, _cam_helper_cb, NULL);
+        pipe_client_set_camera_helper_cb(ch, _cam_helper_cb, &cam_info_vec[i].mode);
         flags = CLIENT_FLAG_EN_CAMERA_HELPER;
         int ret = pipe_client_open(ch, cam_info_vec[i].name, PROCESS_NAME, flags, 1280 * 800 * 4);
         if (ret) {
