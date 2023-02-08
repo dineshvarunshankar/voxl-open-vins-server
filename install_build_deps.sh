@@ -15,6 +15,7 @@ voxl-opencv
 libboost-filesystem-dev:arm64
 libboost-thread-dev:arm64
 libboost-date-time-dev:arm64
+voxl-eigen3
 voxl-open-vins
 "
 
@@ -24,6 +25,7 @@ libmodal-pipe
 voxl-opencv
 voxl-boost
 voxl-open-vins
+voxl-eigen3
 "
 
 ## this list is just for tab-completion
