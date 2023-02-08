@@ -41,7 +41,7 @@
 #include <modal_pipe.h>
 
 
-/// magic number for vft_feature_packet 
+/// magic number for vft_feature_packet
 #define VOXL_FT_MAGIC_NUMBER (0x54555249)
 /// magic number for calibration_packets
 #define VOXL_CALIB_MAGIC_NUMBER (0x43414C49)
@@ -61,9 +61,9 @@
 /**
  * @struct vft_feature
  * voxl-feature-tracker feature, containing all necessary info to describe a feature point
- * 
+ *
  * *NOTE* will likely expand in the future
- * 
+ *
  * @field id        unique id for the feature point, should correspond to a match in the previous frame
  * @fielf cam_id    unique id for the camera the feature was seen from
  * @field x         sub-pixel refined x coord of our feature
@@ -74,7 +74,9 @@ typedef struct vft_feature {
     size_t cam_id;
     float x;
     float y;
-    unsigned char descriptor[32];
+    float u;
+    float v;
+    unsigned char descriptor[32] = {0};
 } __attribute((packed))__vft_feature;
 
 
@@ -82,7 +84,7 @@ typedef struct vft_feature {
  * @struct vft_feature_packet
  * voxl-feature-tracker packet, contains an entire "track update"
  * this is essentially our metadata struct
- * 
+ *
  * @field magic_number      expected to be VOXL_FT_MAGIC_NUMBER
  * @field timestamp_ns      timestamp of the image extracted from
  * @field num_feats         number of vft_feature packets that will follow this message
@@ -91,16 +93,17 @@ typedef struct vft_feature_packet{
     uint32_t magic_number;
     int64_t timestamp_ns;
     uint32_t num_feats;
+    uint8_t reset;
 } __attribute((packed))__vft_feature_packet;
 
 
 /**
  * @struct vft_calib_packet
  * packet to send back to open vins only (for now) containing required setup info about our system
- * 
+ *
  * @field magic_number              expected to be VOXL_CALIB_MAGIC_NUMBER
  * @field timestamp_ns              timestamp of packet write
- * @field cam_id                    camera id this packet corresponds to 
+ * @field cam_id                    camera id this packet corresponds to
  * @field num_cams                  number of cameras in the overall system
  * @field cam_wrt_imu               quaternion followed by tranlation of camera into the imu frame
  * @field cam_calib_intrinsic       fx, fy, px, py, distortion coefficients (4), w, h
@@ -121,7 +124,7 @@ typedef struct vft_calib_packet {
  * @struct vft_param_packet
  * extra parameter packet for any non-standard params that need to be sent to another server
  * as of now, only sent to open-vins to get the last params we setup here
- * 
+ *
  * @field magic_number              expected to be VOXL_PARAM_MAGIC_NUMBER
  * @field imu_name                  name of the imu we are subscribing to (optional param for voxl-feature-tracker)
  * @field num_features_to_track     number of features we are trying to track frame by frame
@@ -136,8 +139,8 @@ typedef struct vft_param_packet {
 /**
  * @brief timing helper function
  * used across mai projects
- * 
- * @return int64_t monotonic time in nanoseconds 
+ *
+ * @return int64_t monotonic time in nanoseconds
  */
 static int64_t _apps_time_monotonic_ns() {
     struct timespec ts;

@@ -170,7 +170,7 @@ typedef enum camera_mode {
     UNKNOWN = -1,
     MONO = 0,
     STEREO = 1,
-    STEREO_LEFT_ONLY = 2, 
+    STEREO_LEFT_ONLY = 2,
     STEREO_RIGHT_ONLY = 3
 } camera_mode;
 
@@ -545,9 +545,9 @@ static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, i
     vio_manager_data.feats = feat_vec;
 
     for (size_t i = 0; i < feat_out->num_feats; i++){
-        if(std::find(vio_manager_data.sensor_ids.begin(), vio_manager_data.sensor_ids.end(), feat_vec[i].cam_id) != vio_manager_data.sensor_ids.end()) 
+        if(std::find(vio_manager_data.sensor_ids.begin(), vio_manager_data.sensor_ids.end(), feat_vec[i].cam_id) != vio_manager_data.sensor_ids.end())
             continue;
-        else 
+        else
             vio_manager_data.sensor_ids.push_back(feat_vec[i].cam_id);
     }
 
@@ -938,11 +938,13 @@ static void _publish() {
     Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
     Eigen::Matrix3d final_out = current_state->_imu->Rot_fej() * correction_mat;
-    final_out =  correction_mat * final_out;
+    final_out = correction_mat * final_out;
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
+    Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose();
+    cam_out = correction_mat * cam_out;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = cam_out.cast<float>(); //ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
     // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[1]->quat().transpose()) * current_state->_calib_IMUtoCAM[1]->pos()) * -1).cast<float>();
     Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
 
@@ -975,7 +977,6 @@ static void _publish() {
 
     Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
     imu_angular_vel_holder = correction_mat * imu_angular_vel_holder;
-    
     s.imu_angular_vel[0] = imu_angular_vel_holder(0);
     s.imu_angular_vel[1] = imu_angular_vel_holder(1);
     s.imu_angular_vel[2] = imu_angular_vel_holder(2);
@@ -1028,10 +1029,9 @@ static void _publish() {
         feat_ts_mutex.lock();
         int ret = img_ringbuf->get_data_at_time(last_feat_timestamp_ns, curr_imgs);
         feat_ts_mutex.unlock();
-        
 
         if (ret < 0)  {
-            fprintf(stderr, "FAILED TO FETCH RINGBUF at time %ld\n", last_feat_timestamp_ns);
+            fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %ld\n", last_feat_timestamp_ns);
             return;
         }
 
@@ -1042,42 +1042,42 @@ static void _publish() {
             cv::Mat img2(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels + (curr_imgs->metadata.width * curr_imgs->metadata.height));
 
             // now expand them to rgb so we can add color
-            cv::Mat rgb, rgb2;
-            cv::Mat in[] = {img, img, img};
-            cv::merge(in, 3, rgb);
+            // cv::Mat rgb, rgb2;
+            // cv::Mat in[] = {img, img, img};
+            // cv::merge(in, 3, rgb);
+//
+            // cv::Mat in2[] = {img2, img2, img2};
+            // cv::merge(in2, 3, rgb2);
 
-            cv::Mat in2[] = {img2, img2, img2};
-            cv::merge(in2, 3, rgb2);
-
-            img_set.push_back(rgb);
-            img_set.push_back(rgb2);
+            img_set.push_back(img);
+            img_set.push_back(img2);
         }
         else {
             cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
 
             // now expand to rgb so we can add color
-            cv::Mat rgb;
-            cv::Mat in[] = {img, img, img};
-            cv::merge(in, 3, rgb);
-            img_set.push_back(rgb);
+            // cv::Mat rgb;
+            // cv::Mat in[] = {img, img, img};
+            // cv::merge(in, 3, rgb);
+            img_set.push_back(img);
         }
 
 
         for (size_t i = 0; i < curr_pixel_locs.size(); i++){
             // re-identified slam landmark
             if (curr_pixel_locs[i].point_quality == OV_RE_HIGH){
-                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255, 0, 0), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
             }
             // slam landmark
             else if (curr_pixel_locs[i].point_quality == OV_HIGH){
-                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 0, 255), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
             }
             // tracked feature
             else if (curr_pixel_locs[i].point_quality == OV_MEDIUM){
-                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 255, 0), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(150), cv::MARKER_SQUARE, 8, 2);
             }
             else if (show_extra_points_on_overlay) {
-                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0, 0, 0), cv::MARKER_SQUARE, 8, 2);
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0), cv::MARKER_SQUARE, 8, 2);
             }
         }
 
@@ -1101,14 +1101,17 @@ static void _publish() {
         draw_meta = curr_imgs->metadata;
         draw_meta.width = overlay_cp.cols;
         draw_meta.height = overlay_cp.rows;
-        draw_meta.size_bytes = draw_meta.width * draw_meta.height * 3;
-        draw_meta.format = IMAGE_FORMAT_RGB;
+        // draw_meta.size_bytes = draw_meta.width * draw_meta.height * 3;
+        draw_meta.size_bytes = draw_meta.width * draw_meta.height;
+        // draw_meta.format = IMAGE_FORMAT_RGB;
+        draw_meta.format = IMAGE_FORMAT_RAW8;
+
 
 
 
         char str[256];
         sprintf(str, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
-                s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);        
+                s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);
         int baseline = 0;
         cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size, font_size, &baseline);
 
@@ -1413,7 +1416,7 @@ static int read_external_configs(void){
         Eigen::Matrix<double, 10, 1> curr_cam_calib_intrinsic(arr_cam_calib);
 
         if (curr_cam_calib_intrinsic(8,0) > max_width) max_width = curr_cam_calib_intrinsic(8,0);
-        if (curr_cam_calib_intrinsic(9,0) > max_height) max_height = curr_cam_calib_intrinsic(9,0); 
+        if (curr_cam_calib_intrinsic(9,0) > max_height) max_height = curr_cam_calib_intrinsic(9,0);
 
         if (!is_wrldc_set) {
             world_correction = cv::Mat(3, 3, CV_64F);

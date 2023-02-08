@@ -1,3 +1,6 @@
+0.2.5
+    * def updates for latest open vins
+    * overlay to grey, cam to imu fix
 0.2.4
     * added common.h for interface struct definitions
     * cleaned up main to use these new types
