@@ -37,6 +37,7 @@
 #include <state/Propagator.h>
 #include <state/State.h>
 #include <utils/quat_ops.h>
+#include <atomic>
 
 #include <iostream>
 #include <thread>
@@ -99,7 +100,6 @@
         FILE* silentfd = fopen("/dev/null", "w"); \
         int savedstdoutfd = dup(STDOUT_FILENO);   \
         fflush(stdout);                           \
-        dup2(fileno(silentfd), STDOUT_FILENO);    \
         x                                         \
             fflush(stdout);                       \
         fclose(silentfd);                         \
@@ -113,6 +113,10 @@ static int en_debug_pos = 0;
 static int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
 static pthread_t health_thread;
+
+static double last_feature_time;
+static double last_imu_time;
+
 
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
@@ -162,6 +166,8 @@ static camera_image_metadata_t cached_meta;
 std::mutex overlay_mutex;
 
 static cv::Mat world_correction;
+std::deque<ov_core::CameraData> camera_queue;
+std::mutex camera_queue_mtx;
 
 // set any error codes here for publishing in the data structure
 static uint32_t global_error_codes = 0;
@@ -195,7 +201,8 @@ static int max_height = 0;
 #define VFT_CMD_PAUSE   "pause"
 
 // function prototypes
-static void _publish();
+static void _publish(double vio_dt);
+static void _publish_default(double pose_timestamp);
 static bool show_extra_points_on_overlay = true;
 
 static int _hard_reset(bool is_locked);
@@ -205,6 +212,8 @@ static int8_t verbosity_level{static_cast<uint8_t>(ov_core::Printer::PrintLevel:
 std::string log_path = "";
 
 RingBuffer *img_ringbuf;
+
+std::atomic<bool> thread_update_running;
 
 // printed if some invalid argument was given
 static void _print_usage(void) {
@@ -337,7 +346,7 @@ static bool _parse_opts(int argc, char* argv[]) {
 
 static void _nanosleep(uint64_t ns) {
     struct timespec req, rem;
-    req.tv_sec = ns / 1000000000;
+    req.tv_sec = ns * 1e-09;
     req.tv_nsec = ns % 1000000000;
     // loop untill nanosleep sets an error or finishes successfully
     errno = 0;  // reset errno to avoid false detection
@@ -367,6 +376,49 @@ static void _quit(int ret) {
     return;
 }
 
+static cv::Mat rot2euler(const Eigen::Matrix3d  & rm)
+{
+    cv::Mat euler(3,1,CV_64F);
+
+    double roll  = atan2(rm(2,1), rm(2,2));
+    double pitch = asin(-rm(2,0));
+    double yaw   = atan2(rm(1,0), rm(0,0));
+
+    if(fabs(pitch - M_PI_2) < 0.001){
+        roll = 0.0;
+        pitch = atan2(rm(1,2), rm(0,2));
+    }
+    else if(fabs(pitch + M_PI_2) < 0.001) {
+        roll = 0.0;
+        pitch = atan2(-rm(1,2), -rm(0,2));
+    }
+
+    euler.at<double>(0) = roll;         // roll
+    euler.at<double>(1) = pitch;     // pitch
+    euler.at<double>(2) = yaw;      // yaw
+
+    return euler;
+}
+
+static void quaternionToRPY(double qx, double qy, double qz, double qw, double& roll, double& pitch, double& yaw)
+{
+    // Convert quaternion to Euler angles (roll-pitch-yaw)
+    double sinr_cosp = 2.0 * (qw * qx + qy * qz);
+    double cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy);
+    roll = std::atan2(sinr_cosp, cosr_cosp);
+
+    double sinp = 2.0 * (qw * qy - qz * qx);
+    if (std::abs(sinp) >= 1.0)
+        pitch = std::copysign(M_PI / 2.0, sinp); // use 90 degrees if out of range
+    else
+        pitch = std::asin(sinp);
+
+    double siny_cosp = 2.0 * (qw * qz + qx * qy);
+    double cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+    yaw = std::atan2(siny_cosp, cosy_cosp);
+}
+
+
 // pose data is published from the same thread that does the camera processing
 // and pose estimation. That freezes, sometimes for over a second, during blowups
 // so this thread exists to keep data coming out during that situation, warning
@@ -386,7 +438,7 @@ static void* _health_thread_func(__attribute__((unused)) void* ctx) {
                 uint64_t time_since_reset = current_time - time_of_last_reset;
                 if (time_since_reset > INIT_FAILURE_TIMEOUT_NS) {
                     fprintf(stderr, "WARNING failed to init in time, trying again\n");
-                    _hard_reset(false);
+                     _hard_reset(false);
                     continue;
                 }
             } else
@@ -461,7 +513,7 @@ static int _hard_reset(bool is_locked) {
         _quit(-1);
     }
 
-    if (connect_client_pipes() < 0) _quit(0);
+//    if (connect_client_pipes() < 0) _quit(0);
 
     if (!is_locked) vio_manager_mutex.unlock();
     imu_lock_mutex.unlock();
@@ -476,15 +528,6 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char* string,
     if (bytes > 1 && string[bytes - 1] == '\n') {
         string[bytes - 1] = 0;
     }
-
-    // soft reset is not currently allowed
-    // if(strncmp(string, RESET_VIO_SOFT, strlen(RESET_VIO_SOFT))==0){
-    // 	printf("Client requested soft reset\n");
-    // 	pthread_mutex_lock(&mv_mtx);
-    // 	mvVISLAM_Reset(mv_vislam_ptr, 0);
-    // 	pthread_mutex_unlock(&mv_mtx);
-    // 	return;
-    // }
 
     if (strncmp(string, RESET_VIO_HARD, strlen(RESET_VIO_HARD)) == 0) {
         printf("Client requested hard reset\n");
@@ -515,74 +558,79 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
     return;
 }
 
-
-static void _new_feat_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
-    uint32_t magic_num = *(uint32_t*)data;
-
-    if (magic_num != VOXL_FT_MAGIC_NUMBER){
-        fprintf(stderr, "ERROR: Received packet with invalid magic number\n");
-        return;
-    }
-
-
-    // now cast it to the proper type
-    vft_feature_packet* feat_out = (vft_feature_packet*)data;
-    ov_core::ProcessedCameraData vio_manager_data;
-
-    vio_manager_data.timestamp = feat_out->timestamp_ns / 1000000000.0;
-
-    if (feat_out->num_feats == 0){
-        fprintf(stderr, "ERROR RECEIVED PACKET WITH 0 FEATURES\n");
-        std::lock_guard<std::mutex> lg(vio_manager_mutex);
-        // _publish();
-        return;
-    }
-
-    std::vector<ov_core::MaiFeature> feat_vec(feat_out->num_feats);
-
-    void* d_start = data + sizeof(vft_feature_packet);
-    feat_vec.assign((ov_core::MaiFeature*)d_start, (ov_core::MaiFeature*)d_start+feat_out->num_feats);
-    vio_manager_data.feats = feat_vec;
-
-    for (size_t i = 0; i < feat_out->num_feats; i++){
-        if(std::find(vio_manager_data.sensor_ids.begin(), vio_manager_data.sensor_ids.end(), feat_vec[i].cam_id) != vio_manager_data.sensor_ids.end())
-            continue;
-        else
-            vio_manager_data.sensor_ids.push_back(feat_vec[i].cam_id);
-    }
-
-    if (vio_manager == nullptr) return;
-    std::lock_guard<std::mutex> lg(vio_manager_mutex);
-
-    int64_t time_before = _apps_time_monotonic_ns();
-    vio_manager->feed_measurement_processed_camera(vio_manager_data);
-    int64_t process_time = _apps_time_monotonic_ns() - time_before;
-    feat_ts_mutex.lock();
-    last_feat_timestamp_ns = feat_out->timestamp_ns;
-    feat_ts_mutex.unlock();
-
-    if (process_time > 500000000) {
-        // if image processing took more than half a second, something went wrong
-        // and we should drop frames
-        global_error_codes |= ERROR_CODE_DROPPED_CAM;
-        pipe_client_flush(ch);
-        fprintf(stderr, "ERROR: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
-        fprintf(stderr, "Flushing camera frames\n");
-    } else if (process_time > 50000000) {
-        // warn if image processing was a little slow, this happens from time
-        // to time and isn't a big deal
-        fprintf(stderr, "WARNING: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
-    }
-
-    // after the first feed i think, ov needs other data first
-    is_cam_connected = true;
-
-    _publish();
+static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
+    return;
 }
+
+
+#ifdef NOT_USED_PRE_VOXL_FEATURE_SERVER
+static void _new_feat_data_voxl_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
+	   uint32_t magic_num = *(uint32_t*)data;
+
+	    if (magic_num != VOXL_FT_MAGIC_NUMBER){
+	        fprintf(stderr, "ERROR: Received packet with invalid magic number\n");
+	        return;
+	    }
+
+
+	    // now cast it to the proper type
+	    vft_feature_packet* feat_out = (vft_feature_packet*)data;
+	    ov_core::ProcessedCameraData vio_manager_data;
+
+	    vio_manager_data.timestamp = feat_out->timestamp_ns / 1000000000.0;
+
+	    if (feat_out->num_feats == 0){
+	        fprintf(stderr, "ERROR RECEIVED PACKET WITH 0 FEATURES\n");
+	        return;
+	    }
+
+	    std::vector<ov_core::MaiFeature> feat_vec(feat_out->num_feats);
+
+	    void* d_start = data + sizeof(vft_feature_packet);
+	    feat_vec.assign((ov_core::MaiFeature*)d_start, (ov_core::MaiFeature*)d_start+feat_out->num_feats);
+	    vio_manager_data.feats = feat_vec;
+
+	    for (size_t i = 0; i < feat_out->num_feats; i++){
+	        if(std::find(vio_manager_data.sensor_ids.begin(), vio_manager_data.sensor_ids.end(), feat_vec[i].cam_id) != vio_manager_data.sensor_ids.end())
+	            continue;
+	        else
+	            vio_manager_data.sensor_ids.push_back(feat_vec[i].cam_id);
+	    }
+
+	    if (vio_manager == nullptr) return;
+	    std::lock_guard<std::mutex> lg(vio_manager_mutex);
+
+	    int64_t time_before = _apps_time_monotonic_ns();
+	    vio_manager->feed_measurement_processed_camera(vio_manager_data);
+	    int64_t process_time = _apps_time_monotonic_ns() - time_before;
+	    feat_ts_mutex.lock();
+	    last_feat_timestamp_ns = feat_out->timestamp_ns;
+	    feat_ts_mutex.unlock();
+
+	    if (process_time > 500000000) {
+	        // if image processing took more than half a second, something went wrong
+	        // and we should drop frames
+	        global_error_codes |= ERROR_CODE_DROPPED_CAM;
+	        pipe_client_flush(ch);
+	        fprintf(stderr, "ERROR: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
+	        fprintf(stderr, "Flushing camera frames\n");
+	    } else if (process_time > 50000000) {
+	        // warn if image processing was a little slow, this happens from time
+	        // to time and isn't a big deal
+	        fprintf(stderr, "WARNING: slow image proc time: %6.2fms\n", ((double)process_time) / 1000000.0);
+	    }
+
+	    // after the first feed i think, ov needs other data first
+	    is_cam_connected = true;
+
+       _publish(vio_manager_data.timestamp);
+}
+#endif
 
 // helper callback for cams we are using in the system
 static void _cam_helper_cb(__attribute__((unused)) int ch, camera_image_metadata_t meta, char* frame, void* context) {
-    camera_mode* cm = (camera_mode*)context;
+
+	camera_mode* cm = (camera_mode*)context;
 
     img_ringbuf_packet *curr_message = new img_ringbuf_packet;
 
@@ -630,12 +678,35 @@ static void _cam_helper_cb(__attribute__((unused)) int ch, camera_image_metadata
 
     img_ringbuf->insert_data(curr_message);
 
-    delete curr_message;
+    // camera working, reset errors
+    global_error_codes &= ~ERROR_CODE_CAM_MISSING;
 
+    is_cam_connected = true;
+
+    cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
+    std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
+    ov_core::CameraData message;
+    message.timestamp = curr_message->metadata.timestamp_ns*1e-09;
+    message.sensor_ids.push_back(0);
+    message.images.push_back(internal_img.clone());
+    message.masks.push_back(cv::Mat::zeros(internal_img.rows, internal_img.cols, CV_8UC1));
+
+#ifndef IN_CAPTURE
+    std::lock_guard<std::mutex> lck(camera_queue_mtx);
+    camera_queue.push_back(message);
+    std::sort(camera_queue.begin(), camera_queue.end());
+#else
+	vio_manager->feed_measurement_camera(message);
+	_publish_default(message.timestamp);
+#endif
+
+    delete curr_message;
 }
 
-// imu callback registered to the imu server
-static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
+
+#ifdef NOT_USED_PRE_VOXL_FEATURE_SERVER
+
+static void _new_imu_data_voxl_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
     int n_packets;
     imu_data_t* data_array = pipe_validate_imu_data_t(data, bytes, &n_packets);
 
@@ -687,6 +758,156 @@ static void _new_imu_data_handler(__attribute__((unused)) int ch, char* data, in
         process_time = _apps_time_monotonic_ns() - time_before;
         printf("IMU proc time %6.2fms for %d samples\n", ((double)process_time) / 1000000.0, n_packets);
     }
+    return;
+}
+#endif
+
+// imu callback registered to the imu server
+static void _new_imu_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes, __attribute__((unused)) void* context) {
+
+    int n_packets;
+    imu_data_t* data_array = pipe_validate_imu_data_t(data, bytes, &n_packets);
+
+    if (data_array == NULL)
+    {
+    	printf("ERROR: no IMU data\n");
+		return;
+    }
+
+    if (n_packets <= 0)
+    {
+    	printf("ERROR: no IMU n_packets extracted from imu data\n");
+    	return;
+    }
+
+
+    // flag that imu data is active, remove the error, skip data if camera is disconnected
+    is_imu_connected = 1;
+    global_error_codes &= ~ERROR_CODE_IMU_MISSING;
+
+    if (!is_cam_connected)
+    {
+    	printf("ERROR: Lost camera connection!\n");
+    	return;
+    }
+
+    //std::lock_guard<std::mutex> lg(imu_lock_mutex);
+
+    // time this in debug mode
+    int64_t time_before, process_time;
+    if (en_debug_timing_imu) time_before = _apps_time_monotonic_ns();
+
+    // correct for NEU to NED
+    static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
+    correction_mat(1,1) = -1;
+    correction_mat(2,2) = -1;
+
+    // TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
+    // by pausing caluclation while the publixhing loop runs with new timestamps.
+    // So on average use the last 2 packets.
+    for (int i = n_packets-2; i <n_packets; i+=5)
+    {
+//        for (int i = 0; i < n_packets; i++) {
+        // check if we somehow got an out-of-order imu sample and reject it
+        if ((int64_t)data_array[i].timestamp_ns <= last_imu_timestamp_ns) {
+            double dt = (last_imu_timestamp_ns - data_array[i].timestamp_ns) * 1e-09;
+            fprintf(stderr, "WARNING out-of-order imu %fms before previous\n", dt);
+            continue;
+        }
+        else
+        {
+
+        // Create the data struct that we will use for ingesting data into the vio manager
+        ov_core::ImuData vio_manager_data;
+        vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09;  // (seconds)
+
+        Eigen::Matrix<double, 3, 1> t_wm;
+        Eigen::Matrix<double, 3, 1> t_am;
+
+        t_wm(0, 0) = data_array[i].gyro_rad[0];
+        t_wm(1, 0) = data_array[i].gyro_rad[1];
+        t_wm(2, 0) = data_array[i].gyro_rad[2];
+
+        t_am(0, 0) = data_array[i].accl_ms2[0];
+        t_am(1, 0) = data_array[i].accl_ms2[1];
+        t_am(2, 0) = data_array[i].accl_ms2[2];
+
+        // FRD
+        vio_manager_data.wm(0, 0) =t_wm(0,0); // roll
+        vio_manager_data.wm(1, 0) = t_wm(1,0);  // pitch
+        vio_manager_data.wm(2, 0) = t_wm(2,0);  //yaw
+        vio_manager_data.am(0, 0) = t_am(0,0);  // X axis
+        vio_manager_data.am(1, 0) = t_am(1,0);  // Y axis
+        vio_manager_data.am(2, 0) = t_am(2,0);  // Z axis
+
+        vio_manager->feed_measurement_imu(vio_manager_data);
+        last_imu_timestamp_ns = data_array[i].timestamp_ns;
+        last_imu_time = vio_manager_data.timestamp;
+
+        std::lock_guard<std::mutex> lck(camera_queue_mtx);
+
+		double timestamp_imu_inC = vio_manager_data.timestamp - vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
+		while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
+			vio_manager->feed_measurement_camera(camera_queue.at(0));
+			_publish_default(last_imu_time);
+			camera_queue.pop_front();
+		}
+
+		// May need for multi camera
+//
+//        if (thread_update_running)
+//            return;
+//        thread_update_running = true;
+//        std::thread thread([&] {
+//            // Lock on the queue (prevents new images from appending)
+//            std::lock_guard<std::mutex> lck(camera_queue_mtx);
+//
+//    		double timestamp_imu_inC = vio_manager_data.timestamp - vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
+//    		while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
+//    			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
+//    			double update_dt = 100.0 * (timestamp_imu_inC - camera_queue.at(0).timestamp);
+//    			vio_manager->feed_measurement_camera(camera_queue.at(0));
+//				_publish_default(timestamp_imu_inC);
+//    			camera_queue.pop_front();
+//    			auto rT0_2 = boost::posix_time::microsec_clock::local_time();
+//    			double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
+//    			//printf("[TIME]: %.4f seconds total (%.1f hz, %.2f ms behind)\n"  time_total, 1.0 / time_total, update_dt);
+//    		}
+//
+//    		thread_update_running = false;
+//        });
+//
+//        thread.join();
+//
+//		static long last_cam_time = 0;
+//		long now_time = _apps_time_monotonic_ns() ;
+//		if (last_cam_time> 0)
+//		{
+//			double cam_dt = now_time - last_cam_time;
+//			printf("imu frame time: %f %f %d\n",  cam_dt, 1/(cam_dt*1e-9), i);
+//		}
+//		last_cam_time = now_time;
+        }
+    }
+
+    if (en_debug_timing_imu) {
+        process_time = _apps_time_monotonic_ns() - time_before;
+        printf("IMU proc time %6.2fms for %d samples\n", ((double)process_time) / 1000000.0, n_packets);
+    }
+
+#ifndef IN_CAPTURE
+    std::lock_guard<std::mutex> lck(camera_queue_mtx);
+    while (!camera_queue.empty() && camera_queue.at(0).timestamp < last_imu_time) {
+        auto rT0_1 = boost::posix_time::microsec_clock::local_time();
+        double update_dt =  (last_imu_time - camera_queue.at(0).timestamp);
+    	vio_manager->feed_measurement_camera(camera_queue.at(0));
+    	_publish_default(last_imu_time);
+        camera_queue.pop_front();
+        auto rT0_2 = boost::posix_time::microsec_clock::local_time();
+        double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
+    }
+#endif
+
     return;
 }
 
@@ -794,7 +1015,353 @@ static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state, Eig
     return 0;
 }
 
-static void _publish() {
+
+static void _publish_default(double pose_timestamp)
+{
+
+	static int skip_cnt = 0;
+    std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state();                     // contains a few extra pieces we need
+    Eigen::Matrix<double, 13, 1> state_plus = Eigen::Matrix<double, 13, 1>::Zero();  // not necessary
+    Eigen::Matrix<double, 12, 12> cov_plus = Eigen::Matrix<double, 12, 12>::Zero();  // covariance!!!!
+
+    ext_vio_data_t d;  // complete "extended" vio MPA packet
+    vio_data_t s;      // simplified vio packet
+    int nPoints;
+    int n_good_points = 0;
+    int n_oos_points = 0;
+    int i, j;
+
+    // make sure we start with clean data structs and apply any global error codes
+    // full extended vio packet
+    memset(&d, 0, sizeof(d));
+    d.v.magic_number = VIO_MAGIC_NUMBER;
+    d.v.error_code = global_error_codes;
+
+    // simple lib modal pipe standard vio packet
+    memset(&s, 0, sizeof(s));
+    s.magic_number = VIO_MAGIC_NUMBER;
+    s.error_code = global_error_codes;
+
+    // record that we just got a successful pose and point cloud
+    last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp*1e9);
+
+
+   // std::lock_guard<std::mutex> lg(imu_lock_mutex);
+
+    // this is for extra info only
+    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(_apps_time_monotonic_ns() * 1e-9), state_plus, cov_plus)) {
+        fprintf(stderr, "Warn: missing some data %f\n", pose_timestamp);
+    }
+
+    // correction matrix
+    static Eigen::Matrix3d world_correction_mat((double*)world_correction.data);
+    static Eigen::Matrix3d neu_ned_correction_mat = Eigen::Matrix3d::Identity();
+   neu_ned_correction_mat(2,2) = -1;
+
+    // get features
+    // this function will give us back as much info as available for features in various stages of the overall state
+    std::vector<output_feature> curr_pixel_locs = vio_manager->get_pixel_loc_features();
+
+    for(size_t d=0;d<curr_pixel_locs.size();d++){
+		if((curr_pixel_locs[d].point_quality == OV_HIGH || curr_pixel_locs[d].point_quality == OV_MEDIUM) && curr_pixel_locs[d].pix_loc[0]>0.0f && curr_pixel_locs[d].pix_loc[1]>0.0f){
+			n_good_points++;
+            // if we aren't over our max feature count and we have a 3d estimate, correct it to our real world
+            if (n_good_points <= VIO_MAX_REPORTED_FEATURES){
+                double d_tsf[3] = { curr_pixel_locs[d].tsf[0], curr_pixel_locs[d].tsf[1], curr_pixel_locs[d].tsf[2] };
+                Eigen::Matrix<double, 3, 1> curr_feat_holder(d_tsf);
+                curr_feat_holder = world_correction_mat * curr_feat_holder;
+                Eigen::MatrixXf::Map(curr_pixel_locs[d].tsf, 3, 1) = curr_feat_holder.cast<float>();
+            }
+		}
+		else if(curr_pixel_locs[d].point_quality == OV_LOW){
+			n_oos_points++;
+		}
+	}
+
+    // check if its initialized or not
+    if (!vio_manager->initialized()) {
+        s.state = VIO_STATE_INITIALIZING;
+        memcpy(&d.v, &s, sizeof(vio_data_t));
+        is_initialized = false;
+        // send to both pipes
+        pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
+        pipe_server_write(SIMPLE_CH, (char*)&s, sizeof(vio_data_t));
+        return;
+    } else {
+        s.state = VIO_STATE_OK;
+        is_initialized = true;
+    }
+
+    // sometimes qvio will report covariance as invalid but state is still OKAY
+    // this is NOT alright, in this case manually set the state to failed.
+    if (cov_plus(3, 3) < 0.0f || cov_plus(4, 4) < 0.0f || cov_plus(5, 5) < 0.0f) {
+        fprintf(stderr, "ERROR: diagonal went negative\n");
+        s.state = VIO_STATE_FAILED;
+    }
+
+    if (current_state->error_flag == VIO_STATE_FAILED){
+        fprintf(stderr, "WARNING auto-resetting, EKF starved of good features for too long\n");
+        _hard_reset(true);
+        s.state = VIO_STATE_FAILED;
+    }
+
+    // we finished initializing, no longer check for init timeout
+    if (s.state == VIO_STATE_OK) {
+        init_failure_detector_reset_flag = 0;
+    }
+
+    // if we just went from good to failed, treat this like a reset for the
+    // init failure detector so it can timeout the same as VIO tries to re-init
+    // itself after it's own internal reset
+    if (last_state != VIO_STATE_FAILED && s.state == VIO_STATE_FAILED) {
+        init_failure_detector_reset_flag = 1;
+        time_of_last_reset = static_cast<int64_t>(current_state->_timestamp * 1e9);
+    }
+
+    // record time when vio claimed to have initialized and only check for
+    // for blowups some time after this
+    if (last_state != VIO_STATE_OK && s.state == VIO_STATE_OK) {
+        blowup_detector_flag = 1;
+        time_of_first_okay = static_cast<int64_t>(current_state->_timestamp * 1e9);
+    }
+    last_state = s.state;
+
+    // while VIO state is OK, do our own additional blowup checks if enough
+    // time has passed since the init
+    int64_t time_since_first_okay = _apps_time_monotonic_ns() - time_of_first_okay;
+    if (blowup_detector_flag && time_since_first_okay > BLOWUP_DETECT_TIMEOUT_NS) {
+        int code = _check_for_blowup(current_state, cov_plus, n_good_points);
+        if (code) {
+            _hard_reset(true);
+            s.state = VIO_STATE_FAILED;
+            s.error_code |= code;
+        }
+    }
+
+    // don't send packets from the past, this can happen when qvio stalls
+    // during a reset
+    if (static_cast<int64_t>(current_state->_timestamp * 1e9) < last_sent_timestamp_ns) {
+        fprintf(stderr, "WARNING: skipping pose data from the past %f %ld\n",
+        		current_state->_timestamp * 1e9, last_sent_timestamp_ns
+				);
+        return;
+    }
+
+    // All checks passed, after this point this function should not return
+    // until the end
+    last_sent_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+
+    // populate some other data
+    s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+    d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
+    last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0) * 1e9;
+    s.n_feature_points = n_good_points;
+    d.last_cam_frame_id = last_frame_frame_id;
+    d.last_cam_timestamp_ns = last_frame_timestamp_ns;
+
+    Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder = neu_ned_correction_mat * world_correction_mat * current_state->_imu->pos();
+    Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
+
+    Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = neu_ned_correction_mat * world_correction_mat * current_state->_imu->vel();
+    Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
+
+    Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
+    final_out = world_correction_mat.transpose() * final_out * world_correction_mat;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
+
+    // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
+    Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose();
+    cam_out = world_correction_mat * cam_out;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = cam_out.cast<float>();
+
+    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) = current_state->_imu->bias_g_fej().cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) = current_state->_imu->bias_a_fej().cast<float>();
+
+    // pose covariance diagonals, 6 entries
+    s.pose_covariance[0] = (float)cov_plus(0, 0);
+    s.pose_covariance[6] = (float)cov_plus(1, 1);
+    s.pose_covariance[11] = (float)cov_plus(2, 2);
+    s.pose_covariance[15] = (float)cov_plus(3, 3);
+    s.pose_covariance[18] = (float)cov_plus(4, 4);
+    s.pose_covariance[20] = (float)cov_plus(5, 5);
+
+    // velocity covariance diagonals, 3 entries
+    s.velocity_covariance[0] = cov_plus(6, 6);
+    s.velocity_covariance[6] = cov_plus(7, 7);
+    s.velocity_covariance[11] = cov_plus(8, 8);
+
+    // open vins does not estimate this, but reports it
+    double imu_angular_vel[3];
+    imu_angular_vel[0] = state_plus(10);
+    imu_angular_vel[1] = state_plus(11);
+    imu_angular_vel[2] = state_plus(12);
+
+    Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
+    imu_angular_vel_holder = world_correction_mat * imu_angular_vel_holder;
+    s.imu_angular_vel[0] = imu_angular_vel_holder(0);
+    s.imu_angular_vel[1] = imu_angular_vel_holder(1);
+    s.imu_angular_vel[2] = imu_angular_vel_holder(2);
+
+    // since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out
+    static float grav_vec[3] = {0, 0, 1};
+    memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+
+    // limit the number of features to what fits in our pipe packet
+    d.n_total_features = (int)curr_pixel_locs.size();
+    if (d.n_total_features > VIO_MAX_REPORTED_FEATURES) {
+        d.n_total_features = VIO_MAX_REPORTED_FEATURES;
+    }
+
+    memcpy(d.features, curr_pixel_locs.data(), d.n_total_features*sizeof(vio_feature_t));
+
+    s.quality = calc_quality(s.state, s.velocity_covariance, vel_imu_wrt_vio_holder.norm(), max_width,
+                    max_height, d.n_total_features, cam_info_vec.size(), d.features);
+
+    // fill in simplified struct inside the extended packet
+    memcpy(&d.v, &s, sizeof(vio_data_t));
+
+    // send to both pipes
+    pipe_server_write(EXTENDED_CH, (char*)&d, sizeof(ext_vio_data_t));
+    pipe_server_write(SIMPLE_CH, (char*)&s, sizeof(vio_data_t));
+
+    // for debug only
+    if (en_debug) {
+        printf("state: ");
+        pipe_print_vio_state(s.state);
+        printf(" err: ");
+        pipe_print_vio_error(s.error_code);
+        printf("\n");
+    }
+    if (en_debug_pos) {
+        printf("%6.3f %6.3f %6.3f ", (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2]);
+        printf("\n");
+    }
+
+    // turn off dropped frame code now we have informed everyone.
+    global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
+
+    // if someone has subscribed to the overlay, draw it
+    if (pipe_server_get_num_clients(OVERLAY_CH) > 0 && skip_cnt >= 1) {
+        skip_cnt = 0;
+        cv::Mat overlay_cp;
+
+        img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
+
+        feat_ts_mutex.lock();
+        //int ret = img_ringbuf->get_data_at_time(vio_dt, curr_imgs);
+        int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
+        feat_ts_mutex.unlock();
+
+        if (ret < 0)  {
+            fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %f\n", pose_timestamp);
+            return;
+        }
+
+        // now, construct some cv::Mats with our images (we know them to be greyscale)
+        std::vector<cv::Mat> img_set;
+        if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8){
+            cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
+            cv::Mat img2(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels + (curr_imgs->metadata.width * curr_imgs->metadata.height));
+            img_set.push_back(img);
+            img_set.push_back(img2);
+        }
+        else {
+            cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
+            img_set.push_back(img);
+        }
+
+
+        for (size_t i = 0; i < curr_pixel_locs.size(); i++){
+            // re-identified slam landmark
+            if (curr_pixel_locs[i].point_quality == OV_RE_HIGH){
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+            }
+            // slam landmark
+            else if (curr_pixel_locs[i].point_quality == OV_HIGH){
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+            }
+            // tracked feature
+            else if (curr_pixel_locs[i].point_quality == OV_MEDIUM){
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(150), cv::MARKER_SQUARE, 8, 2);
+            }
+            else if (show_extra_points_on_overlay) {
+                cv::drawMarker(img_set[curr_pixel_locs[i].cam_id], cv::Point2f(curr_pixel_locs[i].pix_loc[0], curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0), cv::MARKER_SQUARE, 8, 2);
+            }
+        }
+
+        cv::resize(img_set[0], img_set[0], cv::Size(640, 480));
+
+        if (img_set.size() == 1) overlay_cp = img_set[0];
+        else {
+            cv::resize(img_set[1], img_set[1], cv::Size(640, 480));
+            cv::hconcat(img_set[0], img_set[1], overlay_cp);
+        }
+
+        static float font_size = 1;
+        static float border_scale = 1;
+        if (overlay_cp.cols <= 640){
+            font_size = 0.7;
+            border_scale = 2;
+        }
+
+        cv::copyMakeBorder(overlay_cp, overlay_cp, DRAW_BONUS_ROWS_TOP/border_scale, DRAW_BONUS_ROWS_BOT/border_scale, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0));
+
+        draw_meta = curr_imgs->metadata;
+        draw_meta.width = overlay_cp.cols;
+        draw_meta.height = overlay_cp.rows;
+        // draw_meta.size_bytes = draw_meta.width * draw_meta.height * 3;
+        draw_meta.size_bytes = draw_meta.width * draw_meta.height;
+        // draw_meta.format = IMAGE_FORMAT_RGB;
+        draw_meta.format = IMAGE_FORMAT_RAW8;
+
+        char str[256];
+        sprintf(str, "Q: %d%% XYZ: %6.2lf %6.2lf %6.2lf #Pts: %3d",
+                s.quality, (double)s.T_imu_wrt_vio[0], (double)s.T_imu_wrt_vio[1], (double)s.T_imu_wrt_vio[2], n_good_points);
+        int baseline = 0;
+        cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size, font_size, &baseline);
+
+        cv::putText(overlay_cp, //target image
+            str, //text
+            cv::Point((overlay_cp.cols - text_size.width)/2, text_size.height*3/2), //top-left position
+            cv::FONT_HERSHEY_COMPLEX,
+            font_size,
+            cv::Scalar(255, 255, 255), //font color
+            font_size,
+            cv::LINE_AA);
+
+        char oos_pts_string[32];
+        if (show_extra_points_on_overlay) {
+            sprintf(oos_pts_string, "#Out of State Pts: %3d", n_oos_points);
+        } else
+            oos_pts_string[0] = 0;
+
+        sprintf(str, "ex(ms): %6.1f Gain: %5d %s",
+                draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
+        text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size,font_size, &baseline);
+
+        cv::putText(overlay_cp, //target image
+            str, //text
+            cv::Point((overlay_cp.cols - text_size.width)/2, overlay_cp.rows - text_size.height/2 + 2), //top-left position
+            cv::FONT_HERSHEY_COMPLEX,
+            font_size,
+            cv::Scalar(255, 255, 255), //font color
+            font_size,
+            cv::LINE_AA);
+
+        // draw out to pipe
+        pipe_server_write_camera_frame(OVERLAY_CH, draw_meta, (char*)overlay_cp.data);
+
+        delete curr_imgs;
+    }
+    else skip_cnt++;
+
+    return;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+
+static void _publish(double vio_dt) {
     static int skip_cnt = 0;
     std::shared_ptr<ov_msckf::State> current_state = {nullptr};                      // contains a few extra pieces we need
     Eigen::Matrix<double, 13, 1> state_plus = Eigen::Matrix<double, 13, 1>::Zero();  // not necessary
@@ -821,13 +1388,24 @@ static void _publish() {
     // Grab the state, then fill our state_plus and covariance
     current_state = vio_manager->get_state();
 
+    // record that we just got a successful pose and point cloud
+    last_real_pose_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+
+
     // this is for extra info only
-    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(_apps_time_monotonic_ns()) / 1e9, state_plus, cov_plus)) {
-        fprintf(stderr, "Warn: missing some data\n");
-    }
+    //bool b = false;
+//    if (!vio_manager->get_propagator()->fast_state_propagate(current_state, (double)(_apps_time_monotonic_ns()) / 1e9, state_plus, cov_plus)) {
+//     //   fprintf(stderr, "WARN: Can't propogate state from %ld vs %ld\n", static_cast<int64_t>(current_state->_timestamp * 1e9), _apps_time_monotonic_ns() );
+//    	printf("last feature timestamp: %f\n", vio_dt);
+//    }
 
     // correction matrix
-    static Eigen::Matrix3d correction_mat((double*)world_correction.data);
+    static Eigen::Matrix3d world_correction_mat((double*)world_correction.data);
+    static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
+    correction_mat(1,1) = -1;
+    correction_mat(2,2) = -1;
+
+    //world_correction_mat  =  world_correction_mat * correction_mat;
 
     // get features
     // this function will give us back as much info as available for features in various stages of the overall state
@@ -848,9 +1426,6 @@ static void _publish() {
 			n_oos_points++;
 		}
 	}
-
-    // record that we just got a successful pose and point cloud
-    last_real_pose_timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
     // check if its initialized or not
     if (!vio_manager->initialized()) {
@@ -938,14 +1513,13 @@ static void _publish() {
     Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
     Eigen::Matrix3d final_out = current_state->_imu->Rot_fej() * correction_mat;
-    final_out = correction_mat * final_out;
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
+
 
     // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
     Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose();
-    cam_out = correction_mat * cam_out;
+    cam_out *= correction_mat;
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = cam_out.cast<float>(); //ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose().cast<float>();
-    // Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[1]->quat().transpose()) * current_state->_calib_IMUtoCAM[1]->pos()) * -1).cast<float>();
     Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
 
     Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) = current_state->_imu->bias_g_fej().cast<float>();
@@ -1040,15 +1614,6 @@ static void _publish() {
         if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8){
             cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels);
             cv::Mat img2(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1, curr_imgs->image_pixels + (curr_imgs->metadata.width * curr_imgs->metadata.height));
-
-            // now expand them to rgb so we can add color
-            // cv::Mat rgb, rgb2;
-            // cv::Mat in[] = {img, img, img};
-            // cv::merge(in, 3, rgb);
-//
-            // cv::Mat in2[] = {img2, img2, img2};
-            // cv::merge(in2, 3, rgb2);
-
             img_set.push_back(img);
             img_set.push_back(img2);
         }
@@ -1249,6 +1814,9 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options() {
         cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
         vio_manager_options.camera_intrinsics[i] = cam_calib_intrinsic;
         vio_manager_options.camera_extrinsics[i] = cam_info_vec[i].cam_wrt_imu;
+
+        std::cout << "Cam extrinsics to IMU: " <<  cam_info_vec[i].cam_wrt_imu.size() << " \n " << cam_info_vec[i].cam_wrt_imu << std::endl;
+
     }
 
     vio_manager_options.init_options.camera_intrinsics = vio_manager_options.camera_intrinsics;
@@ -1273,8 +1841,7 @@ static void _feat_disconnect_cb(__attribute__((unused)) int ch, __attribute__((u
 }
 
 static void _imu_disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context) {
-    fprintf(stderr, "WARNING: disconnected from imu server, resetting VIO\n");
-
+    fprintf(stderr, "****** WARNING: disconnected from imu server, resetting VIO\n");
     global_error_codes |= ERROR_CODE_IMU_MISSING;
     last_imu_timestamp_ns = 0;
     is_imu_connected = 0;
@@ -1299,6 +1866,7 @@ static int create_server_pipes(void) {
     };
 
     if (pipe_server_create(EXTENDED_CH, info1, flags)) {
+    	printf("pipe_server_create(EXTENDED_CH, info1, flags) failed\n");
         _quit(-1);
     }
 
@@ -1320,6 +1888,7 @@ static int create_server_pipes(void) {
     };
 
     if (pipe_server_create(SIMPLE_CH, info2, flags)) {
+    	printf("pipe_server_create(SIMPLE_CH, info2, flags) failed\n");
         _quit(-1);
     }
 
@@ -1341,6 +1910,8 @@ static int create_server_pipes(void) {
     };
 
     if (pipe_server_create(OVERLAY_CH, info3, flags)) {
+    	printf("pipe_server_create(OVERLAY_CH, info3 failed\n");
+
         _quit(-1);
     }
 
@@ -1372,15 +1943,17 @@ static int read_external_configs(void){
 
     // connect to our feature tracker
     pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
-    pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_handler, NULL);
-
+    pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler, NULL);
     if (pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER, 1280 * 800 * 64) != 0) {
+    	printf("pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, .... failed\n");
         _quit(-1);
     }
 
     usleep(5000);
 
     // grab the json from voxl-feature-tracker's info file
+
+    // TODO FIX this as it requires freature tracker to get camera intrinsics/extrinsics
     cJSON* json = pipe_client_get_info_json(FEATURE_CH);
 
     int ret = json_fetch_string(json, "imu", imu_name, 128);
@@ -1423,7 +1996,6 @@ static int read_external_configs(void){
             memcpy(world_correction.data, arr_world_correction, 3*3*sizeof(double));
             is_wrldc_set = true;
         }
-
         // now populate our vector with this information
         camera_info curr_info;
         curr_info.is_fisheye = is_fisheye;
@@ -1452,11 +2024,11 @@ static int read_external_configs(void){
 static int connect_client_pipes(void) {
     fprintf(stderr, "connecting client pipes\n");
 
-    img_ringbuf = (new RingBuffer(15));
+    img_ringbuf = (new RingBuffer(25));
 
     // connect to imu
     pipe_client_set_disconnect_cb(IMU_CH, _imu_disconnect_cb, NULL);
-    pipe_client_set_simple_helper_cb(IMU_CH, _new_imu_data_handler, NULL);
+    pipe_client_set_simple_helper_cb(IMU_CH, _new_imu_data_default_handler, NULL);
     int flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
     if (pipe_client_open(IMU_CH, imu_name, PROCESS_NAME, flags, IMU_RECOMMENDED_READ_BUF_SIZE) != 0) {
             fprintf(stderr, "failed to open\n");
@@ -1475,6 +2047,8 @@ static int connect_client_pipes(void) {
             return -1;
         }
     }
+
+    printf( "imu pipe name: %s\n" , imu_name);
 
     return 0;
 }
@@ -1532,11 +2106,15 @@ int main(int argc, char* argv[]) {
     if (read_external_configs() < 0) _quit(-1);
 
     // Create the server pipes
+
+    printf("create_server_pipes\n");
     if (create_server_pipes() < 0) _quit(0);
 
     // Create the VIO Manager
     vio_manager_options = generate_open_vins_manager_options();
     vio_manager = std::unique_ptr<ov_msckf::VioManager>(new ov_msckf::VioManager(vio_manager_options));
+
+    printf("connect_client_pipes\n");
 
     // Connect to the client pipes and start getting data
     if (connect_client_pipes() < 0) _quit(0);
@@ -1556,10 +2134,14 @@ int main(int argc, char* argv[]) {
     pipe_client_send_control_cmd(FEATURE_CH, VFT_CMD_START);
 
     // run until start/stop module catches a signal and changes main_running to 0
-    while (main_running) usleep(5000000);
+    while (main_running)
+    {
+        usleep(5000000);
+    }
 
     // Shutdown Nicely
     _quit(0);
 
+    printf("Quiting VIO server\n");
     return 0;
 }
