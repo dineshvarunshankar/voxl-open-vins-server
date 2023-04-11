@@ -4,13 +4,16 @@
 
 [Unit]
 Description=voxl-open-vins-server
-SourcePath=/usr/bin/voxl-open-vins-server
+SourcePath=/usr/local/bin/voxl-open-vins-server
+After=voxl-feature-tracker.service
+Requires=voxl-camera-server,voxl-feature-tracker.service
 
 [Service]
 User=root
 Type=simple
 PIDFile=/run/voxl-open-vins-server.pid
-ExecStart=/usr/bin/voxl-open-vins-server
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/local/bin/voxl-open-vins-server
 
 [Install]
 WantedBy=multi-user.target

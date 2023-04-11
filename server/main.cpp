@@ -1330,14 +1330,18 @@ static void _publish_default(double pose_timestamp)
             font_size,
             cv::LINE_AA);
 
+	/*
         char oos_pts_string[32];
         if (show_extra_points_on_overlay) {
-            sprintf(oos_pts_string, "#Out of State Pts: %3d", n_oos_points);
+            sprintf(oos_pts_string, "#Pts: %3d", n_oos_points);
         } else
             oos_pts_string[0] = 0;
-
         sprintf(str, "ex(ms): %6.1f Gain: %5d %s",
                 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
+	*/
+
+        sprintf(str, "ex(ms): %6.1f Gain: %5d",
+                draw_meta.exposure_ns / 1000000.0, draw_meta.gain);
         text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX, font_size,font_size, &baseline);
 
         cv::putText(overlay_cp, //target image
@@ -1690,10 +1694,12 @@ static void _publish(double vio_dt) {
             cv::LINE_AA);
 
         char oos_pts_string[32];
+	/*
         if (show_extra_points_on_overlay) {
-            sprintf(oos_pts_string, "#Out of State Pts: %3d", n_oos_points);
+            sprintf(oos_pts_string, "#OutPts: %3d", n_oos_points);
         } else
             oos_pts_string[0] = 0;
+	*/
 
         sprintf(str, "ex(ms): %6.1f Gain: %5d %s",
                 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, oos_pts_string);
