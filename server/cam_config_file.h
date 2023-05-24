@@ -99,8 +99,8 @@ int cam_config_file_read(void);
 int cam_config_file_print(void);
 
 // load the intrinsics config files per enabled cam
-int load_intrinsics_file();
-int load_extrinsics_file();
+int cam_load_intrinsics_file();
+int cam_load_extrinsics_file();
 int get_config_as_json();
 
 #endif // CAM_CONFIG_FILE_H

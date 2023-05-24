@@ -14,6 +14,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a -Wno-double-promotion -Wn
  
 find_package(Boost 1.63.0 REQUIRED system filesystem)
 
+set(CMAKE_INSTALL_LIBDIR "/usr/lib")
+set(CMAKE_INSTALL_INCLUDEDIR "/usr/include")
+
+
 # server and client binaries
 add_subdirectory(server)
 add_subdirectory(clients)

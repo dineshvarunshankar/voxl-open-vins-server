@@ -257,7 +257,7 @@ static int create_open_vins_world_rotation_from_file(cv::Matx33d *R_correction)
 	return 0;
 }
 
-int load_extrinsics_file()
+int cam_load_extrinsics_file()
 {
 
 	vcc_extrinsic_t t[VCC_MAX_EXTRINSICS_IN_CONFIG];
@@ -348,7 +348,7 @@ int load_extrinsics_file()
 	return 0;
 }
 
-int load_intrinsics_file()
+int cam_load_intrinsics_file()
 {
 	char intrinsics_path[CM_CHAR_BUF_SIZE * 2];
 
@@ -929,17 +929,19 @@ int cam_config_file_read(void)
 				CAM_CONFIG_FILE_HEADER);
 	}
 	cJSON_Delete(parent);
-	ret = load_intrinsics_file();
+	ret = cam_load_intrinsics_file();
 	if (ret < 0)
 		return ret;
 
-	ret = load_extrinsics_file();
+	ret = cam_load_extrinsics_file();
 	if (ret < 0)
 		return ret;
 
 	ret = get_config_as_json();
 	if (ret < 0)
 		return ret;
+
+	printf("Done transfer camera configuration transfer\n");
 
 	return 0;
 }

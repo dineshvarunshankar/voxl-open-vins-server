@@ -6,13 +6,13 @@
 Description=voxl-open-vins-server
 SourcePath=/usr/local/bin/voxl-open-vins-server
 After=voxl-feature-tracker.service
-Requires=voxl-camera-server,voxl-feature-tracker.service
+Requires=voxl-camera-server.service,voxl-feature-tracker.service
 
 [Service]
 User=root
 Type=simple
 PIDFile=/run/voxl-open-vins-server.pid
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/bin/sleep 8
 ExecStart=/usr/local/bin/voxl-open-vins-server
 
 [Install]

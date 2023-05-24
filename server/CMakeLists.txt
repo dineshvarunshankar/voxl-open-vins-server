@@ -69,6 +69,9 @@ target_link_libraries(${SERVERNAME}
     ${LIBOV_MSCKF}
     ${LIB_CERES}
     ${OpenCV_LIBRARIES}
+    /usr/lib64/libvoxl_common_config.so
+    /usr/lib64/libmodal_journal.so
+    /usr/lib64/librc_math.so
 )
 
 if(BUILD_QRB5165)

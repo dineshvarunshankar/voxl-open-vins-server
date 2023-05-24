@@ -40,7 +40,6 @@
 #include <vector>
 
 // cameras are enumerated individually, so a stereo pair counts as two
-#define MAX_CAMERAS 12
 #define CHAR_BUF_SIZE 128
 #define CONFIG_FILE "/etc/modalai/voxl-open-vins-server.conf"
 #define CONFIG_FILE_HEADER \

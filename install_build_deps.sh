@@ -18,6 +18,10 @@ libboost-date-time-dev:arm64
 voxl-eigen3
 voxl-open-vins
 voxl-ceres-solver
+voxl-mpa-tools
+librc-math
+libmodal-journal
+libvoxl-cutils
 "
 
 DEPS_APQ8096="
