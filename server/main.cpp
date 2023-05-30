@@ -1012,7 +1012,9 @@ static void _publish_default(double pose_timestamp)
 	static Eigen::Matrix3d world_correction_mat(
 			(double*) world_correction.data);
 	static Eigen::Matrix3d neu_ned_correction_mat = Eigen::Matrix3d::Identity();
-   neu_ned_correction_mat(2,2) = -1;
+//    neu_ned_correction_mat(2,2) = -1;
+    neu_ned_correction_mat(1,1) = -1;
+    neu_ned_correction_mat(0,0) = -1;
 
 	// get features
 	// this function will give us back as much info as available for features in various stages of the overall state
@@ -1143,39 +1145,47 @@ static void _publish_default(double pose_timestamp)
 	d.last_cam_frame_id = last_frame_frame_id;
 	d.last_cam_timestamp_ns = last_frame_timestamp_ns;
 
-	Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder = world_correction_mat *
-			current_state->_imu->pos();
-	imu_wrt_wio_holder =  neu_ned_correction_mat * imu_wrt_wio_holder;
-	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) =
-			imu_wrt_wio_holder.cast<float>();
+//    Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder = neu_ned_correction_mat * world_correction_mat * current_state->_imu->pos();
+    Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder =  neu_ned_correction_mat * current_state->_imu->pos();
+    Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
 
-	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = world_correction_mat
-			* current_state->_imu->vel();
-	vel_imu_wrt_vio_holder = neu_ned_correction_mat * vel_imu_wrt_vio_holder;
-	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<
-			float>();
+//    Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = neu_ned_correction_mat * world_correction_mat * current_state->_imu->vel();
+    Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = neu_ned_correction_mat * current_state->_imu->vel();
+    Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
-	Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
-	final_out = world_correction_mat.transpose() * final_out
-			* world_correction_mat;
-	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
-			final_out.cast<float>();
+    Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
+    final_out = world_correction_mat.transpose() * final_out * world_correction_mat;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
 
-	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
-	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
-			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
-	//cam_out = world_correction_mat * cam_out;
-	cam_out = neu_ned_correction_mat * cam_out;
-	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
-			cam_out.cast<float>();
+    // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
+    Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose();
+    cam_out = world_correction_mat * cam_out;
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = cam_out.cast<float>();
 
-	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
-			current_state->_calib_IMUtoCAM[0]->quat().transpose())
-			* current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
-	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) =
-			current_state->_imu->bias_g_fej().cast<float>();
-	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) =
-			current_state->_imu->bias_a_fej().cast<float>();
+    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) = current_state->_imu->bias_g_fej().cast<float>();
+    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) = current_state->_imu->bias_a_fej().cast<float>();
+
+//	printf("%6.3f %6.3f %6.3f,   %6.3f %6.3f %6.3f",
+//			(double) s.T_imu_wrt_vio[0],
+//			(double) s.T_imu_wrt_vio[1],
+//			(double) s.T_imu_wrt_vio[2],
+//			(double) s.T_cam_wrt_imu[0],
+//			(double) s.T_cam_wrt_imu[1],
+//			(double) s.T_cam_wrt_imu[2]
+//	);
+
+//	printf("%6.3f %6.3f %6.3f\n%6.3f %6.3f %6.3f\n%6.3f %6.3f %6.3f\n\n",
+//			s.R_imu_to_vio[0][0],
+//			s.R_imu_to_vio[0][1],
+//			s.R_imu_to_vio[0][2],
+//			s.R_imu_to_vio[1][0],
+//			s.R_imu_to_vio[1][1],
+//			s.R_imu_to_vio[1][2],
+//			s.R_imu_to_vio[2][0],
+//			s.R_imu_to_vio[2][1],
+//			s.R_imu_to_vio[2][2]
+//			);
 
 	// pose covariance diagonals, 6 entries
 	s.pose_covariance[0] = (float) cov_plus(0, 0);
