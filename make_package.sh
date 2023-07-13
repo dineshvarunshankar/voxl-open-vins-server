@@ -159,7 +159,7 @@ fi
 if [ -d "scripts" ]; then
 	sudo mkdir -p $DATA_DIR/usr/bin/
 	sudo chmod +x scripts/*
-	sudo cp scripts/* $DATA_DIR/usr/bin/
+	sudo cp -r scripts/* $DATA_DIR/usr/bin/
 fi
 
 if [ -d "bash_completions" ]; then

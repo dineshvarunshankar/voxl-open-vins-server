@@ -1392,7 +1392,7 @@ static void _publish_default(double pose_timestamp)
 	global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
 
 	// if someone has subscribed to the overlay, draw it
-	if (every_other++ % 4 == 0)  // 6fps
+	if (every_other++ % 10 == 0)  // 6fps
 	{
 		// send to both pipes
 
