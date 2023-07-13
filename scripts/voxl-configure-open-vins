@@ -111,8 +111,9 @@ disable_service_and_exit () {
 enable_service_and_exit () {
 	echo "enabling  ${NAME} systemd service"
 	systemctl enable  ${SERVICE_FILE}
-	echo "starting  ${NAME} systemd service"
-	systemctl restart  ${SERVICE_FILE}
+	echo "Please recycle power to reflect changes"
+	#echo "starting  ${NAME} systemd service"
+	#systemctl restart  ${SERVICE_FILE}
 	echo "Done configuring ${NAME}"
 	exit 0
 }

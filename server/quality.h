@@ -42,7 +42,7 @@
 // tunable params
 #define GRID_W 20
 #define GRID_H 15
-#define BLOCKS_FOR_100_PERCENT 0.5f
+#define BLOCKS_FOR_100_PERCENT 0.6f
 #define STDDEV_WEIGHT 10.0f // higher number weights the stddev of features more
 
 // non-tunable params
@@ -51,7 +51,6 @@
 
 int grid_spacing_x;
 int grid_spacing_y;
-
 
 
 static void _populate_single_block(float score, float* grid_scores, int pos_x, int pos_y)
@@ -112,10 +111,10 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 		return -1;
 	}
 
-	if(vel_cov[0]<0.0f || vel_cov[6]<0.0f || vel_cov[11]<0.0f){
-		fprintf(stderr, "negative covariance\n");
-		return -1;
-	}
+//	if(vel_cov[0]<0.0f || vel_cov[6]<0.0f || vel_cov[11]<0.0f){
+//		fprintf(stderr, "negative covariance\n");
+//		return -1;
+//	}
 
 	if(img_w < GRID_W || img_h < GRID_H){
 		fprintf(stderr, "ERROR in %s, invalid img width or height\n", __FUNCTION__);
@@ -155,6 +154,7 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 
 		// points with a higher stddev will contribute less to the total score
 		float stddev = features[i].depth_error_stddev;
+
 		if (stddev == -1.) continue;
 		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
 
@@ -162,7 +162,6 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 			score += MAX_SCORE_PER_BLOCK/3.;
 			if (vel_norm < 0.05) score += MAX_SCORE_PER_BLOCK/3.;
 		}
-
 		_add_feature_to_grid(score, grid_scores[features[i].cam_id], x, y);
 	}
 
@@ -195,13 +194,15 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 	float perfect_sum = MAX_SCORE_PER_BLOCK * (GRID_BLOCKS) * BLOCKS_FOR_100_PERCENT;
 	perfect_sum = perfect_sum*perfect_sum;
 
+//	printf("best: %f perfect: %f\n", best_sum, perfect_sum);
+
+
 	int quality = roundf((best_sum*best_sum / perfect_sum) * 100.0f);
 
 	// bound the output. Remember 0 is a special value meaning unknown so
 	// don't report that since we calculating the quality.
 	if(quality>100) quality = 100;
 	if(quality<1) quality = -1;
-
 
 #ifdef DEBUG_QUALITY
 	printf("final quality: %d\n", quality);

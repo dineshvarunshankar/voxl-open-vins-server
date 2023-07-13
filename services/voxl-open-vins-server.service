@@ -5,14 +5,17 @@
 [Unit]
 Description=voxl-open-vins-server
 SourcePath=/usr/local/bin/voxl-open-vins-server
-After=voxl-feature-tracker.service
-Requires=voxl-camera-server.service,voxl-feature-tracker.service
+After=voxl-camera-server.service
+After=voxl-imu-server.service
+Requires=voxl-camera-server.service
+Requires=voxl-imu-server.service
+
 
 [Service]
 User=root
 Type=simple
 PIDFile=/run/voxl-open-vins-server.pid
-ExecStartPre=/bin/sleep 8
+ExecStartPre=/bin/bash -c 'if [[ ! -f /tmp/_vins_powerup ]]; then /bin/sleep 10 && touch /tmp/_vins_powerup; fi'
 ExecStart=/usr/local/bin/voxl-open-vins-server
 
 [Install]

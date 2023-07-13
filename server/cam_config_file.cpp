@@ -118,6 +118,7 @@ static Eigen::Matrix<double, 4, 1> rot_2_quat(
 	return q;
 }
 
+#ifdef NOT_USED
 static void create_ov_extrinsics(rc_tf_t transform,
 		Eigen::Matrix<double, 7, 1> &cam_wrt_imu, cv::Mat &cam_wrt_imu_rot)
 {
@@ -174,6 +175,7 @@ static void create_ov_extrinsics(rc_tf_t transform,
 	std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
 	return;
 }
+#endif
 
 static int axis_angle_to_rotation(double axis[3], double axis_norm,
 		double angle, cv::Matx33d &rot)
@@ -297,14 +299,22 @@ int cam_load_extrinsics_file()
 					tmp_imu_name, ext_name);
 		}
 		Eigen::Matrix<double, 3, 3> rotation_temp;
-
 		for (j = 0; j < 3; j++)
 		{
 			for (k = 0; k < 3; k++)
 			{
 				rotation_temp(j, k) = extrins_holder.R_child_to_parent[j][k];
+				if (fabs(rotation_temp(j, k)) < 10e-6)
+						rotation_temp(j, k) = 0.;
 			}
 		}
+
+//		std::cout << "NED ext: " << rotation_temp << std::endl;
+//		static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
+//		correction_mat(1,1) = -1;
+//		correction_mat(2,2) = -1;
+//		rotation_temp = correction_mat * rotation_temp;
+//		std::cout << "FLU ext: " << rotation_temp << std::endl;
 
 		// convert to quat
 		Eigen::Matrix<double, 4, 1> quaternion;
@@ -338,9 +348,9 @@ int cam_load_extrinsics_file()
 
 		cam_info_set_vec[i].cam_wrt_imu.push_back(cam_wrt_imu);
 
-		std::cout << "CAMERA ROTATION MATRIX:" << std::endl
+		std::cout << "(local) CAMERA ROTATION MATRIX:" << std::endl
 				<< cam_info_set_vec[i].cam_wrt_imu_rot[0] << std::endl;
-		std::cout << "CAMERA TRANSLATION:" << std::endl << translation
+		std::cout << "(local) CAMERA TRANSLATION:" << std::endl << translation
 				<< std::endl;
 
 	}
