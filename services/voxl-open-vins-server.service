@@ -15,7 +15,7 @@ Requires=voxl-imu-server.service
 User=root
 Type=simple
 PIDFile=/run/voxl-open-vins-server.pid
-ExecStartPre=/bin/bash -c 'if [[ ! -f /tmp/_vins_powerup ]]; then /bin/sleep 10 && touch /tmp/_vins_powerup; fi'
+ExecStartPre=/bin/bash -c 'if [[ ! -f /tmp/_vins_powerup ]]; then /bin/sleep 3 && touch /tmp/_vins_powerup; fi'
 ExecStart=/usr/local/bin/voxl-open-vins-server
 
 [Install]

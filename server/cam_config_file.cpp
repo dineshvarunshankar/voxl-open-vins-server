@@ -43,6 +43,7 @@
 #include <string>
 
 #include <iostream>
+#include <Eigen/Geometry>
 
 #include "cam_config_file.h"
 
@@ -72,6 +73,35 @@ double max_angular_rate_before_blur;
 cv::Matx33d tmp_world_correction = cv::Matx33d::eye();
 cJSON *cam_json = NULL;
 
+#ifdef NOT_USED
+// OV uses JPL  not Hamilton conventions
+static Eigen::Matrix<double, 4, 1> rot_2_quat_1(
+		const Eigen::Matrix<double, 3, 3> &R)
+{
+	if (R.determinant() != 1.0) {
+	  throw std::runtime_error("The rotation matrix is not a pure rotation.");
+	}
+	  // Extract the quaternion from the rotation matrix.
+	  Eigen::Quaterniond q(R);
+
+	  Eigen::Matrix<double, 4, 1> rtn_q;
+	  rtn_q(0) = q.x();
+	  rtn_q(1) = q.y();
+	  rtn_q(2) = q.z();
+	  rtn_q(3) = q.w();
+
+	  return rtn_q;
+}
+#endif
+
+/**
+ * Parallels OpenVINS core routine
+ *
+ * @brief Returns a JPL quaternion from a rotation matrix
+ *  This is different from Eigen rot to quant as it unwinds the coordinates in ZYX as we
+ *  convert from FLU to NED IMU space (not Hamilton?)
+ *
+ */
 static Eigen::Matrix<double, 4, 1> rot_2_quat(
 		const Eigen::Matrix<double, 3, 3> &rot)
 {
@@ -109,6 +139,7 @@ static Eigen::Matrix<double, 4, 1> rot_2_quat(
 		q(1) = (1 / (4 * q(3))) * (rot(2, 0) - rot(0, 2));
 		q(2) = (1 / (4 * q(3))) * (rot(0, 1) - rot(1, 0));
 	}
+
 	if (q(3) < 0)
 	{
 		q = -q;
@@ -118,7 +149,6 @@ static Eigen::Matrix<double, 4, 1> rot_2_quat(
 	return q;
 }
 
-#ifdef NOT_USED
 static void create_ov_extrinsics(rc_tf_t transform,
 		Eigen::Matrix<double, 7, 1> &cam_wrt_imu, cv::Mat &cam_wrt_imu_rot)
 {
@@ -175,7 +205,6 @@ static void create_ov_extrinsics(rc_tf_t transform,
 	std::cout << "CAM TRANSLATION:" << std::endl << translation << std::endl;
 	return;
 }
-#endif
 
 static int axis_angle_to_rotation(double axis[3], double axis_norm,
 		double angle, cv::Matx33d &rot)
@@ -773,20 +802,20 @@ int cam_config_file_print(void)
 			printf("\n");
 		}
 	}
-	printf(
-			"===========================TRACKER===============================\n");
-	printf("num_features_to_track:            %d\n", num_features_to_track);
-	printf("en_database:                      %d\n", en_database);
-	printf("database_size:                    %d\n", database_size);
-	printf("max_angular_rate_before_blur:  %3.2f\n",
-			max_angular_rate_before_blur);
+
+// NOT USED in OV
+//	printf("en_database:                      %d\n", en_database);
+//	printf("database_size:                    %d\n", database_size);
+//	printf("max_angular_rate_before_blur:  %3.2f\n",
+//			max_angular_rate_before_blur);
 	printf(
 			"=============================KLT=================================\n");
+	printf("num_features_to_track:            %d\n", num_features_to_track);
 	printf("grid_x:                           %d\n", grid_x);
 	printf("grid_y:                           %d\n", grid_y);
 	printf("min_pix_dist:                     %d\n", min_pix_dist);
 	printf("pyramid_levels:                   %d\n", pyramid_levels);
-	printf("window_size:                 (%d,%d)\n", window_size, window_size);
+	printf("[block] window_size:                 (%d,%d)\n", window_size, window_size);
 	printf(
 			"===========================KLTGYRO===============================\n");
 	printf("tmp_imu_name:                         %s\n", tmp_imu_name);
@@ -909,7 +938,7 @@ int cam_config_file_read(void)
 	json_fetch_string_with_default(parent, "tmp_imu_name", tmp_imu_name,
 			CM_CHAR_BUF_SIZE, "imu_apps");
 	json_fetch_int_with_default(parent, "num_features_to_track",
-			&num_features_to_track, 50);
+			&num_features_to_track, 60);
 	json_fetch_int_with_default(parent, "grid_x", &grid_x, 1);
 	json_fetch_int_with_default(parent, "grid_y", &grid_y, 1);
 	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 5);

@@ -56,6 +56,8 @@
 #include "quality.h"
 #include "common.h"
 #include "img_ringbuffer.h"
+#include "rc_transform.h"
+
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
@@ -82,8 +84,8 @@
 #define FEATURE_CH 1
 #define FEAT_OVERLAY_CH 2
 #define CAMERA_CH_START_OFFSET 1
-#define IMU_PIPE_MIN_PIPE_SIZE (2 * 1024 * 1024)  // give ourselves huge buffers
-#define CAM_PIPE_SIZE (24 * 1280 * 800)         // give ourselves huge buffers
+#define IMU_PIPE_MIN_PIPE_SIZE (2 * 640 * 640)  // give ourselves huge buffers
+#define CAM_PIPE_SIZE (10 * 1280 * 800)         // give ourselves huge buffers
 #define PROCESS_NAME "open-vins-server"
 #define FEATURE_NAME "tracked_feats"
 #define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
@@ -100,6 +102,10 @@
 
 // do not check for blowups until 1 second after VIO claims to have initialized
 #define BLOWUP_DETECT_TIMEOUT_NS 1000000000
+
+// init after  image frames recevoied at start up
+#define INIT_TIMEOUT_FRAMES 30
+
 
 // not really sure if this will be needed
 #define SILENT_STD(x)                             \
@@ -120,6 +126,7 @@ static int en_debug_pos = 0;
 static int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
 static pthread_t health_thread;
+static pthread_t overlay_thread;
 
 static double last_feature_time;
 static double last_imu_time;
@@ -147,6 +154,7 @@ static volatile int64_t last_cep_timestamp_ns = 0;
 static volatile int is_imu_connected = 0;
 static volatile int is_cam_connected = 0;
 static volatile int is_init = 0;
+static volatile int init_pass_frames = 0;
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -667,6 +675,22 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch,
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
+
+	is_cam_connected = true;
+	// camera working, reset errors
+	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
+
+	if (!is_imu_connected)
+	{
+		s.state = VIO_STATE_INITIALIZING;
+		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
+		// send to both pipes
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		return;
+	}
+
 //	int64_t cam_timestamp_ns = meta.timestamp_ns;
 //	cam_timestamp_ns += meta.exposure_ns / 2;
 //
@@ -757,10 +781,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	img_ringbuf->insert_data(curr_message);
 
-	is_cam_connected = true;
-	// camera working, reset errors
-	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
-
 	cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
 	std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
 	ov_core::CameraData message;
@@ -797,20 +817,19 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		return;
 	}
 
-	if (!is_init)
-	{
-		is_init = vio_manager->initialized();
-		if (is_init)
-		{
-			for (int i=0; i<cameras_used; i++)
-			{
-				pipe_client_flush(camera_pipe_channels[i]);
-			}
-			pipe_client_flush(IMU_CH);
-			camera_queue.clear();
-
-		}
-	}
+//	if (!is_init)
+//	{
+//		if (is_init)
+//		{
+//			for (int i=0; i<cameras_used; i++)
+//			{
+//				pipe_client_flush(camera_pipe_channels[i]);
+//			}
+//			pipe_client_flush(IMU_CH);
+//			camera_queue.clear();
+//
+//		}
+//	}
 
 	// flag that imu data is active, remove the error, skip data if camera is disconnected
 	is_imu_connected = 1;
@@ -818,9 +837,17 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 	if (!is_cam_connected)
 	{
-		printf("ERROR: Lost camera connection!\n");
+		s.state = VIO_STATE_INITIALIZING;
+		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
+		// send to both pipes
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
 		return;
 	}
+
+	is_init = vio_manager->initialized();
 
 	// time this in debug mode
 	int64_t time_before, process_time;
@@ -863,6 +890,8 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
 			correction_mat(1,1) = -1;
 			correction_mat(2,2) = -1;
+//		    static Eigen::Matrix3d correction_mat((double*)world_correction.data);
+
 			t_wm = correction_mat * t_wm;
 		    t_am = correction_mat * t_am;
 
@@ -878,15 +907,17 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			last_imu_timestamp_ns = data_array[i].timestamp_ns;
 			last_imu_time = vio_manager_data.timestamp;
 
-			std::lock_guard<std::mutex> lck(camera_queue_mtx);
 
 			double timestamp_imu_inC = vio_manager_data.timestamp
 					- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
+
+			std::lock_guard<std::mutex> lck(camera_queue_mtx);
+
 			while (!camera_queue.empty()
 					&& camera_queue.at(0).timestamp < timestamp_imu_inC)
 			{
 				vio_manager->feed_measurement_camera(camera_queue.at(0));
-				if (is_init)
+//				if (is_init)
 					_publish_default(last_imu_time);
 				camera_queue.pop_front();
 			}
@@ -939,8 +970,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			perf_limit = 1;
 		else
 		{
-			if (en_debug_timing_imu)
-					printf("HRT deadline not met, clean up: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
+			printf("HRT deadline not met, clean up: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
 			for (int i=0; i<cameras_used; i++)
 			{
 				pipe_client_flush(camera_pipe_channels[i]);
@@ -956,6 +986,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	process_time = _apps_time_monotonic_ns() - time_before;
 	time_avg += ((double) process_time) / 1000000.0;
 	avg++;
+
 
 	return;
 }
@@ -1392,7 +1423,7 @@ static void _publish_default(double pose_timestamp)
 	global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
 
 	// if someone has subscribed to the overlay, draw it
-	if (every_other++ % 10 == 0)  // 6fps
+	if (every_other++ % 3 == 0)  // 15fps
 	{
 		// send to both pipes
 
@@ -1628,7 +1659,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	/// GENERAL OPTIONS ///
 	vio_manager_options.use_stereo = use_stereo;
 	vio_manager_options.use_mask = use_mask;
-	vio_manager_options.use_aruco = false;
+	vio_manager_options.use_aruco = false; //MODALAI ONLY
 
 	/// FEATURE INITIALIZER OPTIONS ///
 	vio_manager_options.featinit_options.triangulate_1d = triangulate_1d;
@@ -1644,8 +1675,16 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.featinit_options.max_baseline = max_baseline;
 	vio_manager_options.featinit_options.max_cond_number = max_cond_number;
 
+	vio_manager_options.downsample_cameras = false; // TBD
+	vio_manager_options.num_opencv_threads = 6;
+	vio_manager_options.num_pts = num_features_to_track;
+	vio_manager_options.fast_threshold = fast_threshold;
+	vio_manager_options.min_px_dist = min_pix_dist;
+	vio_manager_options.histogram_method = histogram_method;
+	vio_manager_options.knn_ratio = knn_ratio;
+	vio_manager_options.track_frequency = track_frequency;
+
 	/// CAMERA INTRINSICS + EXTRINSICS ///
-	// these need to come from voxl-feature-tracker now
 
 	std::lock_guard<std::mutex> lg(vio_manager_mutex);
 
@@ -1655,6 +1694,8 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 		// ov uses camequi model to represent fisheye cameras, and the radtan model for standard lenses
 		if (cam_info_vec[i].is_fisheye)
 		{
+			std::cout << "OpenVINS using fisheye camera" << std::endl;
+
 			cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(
 					cam_info_vec[i].cam_calib_intrinsic(8, 0),
 					cam_info_vec[i].cam_calib_intrinsic(9, 0));
@@ -2036,6 +2077,7 @@ int main(int argc, char *argv[])
 	printf("Loading our own config file\n");
 	if (config_file_read() < 0)
 		_quit(-1);
+	config_file_print();
 
 	// read camera multicam setup and configs
 	if (cam_config_file_read() < 0)

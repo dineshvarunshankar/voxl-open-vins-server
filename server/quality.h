@@ -124,6 +124,8 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 	grid_spacing_x = img_w/GRID_W;
 	grid_spacing_y = img_h/GRID_H;
 
+
+
 	float grid_scores[n_cams][GRID_BLOCKS];
 	for (int i = 0; i < n_cams; i++){
 		memset(grid_scores[i], 0, sizeof(float)*GRID_BLOCKS);
@@ -154,7 +156,6 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 
 		// points with a higher stddev will contribute less to the total score
 		float stddev = features[i].depth_error_stddev;
-
 		if (stddev == -1.) continue;
 		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
 

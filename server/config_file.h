@@ -191,6 +191,12 @@ extern double max_dist;
 extern double max_baseline;
 extern double max_cond_number;
 
+extern int num_opencv_threads;
+extern int fast_threshold;
+extern ov_core::TrackBase::HistogramMethod histogram_method;
+extern double knn_ratio;
+extern double track_frequency;
+
 
 // read only our own config file without printing the contents
 int config_file_read(void);

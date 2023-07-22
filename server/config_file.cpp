@@ -101,9 +101,6 @@ double slam_sigma_px;
 double zupt_chi2_multiplier;
 double zupt_sigma_px;
 
-bool use_stereo;
-bool use_mask;
-
 /// ZUPT OPTIONS ///
 bool try_zupt;
 double zupt_max_velocity;
@@ -124,9 +121,16 @@ double min_dist;
 double max_dist;
 double max_baseline;
 double max_cond_number;
+bool use_stereo;
+bool use_mask;
 
+int num_opencv_threads;
+int fast_threshold;
+ov_core::TrackBase::HistogramMethod histogram_method;
+double knn_ratio;
+double track_frequency;
 
-extern std::string log_path;
+//std::string log_path;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
     if (feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
@@ -142,6 +146,30 @@ static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Represent
     else if (feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_INVERSE_DEPTH_SINGLE)
         return "ANCHORED_INVERSE_DEPTH_SINGLE";
     else return "UNKNOWN";
+}
+
+static ov_core::TrackBase::HistogramMethod int_to_hist_method(int hist_type) {
+
+	if (hist_type == 0)
+			return ov_core::TrackBase::HistogramMethod::NONE;
+	else if (hist_type == 1)
+			return ov_core::TrackBase::HistogramMethod::HISTOGRAM;
+	else if (hist_type == 2)
+			return ov_core::TrackBase::HistogramMethod::CLAHE;
+	else
+		return ov_core::TrackBase::HistogramMethod::NONE;
+}
+
+static std::string hist_as_string(ov_core::TrackBase::HistogramMethod hist_rep) {
+	if (hist_rep == ov_core::TrackBase::HistogramMethod::NONE)
+			return "NONE";
+	else if (hist_rep == ov_core::TrackBase::HistogramMethod::HISTOGRAM)
+		return "HISTOGRAM";
+	else if (hist_rep == ov_core::TrackBase::HistogramMethod::CLAHE)
+		return "CLAHE";
+	else
+	    return "UNKNOWN";
+
 }
 
 int config_file_print(void) {
@@ -211,7 +239,11 @@ int config_file_print(void) {
     printf("min dist:                         %6.5f\n", min_dist);
     printf("max dist:                         %6.5f\n", max_dist);
     printf("max baseline:                     %6.5f\n", max_baseline);
-    printf("max cond number:                  %6.5f\n", max_cond_number);
+    printf("num_opencv_threads:                  %d\n", num_opencv_threads);
+    printf("fast_threshold:                  %d\n", fast_threshold);
+    printf("histogram_method:                  %s\n", hist_as_string(histogram_method).c_str());
+    printf("knn_ratio:                  %6.5f\n", knn_ratio);
+    printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -296,6 +328,16 @@ int config_file_read(void) {
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
+
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 6);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 20);
+
+    int tmp_hist = 0;
+    json_fetch_int_with_default(parent, "histogram_method", &tmp_hist, 10);
+    histogram_method = int_to_hist_method(tmp_hist);
+
+    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.85);
+    json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 12.0);
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

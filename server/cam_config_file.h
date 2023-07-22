@@ -70,13 +70,10 @@
 
 extern std::vector<camera_info_set> cam_info_set_vec;
 extern char tmp_imu_name[CM_CHAR_BUF_SIZE];
-
 extern int width;
 extern int height;
-
 extern bool en_gyro;
 extern bool en_descriptors;
-
 extern int num_features_to_track;
 extern int grid_x;
 extern int grid_y;
