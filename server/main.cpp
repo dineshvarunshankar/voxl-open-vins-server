@@ -225,7 +225,7 @@ static vio_data_t s;      // simplified vio packet
 
 std::string log_path = "";
 
-static RingBuffer *img_ringbuf;
+static RingBuffer *img_ringbuf = 	new RingBuffer(5);
 
 std::atomic<bool> thread_update_running;
 
@@ -870,7 +870,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		}
 		else
 		{
-
 			// Create the data struct that we will use for ingesting data into the vio manager
 			ov_core::ImuData vio_manager_data;
 			vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09; // (seconds)
@@ -907,7 +906,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			last_imu_timestamp_ns = data_array[i].timestamp_ns;
 			last_imu_time = vio_manager_data.timestamp;
 
-
 			double timestamp_imu_inC = vio_manager_data.timestamp
 					- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
 
@@ -917,8 +915,15 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 					&& camera_queue.at(0).timestamp < timestamp_imu_inC)
 			{
 				vio_manager->feed_measurement_camera(camera_queue.at(0));
-//				if (is_init)
+				double p_dt = (_apps_time_monotonic_ns() - time_before) / 1000000.0;
+
+				printf("imu: %f image: %f max: %f\n", (double) (last_imu_timestamp_ns * 1e-9),
+						(double)camera_queue.at(0).timestamp, timestamp_imu_inC);
+
+
+				if (p_dt <= 50.0) // over 20Hz
 					_publish_default(last_imu_time);
+
 				camera_queue.pop_front();
 			}
 
@@ -960,32 +965,32 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	}
 
 
-	if (avg == 100)
-	{
-		double perf = (double)time_avg / 100.0;
-		if (en_debug_timing_imu)
-			printf("Avg time per 100 samples: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
-
-		if (perf <= 10.0) //milliseconds
-			perf_limit = 1;
-		else
-		{
-			printf("HRT deadline not met, clean up: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
-			for (int i=0; i<cameras_used; i++)
-			{
-				pipe_client_flush(camera_pipe_channels[i]);
-			}
-			pipe_client_flush(IMU_CH);
-			perf_limit = 5;
-		}
-
-		avg = 0;
-		time_avg = 0;
-
-	}
-	process_time = _apps_time_monotonic_ns() - time_before;
-	time_avg += ((double) process_time) / 1000000.0;
-	avg++;
+//	if (avg == 100)
+//	{
+//		double perf = (double)time_avg / 100.0;
+//		if (en_debug_timing_imu)
+//			printf("Avg time per 100 samples: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
+//
+//		if (perf <= 10.0) //milliseconds
+//			perf_limit = 1;
+//		else
+//		{
+//			printf("HRT deadline not met, clean up: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
+//			for (int i=0; i<cameras_used; i++)
+//			{
+//				pipe_client_flush(camera_pipe_channels[i]);
+//			}
+//			pipe_client_flush(IMU_CH);
+//			perf_limit = 5;
+//		}
+//
+//		avg = 0;
+//		time_avg = 0;
+//
+//	}
+//	process_time = _apps_time_monotonic_ns() - time_before;
+//	time_avg += ((double) process_time) / 1000000.0;
+//	avg++;
 
 
 	return;
@@ -1112,71 +1117,75 @@ static void _publish_default(double pose_timestamp)
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
-    std::vector<std::shared_ptr<ov_type::Type>> statevars;
-    statevars.push_back(current_state->_imu->p());
-    statevars.push_back(current_state->_imu->q());
-    statevars.push_back(current_state->_imu->v());
-    Eigen::Matrix<double, 9, 9> covariance_posori = ov_msckf::StateHelper::get_marginal_covariance(current_state, statevars);
-    // Row-major representation of the 6x6 covariance matrix
-    // The orientation parameters use a fixed-axis representation.
-    // In order, the parameters are:
-    // (x, y, z, rotation about X axis, rotation about Y axis, rotation about Z axis)
-    // float64[36] covariance
+	std::vector < std::shared_ptr < ov_type::Type >> statevars;
+	statevars.push_back(current_state->_imu->p());
+	statevars.push_back(current_state->_imu->q());
+	statevars.push_back(current_state->_imu->v());
+	Eigen::Matrix<double, 9, 9> covariance_posori =
+			ov_msckf::StateHelper::get_marginal_covariance(current_state,
+					statevars);
+	// Row-major representation of the 6x6 covariance matrix
+	// The orientation parameters use a fixed-axis representation.
+	// In order, the parameters are:
+	// (x, y, z, rotation about X axis, rotation about Y axis, rotation about Z axis)
+	// float64[36] covariance
 
-    Eigen::VectorXd cov_varis = covariance_posori.diagonal();
-    double T_uncertainty = 0.0;
-	 T_uncertainty += cov_varis(0,0) * cov_varis(0, 0);
-	 T_uncertainty += cov_varis(1, 1) * cov_varis(1, 1);
-	 T_uncertainty += cov_varis(2, 2) * cov_varis(2, 2);
-	 T_uncertainty = sqrt(T_uncertainty);
+	Eigen::VectorXd cov_varis = covariance_posori.diagonal();
+	double T_uncertainty = 0.0;
+	T_uncertainty += cov_varis(0, 0) * cov_varis(0, 0);
+	T_uncertainty += cov_varis(1, 1) * cov_varis(1, 1);
+	T_uncertainty += cov_varis(2, 2) * cov_varis(2, 2);
+	T_uncertainty = sqrt(T_uncertainty);
 
-	 double R_uncertainty = 0.0;
-	 R_uncertainty += cov_varis(3,3) * cov_varis(3,3);
-	 R_uncertainty += cov_varis(4,4) * cov_varis(4,4);
-	 R_uncertainty += cov_varis(5,5) * cov_varis(5,5);
-     R_uncertainty = sqrt(R_uncertainty);
+	double R_uncertainty = 0.0;
+	R_uncertainty += cov_varis(3, 3) * cov_varis(3, 3);
+	R_uncertainty += cov_varis(4, 4) * cov_varis(4, 4);
+	R_uncertainty += cov_varis(5, 5) * cov_varis(5, 5);
+	R_uncertainty = sqrt(R_uncertainty);
 
-	 double V_uncertainty = 0.0;
-	 V_uncertainty += cov_varis(6,6) * cov_varis(6,6);
-	 V_uncertainty += cov_varis(7,7) * cov_varis(7,7);
-	 V_uncertainty += cov_varis(8,8) * cov_varis(8,8);
-	 V_uncertainty = sqrt(V_uncertainty);
+	double V_uncertainty = 0.0;
+	V_uncertainty += cov_varis(6, 6) * cov_varis(6, 6);
+	V_uncertainty += cov_varis(7, 7) * cov_varis(7, 7);
+	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
+	V_uncertainty = sqrt(V_uncertainty);
 
 #ifdef TRUE_MONTE
 
-	 Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenSolver(covariance_posori);
-	 Eigen::MatrixXd transform = eigenSolver.eigenvectors() * eigenSolver.eigenvalues().cwiseSqrt().asDiagonal();
-	 static std::mt19937 gen{ std::random_device{}() };
-	 static std::normal_distribution<> dist;
-	 Eigen::VectorXd uncertain = transform * Eigen::VectorXd{ 6 }.unaryExpr([&](auto x) { return dist(gen); });
-	 Eigen::Vector3d  T_sigma = uncertain.segment(0,2);
-	 Eigen::Vector3d  R_sigma = uncertain.segment(3,5);
-	 T_uncertainty = (T_uncertainty * 0.6) + (0.4 * (sqrt((T_sigma.array() - T_sigma.mean()).square().sum() / (T_sigma.size() - 1))));
-	 R_uncertainty = (R_uncertainty * 0.6) + (0.4* (sqrt((R_sigma.array() - R_sigma.mean()).square().sum() / (R_sigma.size() - 1))));
-	 printf("Uncertainty in the robot's pose: xyz: %f R:%f\n", T_uncertainty, R_uncertainty);
-	 printf("Get the uncertainty in the robot's pose: (%dx%d) %f\n", uncertain.rows(), uncertain.cols(), std_dev);
-	 printf("(%d): ", (int)cov_varis.size());
-	 for (int i=0; i<cov_varis.size(); i++)
-	 {
-		 printf("%f ", cov_varis(i));
-	 }
-	 printf("\n");
+	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenSolver(covariance_posori);
+	Eigen::MatrixXd transform = eigenSolver.eigenvectors() * eigenSolver.eigenvalues().cwiseSqrt().asDiagonal();
+	static std::mt19937 gen{ std::random_device{}() };
+	static std::normal_distribution<> dist;
+	Eigen::VectorXd uncertain = transform * Eigen::VectorXd{ 6 }.unaryExpr([&](auto x) { return dist(gen); });
+	Eigen::Vector3d  T_sigma = uncertain.segment(0,2);
+	Eigen::Vector3d  R_sigma = uncertain.segment(3,5);
+	T_uncertainty = (T_uncertainty * 0.6) + (0.4 * (sqrt((T_sigma.array() - T_sigma.mean()).square().sum() / (T_sigma.size() - 1))));
+	R_uncertainty = (R_uncertainty * 0.6) + (0.4* (sqrt((R_sigma.array() - R_sigma.mean()).square().sum() / (R_sigma.size() - 1))));
+	printf("Uncertainty in the robot's pose: xyz: %f R:%f\n", T_uncertainty, R_uncertainty);
+	printf("Get the uncertainty in the robot's pose: (%dx%d) %f\n", uncertain.rows(), uncertain.cols(), std_dev);
+	printf("(%d): ", (int)cov_varis.size());
+	for (int i=0; i<cov_varis.size(); i++)
+	{
+		printf("%f ", cov_varis(i));
+	}
+	printf("\n");
 
 #endif
 	// correction matrix
 	static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
-	flu_ned_correction_mat(1,1) = -1;
-	flu_ned_correction_mat(2,2) = -1;
+	flu_ned_correction_mat(1, 1) = -1;
+	flu_ned_correction_mat(2, 2) = -1;
 
 	// get features
 	// this function will give us back as much info as available for features in various stages of the overall state
-	std::vector<output_feature> curr_pixel_locs =	vio_manager->get_pixel_loc_features();
+	std::vector<output_feature> curr_pixel_locs =
+			vio_manager->get_pixel_loc_features();
 
 	for (size_t d = 0; d < curr_pixel_locs.size(); d++)
 	{
-		if (curr_pixel_locs[d].pix_loc[0] > 0.0f && curr_pixel_locs[d].pix_loc[1] > 0.0f)
+		if (curr_pixel_locs[d].pix_loc[0] > 0.0f
+				&& curr_pixel_locs[d].pix_loc[1] > 0.0f)
 		{
-			 if (curr_pixel_locs[d].point_quality == OV_HIGH)
+			if (curr_pixel_locs[d].point_quality == OV_HIGH)
 			{
 				// USED points
 				n_good_points++;
@@ -1184,11 +1193,8 @@ static void _publish_default(double pose_timestamp)
 				if (n_good_points <= VIO_MAX_REPORTED_FEATURES)
 				{
 					double d_tsf[3] =
-					{
-						curr_pixel_locs[d].tsf[0],
-						curr_pixel_locs[d].tsf[1],
-						curr_pixel_locs[d].tsf[2]
-					};
+					{ curr_pixel_locs[d].tsf[0], curr_pixel_locs[d].tsf[1],
+							curr_pixel_locs[d].tsf[2] };
 
 					Eigen::Matrix<double, 3, 1> curr_feat_holder(d_tsf);
 #ifdef MAYNEED
@@ -1202,11 +1208,10 @@ static void _publish_default(double pose_timestamp)
 			}
 			else if (curr_pixel_locs[d].point_quality == OV_MEDIUM)
 			{
-							// UNUSED points
-							n_oos_points++;
+				// UNUSED points
+				n_oos_points++;
 			}
 		}
-
 	}
 
 	// check if its initialized or not
@@ -1230,7 +1235,8 @@ static void _publish_default(double pose_timestamp)
 	// this is NOT alright, in this case manually set the state to failed.
 	//
 	// Rotation
-	if (cov_varis(3, 3) < 0.0f || cov_varis(4, 4) < 0.0f || cov_varis(5, 5) < 0.0f)
+	if (cov_varis(3, 3) < 0.0f || cov_varis(4, 4) < 0.0f
+			|| cov_varis(5, 5) < 0.0f)
 	{
 		fprintf(stderr, "ERROR: diagonal went negative\n");
 		s.state = VIO_STATE_FAILED;
@@ -1309,43 +1315,54 @@ static void _publish_default(double pose_timestamp)
 	d.last_cam_frame_id = last_frame_frame_id;
 	d.last_cam_timestamp_ns = last_frame_timestamp_ns;
 
-
-    Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder =   current_state->_imu->pos();
+	Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder = current_state->_imu->pos();
 	if (gravity_vector_direction == 1)
 	{
 		imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
 	}
 
-//    std::cout << "POS:\n" << imu_wrt_wio_holder << std::endl;
+	//    std::cout << "POS:\n" << imu_wrt_wio_holder << std::endl;
 
-    Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
-    Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = current_state->_imu->vel();
+	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) =
+			imu_wrt_wio_holder.cast<float>();
+	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder =
+			current_state->_imu->vel();
 	if (gravity_vector_direction == 1)
 	{
-		vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
+		vel_imu_wrt_vio_holder = flu_ned_correction_mat
+				* vel_imu_wrt_vio_holder;
 	}
-    Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
+	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<
+			float>();
 
-    Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
+	Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
 	if (gravity_vector_direction == -1)
 	{
-		final_out = flu_ned_correction_mat *  final_out;
+		final_out = flu_ned_correction_mat * final_out;
 	}
 	else
 	{
-		 final_out = flu_ned_correction_mat.transpose() * final_out * flu_ned_correction_mat;
+		final_out = flu_ned_correction_mat.transpose() * final_out
+				* flu_ned_correction_mat;
 	}
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) = final_out.cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
+			final_out.cast<float>();
 
-    // camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
-    Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat()).transpose();
+	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
+	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
+			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
 	if (gravity_vector_direction == -1)
 		cam_out = flu_ned_correction_mat * cam_out;
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) = cam_out.cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
+			cam_out.cast<float>();
 
-    Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(current_state->_calib_IMUtoCAM[0]->quat().transpose()) * current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) = current_state->_imu->bias_g_fej().cast<float>();
-    Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) = current_state->_imu->bias_a_fej().cast<float>();
+	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
+			current_state->_calib_IMUtoCAM[0]->quat().transpose())
+			* current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) =
+			current_state->_imu->bias_g_fej().cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) =
+			current_state->_imu->bias_a_fej().cast<float>();
 
 	// pose covariance diagonals, 6 entries
 	s.pose_covariance[0] = (float) cov_varis(0, 0);
@@ -1356,9 +1373,9 @@ static void _publish_default(double pose_timestamp)
 	s.pose_covariance[20] = (float) cov_varis(5, 5);
 
 	// velocity covariance diagonals, 3 entries
-	s.velocity_covariance[0] = (float) cov_varis(6,6);
-	s.velocity_covariance[6] = (float) cov_varis(7,7);
-	s.velocity_covariance[11] = (float) cov_varis(8,8);
+	s.velocity_covariance[0] = (float) cov_varis(6, 6);
+	s.velocity_covariance[6] = (float) cov_varis(7, 7);
+	s.velocity_covariance[11] = (float) cov_varis(8, 8);
 
 	// open vins does not estimate this, but reports it
 	double imu_angular_vel[3];
@@ -1378,7 +1395,7 @@ static void _publish_default(double pose_timestamp)
 	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
 	// voxl flips it to actual
 	float grav_vec[3] =
-	{ 0, 0, (float)  gravity_vector_direction };
+	{ 0, 0, (float) gravity_vector_direction };
 	memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
 
 	// limit the number of features to what fits in our pipe packet
@@ -1423,26 +1440,30 @@ static void _publish_default(double pose_timestamp)
 	global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
 
 	// if someone has subscribed to the overlay, draw it
-	if (every_other++ % 3 == 0)  // 15fps
+	if (pipe_server_get_num_clients(OVERLAY_CH) > 0)
 	{
-		// send to both pipes
-
-		if (pipe_server_get_num_clients(OVERLAY_CH) > 0 && skip_cnt >= 1)
+		if (every_other++ % 3 == 0)  // 10fps
 		{
-			skip_cnt = 0;
 			cv::Mat overlay_cp;
 
 			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
 
 			feat_ts_mutex.lock();
 			// TODO May not exists, then what
-			//int ret = img_ringbuf->get_data_at_time(vio_dt, curr_imgs);
+			double target_time = pose_timestamp*1e9;
+			//int ret = img_ringbuf->get_data_at_time((int64_t)target_time, curr_imgs);
 			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
 
 			if (ret < 0)
 			{
-				fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %f\n",
-						pose_timestamp);
+				feat_ts_mutex.unlock();
+				fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %f %ld %ld %ld %ld %ld\n",
+						target_time,
+						img_ringbuf->get_timestamp_at_position(0),
+						img_ringbuf->get_timestamp_at_position(1),
+						img_ringbuf->get_timestamp_at_position(2),
+						img_ringbuf->get_timestamp_at_position(3),
+						img_ringbuf->get_timestamp_at_position(4));
 				return;
 			}
 
@@ -1450,9 +1471,11 @@ static void _publish_default(double pose_timestamp)
 			std::vector<cv::Mat> img_set;
 			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
 			{
-				cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width,
+				cv::Mat img(curr_imgs->metadata.height,
+						curr_imgs->metadata.width,
 						CV_8UC1, curr_imgs->image_pixels);
-				cv::Mat img2(curr_imgs->metadata.height, curr_imgs->metadata.width,
+				cv::Mat img2(curr_imgs->metadata.height,
+						curr_imgs->metadata.width,
 						CV_8UC1,
 						curr_imgs->image_pixels
 								+ (curr_imgs->metadata.width
@@ -1462,13 +1485,13 @@ static void _publish_default(double pose_timestamp)
 			}
 			else
 			{
-				cv::Mat img(curr_imgs->metadata.height, curr_imgs->metadata.width,
+				cv::Mat img(curr_imgs->metadata.height,
+						curr_imgs->metadata.width,
 						CV_8UC1, curr_imgs->image_pixels);
 				img_set.push_back(img);
 			}
 
 			feat_ts_mutex.unlock();
-
 
 			for (size_t i = 0; i < curr_pixel_locs.size(); i++)
 			{
@@ -1477,31 +1500,31 @@ static void _publish_default(double pose_timestamp)
 				{
 					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
 							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255),
-							cv::MARKER_SQUARE, 8, 2);
+									curr_pixel_locs[i].pix_loc[1]),
+							cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
 				}
 				// slam landmark
 				else if (curr_pixel_locs[i].point_quality == OV_HIGH)
 				{
 					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
 							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]), cv::Scalar(255),
-							cv::MARKER_SQUARE, 8, 2);
+									curr_pixel_locs[i].pix_loc[1]),
+							cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
 				}
 				// tracked feature
 				else if (curr_pixel_locs[i].point_quality == OV_MEDIUM)
 				{
 					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
 							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]), cv::Scalar(145),
-							cv::MARKER_SQUARE, 8, 2);
+									curr_pixel_locs[i].pix_loc[1]),
+							cv::Scalar(145), cv::MARKER_SQUARE, 8, 2);
 				}
 				else if (show_extra_points_on_overlay)
 				{
 					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
 							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]), cv::Scalar(0),
-							cv::MARKER_SQUARE, 8, 2);
+									curr_pixel_locs[i].pix_loc[1]),
+							cv::Scalar(0), cv::MARKER_SQUARE, 8, 2);
 				}
 			}
 
@@ -1524,8 +1547,8 @@ static void _publish_default(double pose_timestamp)
 			}
 
 			cv::copyMakeBorder(overlay_cp, overlay_cp,
-					DRAW_BONUS_ROWS_TOP / border_scale,
-					DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
+			DRAW_BONUS_ROWS_TOP / border_scale,
+			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
 					cv::Scalar(0));
 
 			draw_meta = curr_imgs->metadata;
@@ -1536,10 +1559,8 @@ static void _publish_default(double pose_timestamp)
 
 			char str[256];
 			sprintf(str, "CEP: %3.3f R_err: %3.2f   XYZ: %6.2lf %6.2lf %6.2lf",
-					T_uncertainty,
-					R_uncertainty*180/M_PI,
-					(double) s.T_imu_wrt_vio[0],
-					(double) s.T_imu_wrt_vio[1],
+					T_uncertainty, R_uncertainty * 180 / M_PI,
+					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
 					(double) s.T_imu_wrt_vio[2]);
 			int baseline = 0;
 			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
@@ -1550,24 +1571,29 @@ static void _publish_default(double pose_timestamp)
 					str, //text
 					cv::Point((overlay_cp.cols - text_size.width) / 2,
 							text_size.height * 3 / 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size, cv::Scalar(255, 255, 255), //font color
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
 					font_size, cv::LINE_AA);
 
-			 char oos_pts_string[96];
-			 if (show_extra_points_on_overlay) {
-			 sprintf(oos_pts_string, "#pts: %2d  (%2d)", n_good_points, n_oos_points);
-			 } else
-			 oos_pts_string[0] = 0;
-			 sprintf(str, "ex(ms): %6.1f Gain: %5d Q: %3d %s ",
-			 draw_meta.exposure_ns / 1000000.0, draw_meta.gain, s.quality, oos_pts_string);
+			char oos_pts_string[96];
+			if (show_extra_points_on_overlay)
+				sprintf(oos_pts_string, "#pts: %2d  (%2d)", n_good_points,
+						n_oos_points);
+			else
+				oos_pts_string[0] = 0;
 
-			 font_size = 0.6;
-			 cv::putText(
+			sprintf(str, "ex(ms): %6.1f Gain: %5d Q: %3d %s ",
+					draw_meta.exposure_ns / 1000000.0, draw_meta.gain,
+					s.quality, oos_pts_string);
+
+			font_size = 0.6;
+			cv::putText(
 					overlay_cp, //target image
 					str, //text
 					cv::Point((overlay_cp.cols - text_size.width) / 2,
 							overlay_cp.rows - text_size.height / 2 + 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size, cv::Scalar(255, 255, 255), //font color
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
 					font_size, cv::LINE_AA);
 
 			// draw out to pipe
@@ -1577,10 +1603,7 @@ static void _publish_default(double pose_timestamp)
 
 			delete curr_imgs;
 		}
-		else
-			skip_cnt++;
-
-		}
+	}
 
 	return;
 }
@@ -2023,10 +2046,6 @@ static int read_external_configs(void)
 static int connect_client_pipes(void)
 {
 	fprintf(stderr, "connecting client pipes\n");
-
-	img_ringbuf = (new RingBuffer(30));
-//    img_ringbuf = (new RingBuffer(25));
-
 	// connect to imu
 	pipe_client_set_disconnect_cb(IMU_CH, _imu_disconnect_cb, NULL);
 	pipe_client_set_simple_helper_cb(IMU_CH, _new_imu_data_default_handler,

@@ -46,7 +46,7 @@ case "$1" in
 		mkdir -p build64
 		cd build64
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165} -DBUILD_QRB5165=${BUILD_QRB5165} -DCMAKE_BUILD_TYPE=Release ${EXTRA_OPTS} ../
-		make -j$(nproc)
+		make -j$(nproc) 
 		cd ../
 		;;
 

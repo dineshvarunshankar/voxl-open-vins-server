@@ -880,6 +880,9 @@ int cam_config_file_read(void)
 			default_val = 1;
 		json_fetch_int_with_default(parent, std_holder.c_str(), &enabled,
 				default_val);
+
+		std::cout << "Found camera entry: " << std_holder << " enabled? "<<  (enabled ? "Yes" : "No") << std::endl;
+
 		if (!enabled)
 			continue;
 

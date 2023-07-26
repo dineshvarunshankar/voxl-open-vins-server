@@ -131,6 +131,15 @@ class RingBuffer {
             }
         }
 
+        /**
+         * @brief retrieve timestamp of data in the buf at a given position
+         * UNSAFE (no mutex lock)
+         * @param position  buf index we would like to retrieve
+         *
+         * @return timestamp of data at position
+         */
+        int64_t get_timestamp_at_position(int position);
+
     protected:
 
         /**
@@ -143,14 +152,6 @@ class RingBuffer {
         img_ringbuf_packet* get_data_ptr_at_position(int position);
 
 
-        /**
-         * @brief retrieve timestamp of data in the buf at a given position
-         * UNSAFE (no mutex lock)
-         * @param position  buf index we would like to retrieve
-         * 
-         * @return timestamp of data at position
-         */
-        int64_t get_timestamp_at_position(int position);
 
 
         /// pointer to internal data, templated so BufUnits must have a static size
