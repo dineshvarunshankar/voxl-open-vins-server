@@ -100,4 +100,5 @@ int cam_load_intrinsics_file();
 int cam_load_extrinsics_file();
 int get_config_as_json();
 
+
 #endif // CAM_CONFIG_FILE_H

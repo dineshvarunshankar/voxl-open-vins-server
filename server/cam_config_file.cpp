@@ -51,6 +51,9 @@
 
 #define EXTRINS_BODY "body"
 
+int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
+int get_RPY_from_NED_to_FLU(double roll, double pitch, double yaw, Eigen::Matrix<double,3,3>  &R);
+
 std::vector<camera_info_set> cam_info_set_vec;
 
 char tmp_imu_name[CM_CHAR_BUF_SIZE];
@@ -72,6 +75,59 @@ double max_angular_rate_before_blur;
 
 cv::Matx33d tmp_world_correction = cv::Matx33d::eye();
 cJSON *cam_json = NULL;
+
+
+int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw)
+{
+    *roll  = atan2(R(2,1), R(2,2));
+    *pitch = asin(-R(2,0));
+    *yaw   = atan2(R(1,0), R(0,0));
+
+    if(fabs(*pitch - M_PI_2) < 0.001){
+        *roll = 0.0;
+        *pitch = atan2(R(1,2), R(0,2));
+        printf("flip\n");
+    }
+    else if(fabs(*pitch + M_PI_2) < 0.001) {
+        *roll = 0.0;
+        *pitch = atan2(-R(1,2), -R(0,2));
+        printf("flip2\n");
+    }
+    return 0;
+}
+
+int get_RPY_from_NED_to_FLU(double roll, double pitch, double yaw, Eigen::Matrix<double,3,3>  &R)
+{
+    double c1 = cos(yaw);
+    double s1 = sin(yaw);
+    double c2 = cos(pitch);
+    double s2 = sin(pitch);
+    double c3 = cos(roll);
+    double s3 = sin(roll);
+
+    R(0,0) = c1*c2;
+    R(0,1) = (c1*s2*s3)-(c3*s1);
+    R(0,2) = (s1*s3)+(c1*c3*s2);
+
+    R(1,0) = c2*s1;
+    R(1,1) = (c1*c3)+(s1*s2*s3);
+    R(1,2) = (c3*s1*s2)-(c1*s3);
+
+    R(2,0) = -s2;
+    R(2,1) = c2*s3;
+    R(2,2) = c2*c3;
+
+	for (int i = 0; i < 3; i++)
+	{
+		for (int j = 0; j < 3; j++)
+		{
+			if (fabs(R(i, j)) < 10e-6)
+				R(i, j) = 0.;
+		}
+	}
+
+    return 0;
+}
 
 #ifdef NOT_USED
 // OV uses JPL  not Hamilton conventions
@@ -288,6 +344,23 @@ static int create_open_vins_world_rotation_from_file(cv::Matx33d *R_correction)
 	return 0;
 }
 
+
+
+//int _rotation_matrix_to_tait_bryan_xyz_intrinsic_eigen(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw)
+//{
+//	*pitch = asin(R(0,2))*RAD_TO_DEG;
+//	if(fabs(R(0,2))<0.9999999){
+//		*roll = atan2(-R(1,2), R(2,2))*RAD_TO_DEG;
+//		*yaw  = atan2(-R(0,1), R(0,0))*RAD_TO_DEG;
+//	}
+//	else{
+//		*roll = atan2(-R(2,1), R(1,1))*RAD_TO_DEG;
+//		*yaw  = 0.0;
+//	}
+//	return 0;
+//}
+
+
 int cam_load_extrinsics_file()
 {
 
@@ -310,7 +383,6 @@ int cam_load_extrinsics_file()
 
 	for (size_t i = 0; i < cam_info_set_vec.size(); i++)
 	{
-		std::cout << "Camera Name: " << cam_info_set_vec[i].name << std::endl;
 		if (vcc_find_extrinsic_in_array(cam_info_set_vec[i].name, tmp_imu_name,
 				t, n_extrinsics, &extrins_holder))
 			return -1;
@@ -319,7 +391,7 @@ int cam_load_extrinsics_file()
 		rc_tf_t imu_to_cam;
 		int j, k;
 
-		// grab the imu -> bottom camera extrinsics relation
+		// grab the imu -> camera extrinsics relation
 		if (vcc_find_extrinsic_in_array(tmp_imu_name, cam_info_set_vec[i].name,
 				t, n_extrinsics, &extrins_holder))
 		{
@@ -327,6 +399,7 @@ int cam_load_extrinsics_file()
 					"ERROR: Unable to find %s to %s in extrinsics conf\n",
 					tmp_imu_name, ext_name);
 		}
+
 		Eigen::Matrix<double, 3, 3> rotation_temp;
 		for (j = 0; j < 3; j++)
 		{
@@ -338,12 +411,14 @@ int cam_load_extrinsics_file()
 			}
 		}
 
-//		std::cout << "NED ext: " << rotation_temp << std::endl;
-//		static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
-//		correction_mat(1,1) = -1;
-//		correction_mat(2,2) = -1;
-//		rotation_temp = correction_mat * rotation_temp;
-//		std::cout << "FLU ext: " << rotation_temp << std::endl;
+		// convert to FLU
+		// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
+		double r,p,y;
+		get_RPY_from_NED(rotation_temp, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
+		get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp);
+		std::cout << "Using FLU imu-cam rotation [" << tmp_imu_name << " - "
+				<< cam_info_set_vec[i].name << "]" << std::endl;
+		std::cout << rotation_temp << std::endl;
 
 		// convert to quat
 		Eigen::Matrix<double, 4, 1> quaternion;

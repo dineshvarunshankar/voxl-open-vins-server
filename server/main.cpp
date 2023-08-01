@@ -43,6 +43,7 @@
 #include <stdio.h>
 #include <voxl_common_config.h>
 //#include <Eigen/Dense>
+#include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 
 
 #include <iostream>
@@ -83,6 +84,8 @@
 #define IMU_CH 0
 #define FEATURE_CH 1
 #define FEAT_OVERLAY_CH 2
+#define BARO_CH 3
+
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (2 * 640 * 640)  // give ourselves huge buffers
 #define CAM_PIPE_SIZE (10 * 1280 * 800)         // give ourselves huge buffers
@@ -133,6 +136,7 @@ static double last_imu_time;
 static int64_t time_avg;
 static int avg  = 0;
 static int perf_limit  = 1;
+static int start_idx = 0;
 static int cameras_used = 0;
 static int camera_pipe_channels[10];
 static int every_other = 0;
@@ -199,6 +203,7 @@ static uint32_t global_error_codes = 0;
 
 std::vector<camera_info> cam_info_vec;
 static char imu_name[CHAR_BUF_SIZE] = "imu";
+static char baro_name[CHAR_BUF_SIZE] = "mavlink_baro";
 
 static size_t num_cams = 0;
 static int max_width = 0;
@@ -225,9 +230,13 @@ static vio_data_t s;      // simplified vio packet
 
 std::string log_path = "";
 
-static RingBuffer *img_ringbuf = 	new RingBuffer(5);
+static RingBuffer *img_ringbuf = 	new RingBuffer(20);
 
 std::atomic<bool> thread_update_running;
+std::atomic<bool> image_update_running;
+boost::posix_time::ptime pT1, pT2, cT1, cT2, zeroTimeOut;
+static double ref_zero_alt = -9999.0;
+static double baro_alt = 0.;
 
 // printed if some invalid argument was given
 static void _print_usage(void)
@@ -691,6 +700,16 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		return;
 	}
 
+	if (image_update_running)
+		return;
+
+//	if (image_update_running)
+//	{
+//		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+//		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+////		printf("Cam block\n");
+//		return;
+//	}
 //	int64_t cam_timestamp_ns = meta.timestamp_ns;
 //	cam_timestamp_ns += meta.exposure_ns / 2;
 //
@@ -850,13 +869,27 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	is_init = vio_manager->initialized();
 
 	// time this in debug mode
-	int64_t time_before, process_time;
-//	if (en_debug_timing_imu)
-	time_before = _apps_time_monotonic_ns();
+	int64_t   process_time;
 
+	static bool changed_motion_state = false;
 	// TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
 	// by pausing caluclation while the publishing loop runs with new timestamps.
 	// So on average use every other packet.
+	if (!vio_manager->is_moving())
+	{
+    	perf_limit  = 4;
+	}
+	else
+	{
+		perf_limit = 1;
+		if (!changed_motion_state)
+		{
+			printf("[WARN] Motion detected, going to full processing\n");
+			changed_motion_state = true;
+		}
+
+	}
+
 	for (int i = 0; i < n_packets; i+=perf_limit)
 	{
 		// check if we somehow got an out-of-order imu sample and reject it
@@ -876,6 +909,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 			Eigen::Matrix<double, 3, 1> t_wm;
 			Eigen::Matrix<double, 3, 1> t_am;
+			Eigen::Matrix<double, 3, 1> j_am;
 
 			t_wm(0, 0) = data_array[i].gyro_rad[0];
 			t_wm(1, 0) = data_array[i].gyro_rad[1];
@@ -884,6 +918,10 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			t_am(0, 0) = data_array[i].accl_ms2[0];
 			t_am(1, 0) = data_array[i].accl_ms2[1];
 			t_am(2, 0) = data_array[i].accl_ms2[2];
+
+			j_am(0, 0) = data_array[i].accl_ms2[0];
+			j_am(1, 0) = data_array[i].accl_ms2[1];
+			j_am(2, 0) = fabs(data_array[i].accl_ms2[2])-9.81;
 
 			// NED to FLU systems as per VINS.
 			static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
@@ -894,8 +932,9 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			t_wm = correction_mat * t_wm;
 		    t_am = correction_mat * t_am;
 
-			// FRD
-			vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
+
+		    // FLU
+		    vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
 			vio_manager_data.wm(1, 0) = t_wm(1, 0);  // pitch
 			vio_manager_data.wm(2, 0) = t_wm(2, 0);  //yaw
 			vio_manager_data.am(0, 0) = t_am(0, 0);  // X axis
@@ -906,26 +945,83 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			last_imu_timestamp_ns = data_array[i].timestamp_ns;
 			last_imu_time = vio_manager_data.timestamp;
 
+			if (!vio_manager->is_moving() &&
+					((boost::posix_time::microsec_clock::local_time() -  zeroTimeOut).total_microseconds() * 1e-6) > 5)
+			{
+				if ( j_am.norm() > 0.25 && t_wm.norm() > 0.0025)
+				{
+						image_update_running = false;
+				}
+				else
+				{
+					image_update_running = true;
+					return;
+				}
+			}
+
+			  if (thread_update_running)
+				return;
+
+			  thread_update_running = true;
+
 			double timestamp_imu_inC = vio_manager_data.timestamp
 					- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
 
-			std::lock_guard<std::mutex> lck(camera_queue_mtx);
+			std::thread thread([&] {
 
-			while (!camera_queue.empty()
-					&& camera_queue.at(0).timestamp < timestamp_imu_inC)
-			{
-				vio_manager->feed_measurement_camera(camera_queue.at(0));
-				double p_dt = (_apps_time_monotonic_ns() - time_before) / 1000000.0;
+					std::lock_guard<std::mutex> lck(camera_queue_mtx);
+		//			image_update_running = true;
 
-				printf("imu: %f image: %f max: %f\n", (double) (last_imu_timestamp_ns * 1e-9),
-						(double)camera_queue.at(0).timestamp, timestamp_imu_inC);
+					while (!camera_queue.empty()
+							&& camera_queue.at(0).timestamp < timestamp_imu_inC)
+					{
+						vio_manager->feed_measurement_camera(camera_queue.at(0));
+
+						_publish_default(last_imu_time);
+
+						camera_queue.pop_front();
+					}
+					thread_update_running = false;
+			});
+			thread.join();
+
+//			image_update_running = false;
+/////////////////////////////////////////////////////////////////
+//
+//			  if (thread_update_running)
+//			    return;
+//			  thread_update_running = true;
+//			  std::thread thread([&] {
+//			    // Lock on the queue (prevents new images from appending)
+//			    std::lock_guard<std::mutex> lck(camera_queue_mtx);
+//
+//			      // Loop through our queue and see if we are able to process any of our camera measurements
+//			      // We are able to process if we have at least one IMU measurement greater than the camera time
+//			      double timestamp_imu_inC = vio_manager_data.timestamp
+//			    		  	  	  	  	  	  	  	  	  	  	  	  	  - vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
+//
+//			      while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
+//						vio_manager->feed_measurement_camera(camera_queue.at(0));
+//
+//						_publish_default(last_imu_time);
+//
+//						camera_queue.pop_front();
+//			      }
+//			    thread_update_running = false;
+//			  });
+//
+//			  thread.detach();
+
+			  // If we are single threaded, then run single threaded
+			  // Otherwise detach this thread so it runs in the background!
+//			  if (!_app->get_params().use_multi_threading_subs) {
+//			    thread.join();
+//			  } else {
+//			    thread.detach();
+//			  }
 
 
-				if (p_dt <= 50.0) // over 20Hz
-					_publish_default(last_imu_time);
 
-				camera_queue.pop_front();
-			}
 
 // TODO: multi camera
 //
@@ -963,35 +1059,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 //		last_cam_time = now_time;
 		}
 	}
-
-
-//	if (avg == 100)
-//	{
-//		double perf = (double)time_avg / 100.0;
-//		if (en_debug_timing_imu)
-//			printf("Avg time per 100 samples: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
-//
-//		if (perf <= 10.0) //milliseconds
-//			perf_limit = 1;
-//		else
-//		{
-//			printf("HRT deadline not met, clean up: %f (%fms, %d)\n", 1/(perf/1000.0), perf, perf_limit);
-//			for (int i=0; i<cameras_used; i++)
-//			{
-//				pipe_client_flush(camera_pipe_channels[i]);
-//			}
-//			pipe_client_flush(IMU_CH);
-//			perf_limit = 5;
-//		}
-//
-//		avg = 0;
-//		time_avg = 0;
-//
-//	}
-//	process_time = _apps_time_monotonic_ns() - time_before;
-//	time_avg += ((double) process_time) / 1000000.0;
-//	avg++;
-
 
 	return;
 }
@@ -1783,6 +1850,38 @@ static void _imu_disconnect_cb(__attribute__((unused)) int ch,
 	return;
 }
 
+
+static void _baro_disconnect_cb(__attribute__((unused)) int ch,
+		__attribute__((unused)) void *context)
+{
+	return;
+}
+
+static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
+		char *data, int bytes, __attribute__((unused)) void *context)
+{
+		mavlink_message_t* baro_msg = (mavlink_message_t*) data;
+	    // basic sanity checks
+	    if(bytes<0){
+	        fprintf(stderr, "ERROR validating BARO data received through pipe: number of bytes = %d\n", bytes);
+	        return;
+	    }
+	    if(data==NULL){
+	        fprintf(stderr, "ERROR validating BARO data received through pipe: got NULL data pointer\n");
+	        return;
+	    }
+
+		uint32_t baro_time_ms = mavlink_msg_scaled_pressure_get_time_boot_ms(baro_msg);
+		float pressure = mavlink_msg_scaled_pressure_get_press_abs(baro_msg);
+
+		if (ref_zero_alt == -9999)
+			ref_zero_alt = (pressure * 0.750062);
+
+		baro_alt = (pressure * 0.750062) - ref_zero_alt;
+
+		//printf("Got Baro data %d %f meters\n", baro_time_ms, baro_alt);
+}
+
 static int create_server_pipes(void)
 {
 	int flags = SERVER_FLAG_EN_CONTROL_PIPE;
@@ -2080,6 +2179,19 @@ static int connect_client_pipes(void)
 
 	printf("imu pipe name: %s\n", imu_name);
 
+
+	// connect to baro
+	pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
+	pipe_client_set_simple_helper_cb(BARO_CH, _new_baro_data_default_handler,
+			NULL);
+	flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
+	if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, flags,
+			IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+	{
+		fprintf(stderr, "failed to open Baro\n");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -2206,6 +2318,7 @@ int main(int argc, char *argv[])
 	// Set the main running flag to 1 to indicate that we are running
 	main_running = 1;
 
+	zeroTimeOut = boost::posix_time::microsec_clock::local_time() ;
 	// run until start/stop module catches a signal and changes main_running to 0
 	while (main_running)
 	{

@@ -2,6 +2,9 @@ import os.path, time
 import numpy as np
 import matplotlib.pyplot as plt
 
+GYRO_FACTOR = .1
+ACCEL_FACTOR = .1
+
 def clean_lines(file_name):
     with open(file_name, "r") as f:
         lines = f.readlines()
@@ -65,8 +68,6 @@ RAW_DATA_FILE = 'vins-imu.csv'  # CSV data file "ax,ay,az,gx,gy,gz"
 DATA_FILE = 'cleaned_data.csv'
 fs = 1000  # Sample rate [Hz]
 
-GYRO_FACTOR = 1.0
-ACCEL_FACTOR = 1.0
 
 print("last modified: %s" % time.ctime(os.path.getmtime(RAW_DATA_FILE)))
 print("created: %s" % time.ctime(os.path.getctime(RAW_DATA_FILE)))

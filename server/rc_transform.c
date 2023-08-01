@@ -88,8 +88,6 @@ int _rotation_matrix_to_tait_bryan_xyz_intrinsic_degrees(double R[3][4], double*
 	return 0;
 }
 
-
-
 static int _rotation_matrix_to_tait_bryan_zyx_intrinsic_degrees(double R[3][4], double* yaw, double* pitch, double* roll)
 {
 	*pitch = asin(-R[2][0])*RAD_TO_DEG;

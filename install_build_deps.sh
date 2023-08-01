@@ -11,6 +11,7 @@
 DEPS_QRB5165="
 libmodal-json
 libmodal-pipe
+voxl-mavlink
 voxl-opencv
 libboost-filesystem-dev:arm64
 libboost-thread-dev:arm64
