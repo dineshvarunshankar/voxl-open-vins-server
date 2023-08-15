@@ -363,7 +363,7 @@ static int create_open_vins_world_rotation_from_file(cv::Matx33d *R_correction)
 
 int cam_load_extrinsics_file()
 {
-
+	printf("cam_load_extrinsics_file\n");
 	vcc_extrinsic_t t[VCC_MAX_EXTRINSICS_IN_CONFIG];
 	vcc_extrinsic_t extrins_holder;
 	char ext_name[CM_CHAR_BUF_SIZE * 2];
@@ -381,82 +381,216 @@ int cam_load_extrinsics_file()
 		return -1;
 	}
 
-	for (size_t i = 0; i < cam_info_set_vec.size(); i++)
+	printf("load extrinsics %d\n", (int)cam_info_set_vec.size());
+
+    for (size_t i = 0; i < cam_info_set_vec.size(); i++)
 	{
-		if (vcc_find_extrinsic_in_array(cam_info_set_vec[i].name, tmp_imu_name,
-				t, n_extrinsics, &extrins_holder))
-			return -1;
-
-		// single cam
-		rc_tf_t imu_to_cam;
-		int j, k;
-
-		// grab the imu -> camera extrinsics relation
-		if (vcc_find_extrinsic_in_array(tmp_imu_name, cam_info_set_vec[i].name,
-				t, n_extrinsics, &extrins_holder))
+		if (strstr(camera_mode_as_string(cam_info_set_vec[i].cam_mode).c_str(), "STEREO") != NULL)
 		{
-			fprintf(stderr,
-					"ERROR: Unable to find %s to %s in extrinsics conf\n",
-					tmp_imu_name, ext_name);
-		}
+            int j, k;
 
-		Eigen::Matrix<double, 3, 3> rotation_temp;
-		for (j = 0; j < 3; j++)
-		{
-			for (k = 0; k < 3; k++)
+	        //CAM 1
+	        memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+	        strcpy(ext_name, cam_info_set_vec[i].name);
+	        strcat(ext_name, cam_info_set_vec[i].extrinsics_extension_first);
+            if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
+                fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
+            }
+			Eigen::Matrix<double, 3, 3> rotation_temp_1;
+			for (j = 0; j < 3; j++)
 			{
-				rotation_temp(j, k) = extrins_holder.R_child_to_parent[j][k];
-				if (fabs(rotation_temp(j, k)) < 10e-6)
-						rotation_temp(j, k) = 0.;
+				for (k = 0; k < 3; k++)
+				{
+					rotation_temp_1(j, k) = extrins_holder.R_child_to_parent[j][k];
+					if (fabs(rotation_temp_1(j, k)) < 10e-6)
+						rotation_temp_1(j, k) = 0.;
+				}
 			}
-		}
 
-		// convert to FLU
-		// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
-		double r,p,y;
-		get_RPY_from_NED(rotation_temp, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
-		get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp);
-		std::cout << "Using FLU imu-cam rotation [" << tmp_imu_name << " - "
-				<< cam_info_set_vec[i].name << "]" << std::endl;
-		std::cout << rotation_temp << std::endl;
+			std::cout << "processing NED extrinsics: " << std::endl;
+			std::cout << rotation_temp_1 << std::endl;
 
-		// convert to quat
-		Eigen::Matrix<double, 4, 1> quaternion;
-		Eigen::Matrix<double, 3, 1> translation;
+			// convert to FLU
+			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
+			double r,p,y;
+			get_RPY_from_NED(rotation_temp_1, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
+			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp_1);
+			std::cout << "\n[cam  " << cam_info_set_vec[i].name << cam_info_set_vec[i].extrinsics_extension_first << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
+					<< cam_info_set_vec[i].name << "]" << std::endl;
+			std::cout << rotation_temp_1 << std::endl;
 
-		quaternion = rot_2_quat(rotation_temp);
+			// convert to quat
+			Eigen::Matrix<double, 4, 1> quaternion_1;
+			Eigen::Matrix<double, 3, 1> translation_1;
 
-		translation[0] = extrins_holder.T_child_wrt_parent[0];
-		translation[1] = extrins_holder.T_child_wrt_parent[1];
-		translation[2] = extrins_holder.T_child_wrt_parent[2];
+			quaternion_1 = rot_2_quat(rotation_temp_1);
+			translation_1[0] = extrins_holder.T_child_wrt_parent[0];
+			translation_1[1] = extrins_holder.T_child_wrt_parent[1];
+			translation_1[2] = extrins_holder.T_child_wrt_parent[2];
 
-		cv::Mat cam_wrt_imu_rot = cv::Mat(3, 3, CV_64F);
+			cv::Mat cam_wrt_imu_rot_1 = cv::Mat(3, 3, CV_64F);
 
-		for (int i = 0; i < 3; i++)
-		{
-			for (int j = 0; j < 3; j++)
+			for (int z = 0; z < 3; z++)
 			{
-				if (fabs(rotation_temp(i, j)) < 10e-6)
-					cam_wrt_imu_rot.at<double>(i, j) = 0.;
-				else
-					cam_wrt_imu_rot.at<double>(i, j) = rotation_temp(i, j);
+				for (int j = 0; j < 3; j++)
+				{
+					if (fabs(rotation_temp_1(z, j)) < 10e-6)
+						cam_wrt_imu_rot_1.at<double>(z, j) = 0.;
+					else
+						cam_wrt_imu_rot_1.at<double>(z, j) = rotation_temp_1(z, j);
+				}
 			}
+
+			cam_info_set_vec[i].cam_wrt_imu_rot.push_back(cam_wrt_imu_rot_1);
+
+			Eigen::Matrix<double, 7, 1> cam_wrt_imu_1;
+
+			cam_wrt_imu_1.block(0, 0, 4, 1) = quaternion_1;
+			cam_wrt_imu_1.block(4, 0, 3, 1) = translation_1;
+
+			cam_info_set_vec[i].cam_wrt_imu.push_back(cam_wrt_imu_1);
+
+	        //CAM 2
+            memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+            strcpy(ext_name, cam_info_set_vec[i].name);
+            strcat(ext_name, cam_info_set_vec[i].extrinsics_extension_second);
+            if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
+                fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
+            }
+			Eigen::Matrix<double, 3, 3> rotation_temp_2;
+			for (j = 0; j < 3; j++)
+			{
+				for (k = 0; k < 3; k++)
+				{
+					rotation_temp_2(j, k) = extrins_holder.R_child_to_parent[j][k];
+					if (fabs(rotation_temp_2(j, k)) < 10e-6)
+						rotation_temp_2(j, k) = 0.;
+				}
+			}
+			std::cout << "processing NED extrinsics: " << std::endl;
+			std::cout << rotation_temp_2 << std::endl;
+
+			// convert to FLU
+			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
+			get_RPY_from_NED(rotation_temp_2, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
+			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp_2);
+			std::cout << "\n[cam  " << cam_info_set_vec[i].name  << cam_info_set_vec[i].extrinsics_extension_second << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
+					<< cam_info_set_vec[i].name << "]" << std::endl;
+			std::cout << rotation_temp_2 << std::endl;
+
+
+			// convert to quat
+			Eigen::Matrix<double, 4, 1> quaternion_2;
+			Eigen::Matrix<double, 3, 1> translation_2;
+
+			quaternion_2 = rot_2_quat(rotation_temp_2);
+
+			translation_2[0] = extrins_holder.T_child_wrt_parent[0];
+			translation_2[1] = extrins_holder.T_child_wrt_parent[1];
+			translation_2[2] = extrins_holder.T_child_wrt_parent[2];
+
+			cv::Mat cam_wrt_imu_rot_2 = cv::Mat(3, 3, CV_64F);
+
+			for (int z = 0; z < 3; z++)
+			{
+				for (int j = 0; j < 3; j++)
+				{
+					if (fabs(rotation_temp_2(z, j)) < 10e-6)
+						cam_wrt_imu_rot_2.at<double>(z, j) = 0.;
+					else
+						cam_wrt_imu_rot_2.at<double>(z, j) = rotation_temp_2(z, j);
+				}
+			}
+
+			cam_info_set_vec[i].cam_wrt_imu_rot.push_back(cam_wrt_imu_rot_2);
+
+			Eigen::Matrix<double, 7, 1> cam_wrt_imu_2;
+
+			cam_wrt_imu_2.block(0, 0, 4, 1) = quaternion_2;
+			cam_wrt_imu_2.block(4, 0, 3, 1) = translation_2;
+
+			cam_info_set_vec[i].cam_wrt_imu.push_back(cam_wrt_imu_2);
 		}
+		else
+		{
 
-		cam_info_set_vec[i].cam_wrt_imu_rot.push_back(cam_wrt_imu_rot);
+			if (vcc_find_extrinsic_in_array(cam_info_set_vec[i].name, tmp_imu_name,
+					t, n_extrinsics, &extrins_holder))
+			{
+				fprintf(stderr, "vcc_find_extrinsic_in_array failed for %s %s\n", cam_info_set_vec[i].name, tmp_imu_name);
+				return -1;
+			}
 
-		Eigen::Matrix<double, 7, 1> cam_wrt_imu;
+			// single cam
+			rc_tf_t imu_to_cam;
+			int j, k;
 
-		cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
-		cam_wrt_imu.block(4, 0, 3, 1) = translation;
+			// grab the imu -> camera extrinsics relation
+			if (vcc_find_extrinsic_in_array(tmp_imu_name, cam_info_set_vec[i].name,
+					t, n_extrinsics, &extrins_holder))
+			{
+				fprintf(stderr,
+						"ERROR: Unable to find %s to %s in extrinsics conf\n",
+						tmp_imu_name, ext_name);
+			}
 
-		cam_info_set_vec[i].cam_wrt_imu.push_back(cam_wrt_imu);
+			Eigen::Matrix<double, 3, 3> rotation_temp;
+			for (j = 0; j < 3; j++)
+			{
+				for (k = 0; k < 3; k++)
+				{
+					rotation_temp(j, k) = extrins_holder.R_child_to_parent[j][k];
+					if (fabs(rotation_temp(j, k)) < 10e-6)
+							rotation_temp(j, k) = 0.;
+				}
+			}
 
-		std::cout << "(local) CAMERA ROTATION MATRIX:" << std::endl
-				<< cam_info_set_vec[i].cam_wrt_imu_rot[0] << std::endl;
-		std::cout << "(local) CAMERA TRANSLATION:" << std::endl << translation
-				<< std::endl;
+			// convert to FLU
+			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
+			double r,p,y;
+			get_RPY_from_NED(rotation_temp, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
+			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp);
+			std::cout << "[cam " << i << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
+					<< cam_info_set_vec[i].name << "]" << std::endl;
+			std::cout << rotation_temp << std::endl;
 
+			// convert to quat
+			Eigen::Matrix<double, 4, 1> quaternion;
+			Eigen::Matrix<double, 3, 1> translation;
+
+			quaternion = rot_2_quat(rotation_temp);
+
+			translation[0] = extrins_holder.T_child_wrt_parent[0];
+			translation[1] = extrins_holder.T_child_wrt_parent[1];
+			translation[2] = extrins_holder.T_child_wrt_parent[2];
+
+			cv::Mat cam_wrt_imu_rot = cv::Mat(3, 3, CV_64F);
+
+			for (int z = 0; z < 3; z++)
+			{
+				for (int j = 0; j < 3; j++)
+				{
+					if (fabs(rotation_temp(z, j)) < 10e-6)
+						cam_wrt_imu_rot.at<double>(z, j) = 0.;
+					else
+						cam_wrt_imu_rot.at<double>(z, j) = rotation_temp(z, j);
+				}
+			}
+
+			cam_info_set_vec[i].cam_wrt_imu_rot.push_back(cam_wrt_imu_rot);
+
+			Eigen::Matrix<double, 7, 1> cam_wrt_imu;
+
+			cam_wrt_imu.block(0, 0, 4, 1) = quaternion;
+			cam_wrt_imu.block(4, 0, 3, 1) = translation;
+
+			cam_info_set_vec[i].cam_wrt_imu.push_back(cam_wrt_imu);
+
+			std::cout << "(local) CAMERA ROTATION MATRIX:" << std::endl
+					<< cam_info_set_vec[i].cam_wrt_imu_rot[0] << std::endl;
+			std::cout << "(local) CAMERA TRANSLATION:" << std::endl << translation
+					<< std::endl;
+		}
 	}
 
 	return 0;
@@ -482,9 +616,10 @@ int cam_load_intrinsics_file()
 				intrinsics_path);
 
 		// if it contains stereo, we gotta look for different matrix names
-		if (strstr(cam_info_set_vec[i].name, "stereo") != NULL)
+		if (strstr(camera_mode_as_string(cam_info_set_vec[i].cam_mode).c_str(), "STEREO") != NULL)
 		{
 			// here we go
+			printf("Found STEREO config\n");
 			stereo_setup = true;
 		}
 
@@ -890,13 +1025,13 @@ int cam_config_file_print(void)
 	printf("grid_y:                           %d\n", grid_y);
 	printf("min_pix_dist:                     %d\n", min_pix_dist);
 	printf("pyramid_levels:                   %d\n", pyramid_levels);
-	printf("[block] window_size:                 (%d,%d)\n", window_size, window_size);
+	printf("[block] window_size:                 (%d x %d)\n", window_size, window_size);
 	printf(
 			"===========================KLTGYRO===============================\n");
 	printf("tmp_imu_name:                         %s\n", tmp_imu_name);
 	for (size_t j = 0; j < cam_info_set_vec.size(); j++)
 	{
-		printf("%s wrt %s:\n", cam_info_set_vec[0].name, tmp_imu_name);
+		printf("%s wrt %s:\n", cam_info_set_vec[j].name, tmp_imu_name);
 		for (int x = 0; x < 3; x++)
 		{
 			for (int y = 0; y < 3; y++)
@@ -930,13 +1065,21 @@ int cam_config_file_read(void)
 	int ret = json_make_empty_file_with_header_if_missing(CAM_CONFIG_FILE,
 			CAM_CONFIG_FILE_HEADER);
 	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED new config file: %s\n", CAM_CONFIG_FILE);
 		return -1;
+	}
 	else if (ret > 0)
+	{
 		fprintf(stderr, "Creating new config file: %s\n", CAM_CONFIG_FILE);
+	}
 
 	cJSON *parent = json_read_file(CAM_CONFIG_FILE);
 	if (parent == NULL)
+	{
+		fprintf(stderr, "FAILED to parse: %s\n", CAM_CONFIG_FILE);
 		return -1;
+	}
 
 	char string_holder[CM_CHAR_BUF_SIZE];
 	memset(string_holder, '\0', CM_CHAR_BUF_SIZE);
@@ -1048,16 +1191,24 @@ int cam_config_file_read(void)
 	cJSON_Delete(parent);
 	ret = cam_load_intrinsics_file();
 	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED cam_load_intrinsics_file: %d\n", ret);
 		return ret;
+	}
 
 	ret = cam_load_extrinsics_file();
 	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED cam_load_extrinsics_file: %d\n", ret);
 		return ret;
+	}
 
 	ret = get_config_as_json();
 	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED get_config_as_json: %d\n", ret);
 		return ret;
-
+	}
 	printf("Done transfer camera configuration transfer\n");
 
 	return 0;

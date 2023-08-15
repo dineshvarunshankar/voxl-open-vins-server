@@ -87,8 +87,8 @@
 #define BARO_CH 3
 
 #define CAMERA_CH_START_OFFSET 1
-#define IMU_PIPE_MIN_PIPE_SIZE (2 * 640 * 640)  // give ourselves huge buffers
-#define CAM_PIPE_SIZE (10 * 1280 * 800)         // give ourselves huge buffers
+#define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
+#define CAM_PIPE_SIZE (50 * 1280 * 800)         // give ourselves huge buffers
 #define PROCESS_NAME "open-vins-server"
 #define FEATURE_NAME "tracked_feats"
 #define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
@@ -203,7 +203,7 @@ static uint32_t global_error_codes = 0;
 
 std::vector<camera_info> cam_info_vec;
 static char imu_name[CHAR_BUF_SIZE] = "imu";
-static char baro_name[CHAR_BUF_SIZE] = "mavlink_baro";
+static char baro_name[CHAR_BUF_SIZE] = "mavlink_onboard";
 
 static size_t num_cams = 0;
 static int max_width = 0;
@@ -230,13 +230,16 @@ static vio_data_t s;      // simplified vio packet
 
 std::string log_path = "";
 
-static RingBuffer *img_ringbuf = 	new RingBuffer(20);
+static RingBuffer *img_ringbuf = 	new RingBuffer(10);
 
 std::atomic<bool> thread_update_running;
 std::atomic<bool> image_update_running;
+std::atomic<bool> overlay_update_running;
 boost::posix_time::ptime pT1, pT2, cT1, cT2, zeroTimeOut;
 static double ref_zero_alt = -9999.0;
 static double baro_alt = 0.;
+
+
 
 // printed if some invalid argument was given
 static void _print_usage(void)
@@ -684,26 +687,35 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch,
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
+	if (en_debug_pos)
+			printf("_cam_helper_cb entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
 
 	is_cam_connected = true;
 	// camera working, reset errors
 	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
 
-	if (!is_imu_connected)
+	if (!is_imu_connected || !main_running || image_update_running)
 	{
-		s.state = VIO_STATE_INITIALIZING;
+		if (image_update_running)
+		{
+			is_initialized = true;
+			s.state = VIO_STATE_OK;
+		}
+		else
+		{
+			is_initialized = false;
+			s.state = VIO_STATE_INITIALIZING;
+		}
+
 		memcpy(&d.v, &s, sizeof(vio_data_t));
-		is_initialized = false;
 		// send to both pipes
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
 		return;
 	}
 
-	if (image_update_running)
-		return;
-
-//	if (image_update_running)
+	//	if (image_update_running)
 //	{
 //		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 //		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
@@ -736,33 +748,94 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	curr_message->metadata = meta;
 
+	try
+	{
+
 	if (meta.format == IMAGE_FORMAT_RAW8)
 	{
 		memcpy(curr_message->image_pixels, (uint8_t*) frame, meta.size_bytes);
+		img_ringbuf->insert_data(curr_message);
+
+		cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
+		std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
+		ov_core::CameraData message;
+		message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+		if (ch == 2)
+			message.sensor_ids.push_back(1);
+		else
+			message.sensor_ids.push_back(0);
+
+		message.images.push_back(internal_img.clone());
+		message.masks.push_back(
+				cv::Mat::zeros(internal_img.rows, internal_img.cols, CV_8UC1));
+		std::lock_guard<std::mutex> lck(camera_queue_mtx);
+		camera_queue.push_back(message);
+
+		std::sort(camera_queue.begin(), camera_queue.end());
 	}
 	else if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
 	{
 		if (*cm == STEREO)
+		{
+			// NOTE: the stereo image comes in as a concatenated single image via vertical tiled (width = width, height = img_ctn * height)
+//			printf("STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
 			memcpy(curr_message->image_pixels, (uint8_t*) frame,
 					meta.size_bytes);
-		else if (*cm == STEREO_LEFT_ONLY)
-		{
-			memcpy(curr_message->image_pixels, (uint8_t*) frame,
-					meta.size_bytes / 2);
-			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-			curr_message->metadata.size_bytes /= 2;
+
+			img_ringbuf->insert_data(curr_message);
+
+			cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1);
+			cv::Mat internal_img_2(meta.height, meta.width, CV_8UC1);
+			std::memcpy(internal_img_1.data, curr_message->image_pixels, meta.size_bytes/2);
+			std::memcpy(internal_img_2.data, 	(uint8_t*) curr_message->image_pixels + meta.size_bytes / 2, meta.size_bytes/2);
+
+
+			ov_core::CameraData message;
+			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+			message.sensor_ids.push_back(0);
+			message.sensor_ids.push_back(1);
+
+			message.images.push_back(internal_img_1.clone());
+			message.images.push_back(internal_img_2.clone());
+
+			message.masks.push_back(
+					cv::Mat::zeros(internal_img_1.rows, internal_img_1.cols, CV_8UC1));
+			message.masks.push_back(
+					cv::Mat::zeros(internal_img_2.rows, internal_img_2.cols, CV_8UC1));
+
+
+			std::lock_guard<std::mutex> lck(camera_queue_mtx);
+			camera_queue.push_back(message);
+			std::sort(camera_queue.begin(), camera_queue.end());
+
+//			internal_img_1.clear();
+//			internal_img_2.clear();
+
 		}
-		else if (*cm == STEREO_RIGHT_ONLY)
-		{
-			memcpy(curr_message->image_pixels,
-					(uint8_t*) frame + meta.size_bytes / 2,
-					meta.size_bytes / 2);
-			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-			curr_message->metadata.size_bytes /= 2;
-		}
+		else
+			printf("Individual STEREO camera option has been disabled\n");
+//		else if (*cm == STEREO_LEFT_ONLY)
+//		{
+//			printf("STEREO LEFT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//			memcpy(curr_message->image_pixels, (uint8_t*) frame,
+//					meta.size_bytes / 2);
+//			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+//			curr_message->metadata.size_bytes /= 2;
+//		}
+//		else if (*cm == STEREO_RIGHT_ONLY)
+//		{
+//			printf("STEREO RIGHT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//			memcpy(curr_message->image_pixels,
+//					(uint8_t*) frame + meta.size_bytes / 2,
+//					meta.size_bytes / 2);
+//			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+//			curr_message->metadata.size_bytes /= 2;
+//		}
 	}
 	else if (meta.format == IMAGE_FORMAT_NV12)
 	{
+		printf("IMAGE_FORMAT_NV12 CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+
 		memcpy(curr_message->image_pixels, (uint8_t*) frame,
 				meta.width * meta.height);
 		curr_message->metadata.format = IMAGE_FORMAT_RAW8;
@@ -773,8 +846,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	{
 		if (*cm == STEREO)
 		{
-			memcpy(curr_message->image_pixels, (uint8_t*) frame,
-					meta.width * meta.height);
+			printf("IMAGE_FORMAT_NV12 STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+
+			memcpy(curr_message->image_pixels, (uint8_t*) frame,meta.width * meta.height);
 			memcpy(curr_message->image_pixels + (meta.width * meta.height),
 					(uint8_t*) frame + (meta.width * meta.height * 3 / 2),
 					meta.width * meta.height);
@@ -783,6 +857,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		}
 		else if (*cm == STEREO_LEFT_ONLY)
 		{
+			printf("IMAGE_FORMAT_NV12 STEREO_LEFT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+
 			memcpy(curr_message->image_pixels, (uint8_t*) frame,
 					meta.width * meta.height);
 			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
@@ -790,6 +866,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		}
 		else if (*cm == STEREO_RIGHT_ONLY)
 		{
+			printf("IMAGE_FORMAT_NV12 STEREO_RIGHT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+
 			memcpy(curr_message->image_pixels,
 					(uint8_t*) frame + meta.size_bytes / 2,
 					meta.width * meta.height);
@@ -797,23 +875,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			curr_message->metadata.size_bytes = meta.width * meta.height;
 		}
 	}
-
-	img_ringbuf->insert_data(curr_message);
-
-	cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
-	std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
-	ov_core::CameraData message;
-	message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-	message.sensor_ids.push_back(0);
-	message.images.push_back(internal_img.clone());
-	message.masks.push_back(
-			cv::Mat::zeros(internal_img.rows, internal_img.cols, CV_8UC1));
-	std::lock_guard<std::mutex> lck(camera_queue_mtx);
-	camera_queue.push_back(message);
-
-	// TODO: how to sort between multiple cameras?
-	//std::sort(camera_queue.begin(), camera_queue.end());
-
+	}
+	catch (const std::out_of_range& e)
+	{
+		fprintf(stderr, "CAM Process error!\n");
+	}
 	delete curr_message;
 }
 
@@ -822,6 +888,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {
+
+	if (en_debug_pos)
+			printf("_new_imu_data_default_handler entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
+
+
 	int n_packets;
 	imu_data_t *data_array = pipe_validate_imu_data_t(data, bytes, &n_packets);
 	if (data_array == NULL)
@@ -854,7 +925,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	is_imu_connected = 1;
 	global_error_codes &= ~ERROR_CODE_IMU_MISSING;
 
-	if (!is_cam_connected)
+	if (!is_cam_connected || !main_running)
 	{
 		s.state = VIO_STATE_INITIALIZING;
 		memcpy(&d.v, &s, sizeof(vio_data_t));
@@ -866,31 +937,36 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		return;
 	}
 
+	try
+	{
+
 	is_init = vio_manager->initialized();
 
 	// time this in debug mode
 	int64_t   process_time;
 
 	static bool changed_motion_state = false;
+	static double last_accel_mag = 0, last_gyro_mag = 0;
+
 	// TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
 	// by pausing caluclation while the publishing loop runs with new timestamps.
 	// So on average use every other packet.
 	if (!vio_manager->is_moving())
 	{
-    	perf_limit  = 4;
+    	perf_limit  = 6; //6
 	}
 	else
 	{
-		perf_limit = 1;
+		perf_limit = 3;  //3
 		if (!changed_motion_state)
 		{
-			printf("[WARN] Motion detected, going to full processing\n");
+			fprintf(stderr, "[WARN] Motion detected, going to full processing\n");
 			changed_motion_state = true;
 		}
-
 	}
 
 	for (int i = 0; i < n_packets; i+=perf_limit)
+//		for (int i = 0; i < n_packets; i+=perf_limit)
 	{
 		// check if we somehow got an out-of-order imu sample and reject it
 		if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
@@ -945,19 +1021,39 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			last_imu_timestamp_ns = data_array[i].timestamp_ns;
 			last_imu_time = vio_manager_data.timestamp;
 
-			if (!vio_manager->is_moving() &&
-					((boost::posix_time::microsec_clock::local_time() -  zeroTimeOut).total_microseconds() * 1e-6) > 5)
-			{
-				if ( j_am.norm() > 0.25 && t_wm.norm() > 0.0025)
-				{
-						image_update_running = false;
-				}
-				else
-				{
-					image_update_running = true;
-					return;
-				}
-			}
+//			if (!vio_manager->is_moving() &&
+//					((boost::posix_time::microsec_clock::local_time() -  zeroTimeOut).total_microseconds() * 1e-6) > 5)
+//			{
+////				if ( j_am.norm() > 0.25 && t_wm.norm() > 0.005)
+//
+//				double acc_mag = j_am.norm();
+//				double gyro_mag = t_wm.norm();
+//				if (last_accel_mag != 0 && last_gyro_mag != 0)
+//				{
+//					if ( fabs(acc_mag-last_accel_mag) > 0.1 && fabs(gyro_mag-last_gyro_mag) > 0.001)
+//					{
+//							static bool run_once = false;
+//							if (!run_once)
+//							{
+//								fprintf(stderr, "[WARN] Motion before disparity, OVERRIDE ZUPT! %f %f\n",
+//										j_am.norm() , t_wm.norm()	);
+//								run_once = true;
+//							}
+//
+//							image_update_running = false;
+//
+//					}
+//					else
+//					{
+//						image_update_running = true;
+//						return;
+//					}
+//				}
+//				last_accel_mag = acc_mag ;
+//				last_gyro_mag = gyro_mag ;
+//
+//			}
+
 
 			  if (thread_update_running)
 				return;
@@ -971,13 +1067,26 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 					std::lock_guard<std::mutex> lck(camera_queue_mtx);
 		//			image_update_running = true;
-
 					while (!camera_queue.empty()
 							&& camera_queue.at(0).timestamp < timestamp_imu_inC)
 					{
-						vio_manager->feed_measurement_camera(camera_queue.at(0));
+						try
+						{
+							vio_manager->feed_measurement_camera(camera_queue.at(0));
+						}
+						catch (const std::out_of_range& e)
+						{
+							fprintf(stderr, "failed feed_measurement_camera\n");
+						}
 
-						_publish_default(last_imu_time);
+						try
+						{
+							_publish_default(last_imu_time);
+						}
+						catch (const std::out_of_range& e)
+						{
+							fprintf(stderr, "Could NOT publish overlay images\n");
+						}
 
 						camera_queue.pop_front();
 					}
@@ -1060,6 +1169,11 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		}
 	}
 
+	}
+	catch (const std::out_of_range& e)
+	{
+		fprintf(stderr, "IMU Process error!\n");
+	}
 	return;
 }
 
@@ -1155,6 +1269,10 @@ static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state,
 	return 0;
 }
 
+
+#define OVERLAY_RES_W_X 320
+#define OVERLAY_RES_H_Y 240
+
 static void _publish_default(double pose_timestamp)
 {
 
@@ -1246,6 +1364,8 @@ static void _publish_default(double pose_timestamp)
 	// this function will give us back as much info as available for features in various stages of the overall state
 	std::vector<output_feature> curr_pixel_locs =
 			vio_manager->get_pixel_loc_features();
+
+//	printf("points  %d\n", (int)curr_pixel_locs.size());
 
 	for (size_t d = 0; d < curr_pixel_locs.size(); d++)
 	{
@@ -1509,9 +1629,10 @@ static void _publish_default(double pose_timestamp)
 	// if someone has subscribed to the overlay, draw it
 	if (pipe_server_get_num_clients(OVERLAY_CH) > 0)
 	{
-		if (every_other++ % 3 == 0)  // 10fps
+		static cv::Mat overlay_cp;
+
+		if (every_other++ % 9 == 0)  // 10 fps
 		{
-			cv::Mat overlay_cp;
 
 			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
 
@@ -1556,6 +1677,8 @@ static void _publish_default(double pose_timestamp)
 						curr_imgs->metadata.width,
 						CV_8UC1, curr_imgs->image_pixels);
 				img_set.push_back(img);
+
+				printf("GOT A NON STEREO IMAGE PAIR, UNEXPECTED\n");
 			}
 
 			feat_ts_mutex.unlock();
@@ -1595,19 +1718,21 @@ static void _publish_default(double pose_timestamp)
 				}
 			}
 
-			cv::resize(img_set[0], img_set[0], cv::Size(640, 480));
+			cv::resize(img_set[0], img_set[0], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
 
 			if (img_set.size() == 1)
+			{
 				overlay_cp = img_set[0];
+			}
 			else
 			{
-				cv::resize(img_set[1], img_set[1], cv::Size(640, 480));
+				cv::resize(img_set[1], img_set[1], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
 				cv::hconcat(img_set[0], img_set[1], overlay_cp);
 			}
 
 			static float font_size = 0.8;
 			static float border_scale = 1;
-			if (overlay_cp.cols <= 640)
+			if (overlay_cp.cols <= OVERLAY_RES_W_X)
 			{
 				font_size = 0.55;
 				border_scale = 1;
@@ -1666,9 +1791,12 @@ static void _publish_default(double pose_timestamp)
 			// draw out to pipe
 			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
 					(char*) overlay_cp.data);
-			usleep(2);
+
+			usleep(5);
 
 			delete curr_imgs;
+
+			usleep(10);
 		}
 	}
 
@@ -1792,6 +1920,8 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 		}
 		else
 		{
+			std::cout << "OpenVINS using plumb-bob camera" << std::endl;
+
 			cam_calib_intrinsic = std::make_shared<ov_core::CamRadtan>(
 					cam_info_vec[i].cam_calib_intrinsic(8, 0),
 					cam_info_vec[i].cam_calib_intrinsic(9, 0));
@@ -1801,10 +1931,10 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 		vio_manager_options.camera_intrinsics[i] = cam_calib_intrinsic;
 		vio_manager_options.camera_extrinsics[i] = cam_info_vec[i].cam_wrt_imu;
 
-		std::cout << "OpenVINS FINAL Cam extrinsics to IMU: "
+		std::cout << "OpenVINS FINAL Cam extrinsics to IMU for " << cam_info_vec[i].name
+				<< ": "
 				<< cam_info_vec[i].cam_wrt_imu.size() << " \n "
 				<< cam_info_vec[i].cam_wrt_imu << std::endl;
-
 	}
 
 	vio_manager_options.init_options.camera_intrinsics =
@@ -1814,6 +1944,13 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	// this needs to be set in both locations, for some reason the updaters address both in different stages
 	vio_manager_options.init_options.num_cameras = cam_info_vec.size();
 	vio_manager_options.state_options.num_cameras = cam_info_vec.size();
+
+	std::cout <<
+			" ++++++++++++++++++++++++++\n\n" <<
+			"OpenVINS reports number of cameras being used, regardless of delivery method (pipe, merge, etc...):  "  <<
+			vio_manager_options.init_options.num_cameras <<
+			"\n\n ++++++++++++++++++++++++++" <<
+			std::endl;
 
 	return vio_manager_options;
 }
@@ -1860,26 +1997,109 @@ static void _baro_disconnect_cb(__attribute__((unused)) int ch,
 static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {
+		static double last_val = -99999;
+		static  bool base_init = false;
+		static int a_ctn = 0;
+		static double zero_alt = 0;
+
 		mavlink_message_t* baro_msg = (mavlink_message_t*) data;
-	    // basic sanity checks
-	    if(bytes<0){
-	        fprintf(stderr, "ERROR validating BARO data received through pipe: number of bytes = %d\n", bytes);
-	        return;
-	    }
-	    if(data==NULL){
-	        fprintf(stderr, "ERROR validating BARO data received through pipe: got NULL data pointer\n");
-	        return;
-	    }
 
-		uint32_t baro_time_ms = mavlink_msg_scaled_pressure_get_time_boot_ms(baro_msg);
-		float pressure = mavlink_msg_scaled_pressure_get_press_abs(baro_msg);
+		if (baro_msg->msgid == MAVLINK_MSG_ID_SCALED_PRESSURE)
+		{
+			// basic sanity checks
+			if(bytes<0){
+				fprintf(stderr, "ERROR validating BARO data received through pipe: number of bytes = %d\n", bytes);
+				return;
+			}
+			if(data==NULL){
+				fprintf(stderr, "ERROR validating BARO data received through pipe: got NULL data pointer\n");
+				return;
+			}
 
-		if (ref_zero_alt == -9999)
-			ref_zero_alt = (pressure * 0.750062);
+			uint32_t baro_time_ms = mavlink_msg_scaled_pressure_get_time_boot_ms(baro_msg);
+			float pressure = mavlink_msg_scaled_pressure_get_press_abs(baro_msg) * 100;
+			int16_t temp = mavlink_msg_scaled_pressure_get_temperature(baro_msg) / 100 - 10;
 
-		baro_alt = (pressure * 0.750062) - ref_zero_alt;
 
-		//printf("Got Baro data %d %f meters\n", baro_time_ms, baro_alt);
+			double dist = (log(pressure/101325) * 8.31432 * (temp+273.15))/ (-9.80665 * 0.0289644);
+//			printf("Pressure: %f temp: %d\n", pressure, temp);
+//			printf("Baro height: %f (%f)\n", dist, log(pressure/101325));
+
+			if (!base_init)
+			{
+				zero_alt += dist;
+				vio_manager->add_constraint_baro(0, 0);
+
+				if (++a_ctn > 30)
+				{
+					zero_alt /= a_ctn;
+
+					printf("ZERO ALT: %f\n", zero_alt);
+					base_init = true;
+				}
+
+			}
+			else
+			{
+				baro_alt = dist - zero_alt;
+				if (last_val != -99999)
+				{
+					baro_alt = (0.3 * baro_alt) + (0.7 * last_val);
+
+					//v = dx/dt
+//					double baro_vel_z = (baro_alt - last_val) /  (baro_time_ms / 1000);
+					double baro_vel_z = (baro_alt - last_val);
+
+					//printf("Baro Vel (%f) m/s Alt: %f m\n", baro_vel_z, baro_alt);
+
+					//					printf("Got Baro data %d %f (%f) meters\n", baro_time_ms, baro_alt, zero_alt);
+//					if (vio_manager->is_moving())
+					{
+						vio_manager->add_constraint_baro(baro_alt, baro_vel_z);
+					}
+				}
+				last_val = baro_alt;
+			}
+
+
+//
+//			// convert pressure in hPa to distance
+//			double dist = pressure * 100 /  9.81;
+//			double dist = (log(P/P0) * R * T)/ (-gM)
+//
+//
+//
+//			printf("pressure %f\n", pressure);
+//
+//
+//
+//			if (!vio_manager->is_moving())
+//			{
+//				avg_up_baro += dist;
+//				a_ctn++;
+//			}
+//			else
+//			{
+//				if (ref_zero_alt == -9999)
+//				{
+//					ref_zero_alt = avg_up_baro / a_ctn;
+//					// Now I have a base zero alt over time.
+//				}
+//
+//				// get the new reference alt
+//				if (last_val != -99999 && ref_zero_alt != -9999)
+//				{
+//					baro_alt = exp((dist - ref_zero_alt));
+//					baro_alt = (0.25 * baro_alt) + (0.75 * last_val);
+//					//if (en_debug)
+//						printf("Got Baro data %d %f (%f) meters\n", baro_time_ms, baro_alt, ref_zero_alt);
+//					vio_manager->add_constraint_baro(baro_alt);
+//
+//				}
+//
+//				last_val = baro_alt;
+//			}
+		}
 }
 
 static int create_server_pipes(void)
@@ -1965,7 +2185,6 @@ static int create_server_pipes(void)
 
 static int read_external_configs_from_file(void)
 {
-
 	fprintf(stderr,
 			"=====> Using internal KLT Feature Tracking and File base camera configuration: %s\n", imu_name);
 
@@ -1983,7 +2202,6 @@ static int read_external_configs_from_file(void)
 	size_t cam_id = 0;
 	while (ret == 0)
 	{
-
 		cJSON *curr_cam = cJSON_GetArrayItem(cams, cam_id);
 		if (curr_cam == NULL)
 		{
@@ -2142,6 +2360,12 @@ static int read_external_configs(void)
 	return ret;
 }
 
+
+///
+// VOXL 1.1 OV92XX camera actiavated!!!!!!!!!!!!!!!!!!!!!!!!!!
+///
+//#define OV92XX 1
+
 static int connect_client_pipes(void)
 {
 	fprintf(stderr, "connecting client pipes\n");
@@ -2159,26 +2383,56 @@ static int connect_client_pipes(void)
 
 	// connect to all configured cameras
 	cameras_used = cam_info_vec.size();
-	printf("Number of Cameras active: %d\n", cameras_used);
+	char t_cam_nam[256];
+
+	fprintf(stderr, "Number of Cameras active: %d\n", cameras_used);
+	std::vector<std::string> tmp_camera_pipe_names;
+
 	for (int i = 0; i < cameras_used; i++)
 	{
 		int ch = pipe_client_get_next_available_channel();
 		camera_pipe_channels[i] = ch;
-		// pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
-		pipe_client_set_camera_helper_cb(ch, _cam_helper_cb,
-				&cam_info_vec[i].mode);
-		flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-		int ret = pipe_client_open(ch, cam_info_vec[i].name, PROCESS_NAME,
-				flags, 1280 * 800 * 15);
-		if (ret)
+
+		fprintf(stderr, "Camera merge --- > ch: %d to cam id: %d\n", ch, i);
+
+#ifdef OV92XX
+		// OV92xx COLOR/GRAYSCALE OUTPUTS ONLY
+		sprintf(t_cam_nam, "%s_grey", cam_info_vec[i].name);
+#else
+		sprintf(t_cam_nam, "%s", cam_info_vec[i].name);
+#endif
+
+		if (std::find(tmp_camera_pipe_names.begin(), tmp_camera_pipe_names.end(), t_cam_nam) == tmp_camera_pipe_names.end())
 		{
-			fprintf(stderr, "failed to open %s\n", cam_info_vec[i].name);
-			return -1;
+			// pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
+			pipe_client_set_camera_helper_cb(ch, _cam_helper_cb,
+					&cam_info_vec[i].mode);
+			flags = CLIENT_FLAG_EN_CAMERA_HELPER;
+			int ret = pipe_client_open(ch, t_cam_nam, PROCESS_NAME,
+					flags, 1280 * 800 * 15);
+			if (ret)
+			{
+				fprintf(stderr, "failed to open %s\n", cam_info_vec[i].name);
+				return -1;
+			}
+			else
+			{
+				fprintf(stderr, "Opening camera pipe: %s\n", cam_info_vec[i].name);
+			}
+
+			fprintf(stderr, "tmp_camera_pipe_names.push_back(): %s\n", t_cam_nam);
+
+			tmp_camera_pipe_names.push_back(t_cam_nam);
 		}
+		else
+		{
+			fprintf(stderr, "Note: found camera pipe callback already exists, likely a stereo camera setup\n");
+		}
+
+
 	}
 
-	printf("imu pipe name: %s\n", imu_name);
-
+	fprintf(stderr, "imu pipe name: %s\n", imu_name);
 
 	// connect to baro
 	pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
@@ -2213,7 +2467,7 @@ int main(int argc, char *argv[])
 	// read camera multicam setup and configs
 	if (cam_config_file_read() < 0)
 	{
-		fprintf(stderr, "ERROR %d\n", cam_config_file_read());
+		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
 	cam_config_file_print();
@@ -2315,6 +2569,7 @@ int main(int argc, char *argv[])
 	if (connect_client_pipes() < 0)
 		_quit(0);
 
+	usleep(100000); // 100ms
 	// Set the main running flag to 1 to indicate that we are running
 	main_running = 1;
 
@@ -2322,7 +2577,7 @@ int main(int argc, char *argv[])
 	// run until start/stop module catches a signal and changes main_running to 0
 	while (main_running)
 	{
-		usleep(5000000);
+		usleep(1e6); // 1 sec
 	}
 
 	pthread_join(health_thread, NULL);
