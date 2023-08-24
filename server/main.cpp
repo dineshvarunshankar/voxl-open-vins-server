@@ -2142,7 +2142,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 				zero_alt += dist;
 				vio_manager->add_constraint_baro(0, 0);
 
-				if (++a_ctn > 30)
+				if (++a_ctn > 20)
 				{
 					zero_alt /= a_ctn;
 
