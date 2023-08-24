@@ -239,6 +239,33 @@ boost::posix_time::ptime pT1, pT2, cT1, cT2, zeroTimeOut;
 static double ref_zero_alt = -9999.0;
 static double baro_alt = 0.;
 
+/////////////////////////
+/////////////////////////
+#define sampleFreq      1000.0f                 // sample frequency in Hz
+#define twoKpDef        (2.0f * 0.01f)   // 2 * proportional gain
+#define twoKiDef        (2.0f * 0.0f)   // 2 * integral gain
+volatile float twoKp = twoKpDef;                                                                                        // 2 * proportional gain (Kp)
+volatile float twoKi = twoKiDef;                                                                                        // 2 * integral gain (Ki)
+volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;                                      // quaternion of sensor frame relative to auxiliary frame
+volatile float integralFBx = 0.0f,  integralFBy = 0.0f, integralFBz = 0.0f;     // integral error terms scaled by Ki
+void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az, float *phi, float *theta, float *psi);
+float invSqrt(float x);
+static void dead_reckon_position(double dt,
+                float ax,
+                float ay,
+                float az,
+                float gx,
+                float gy,
+                float gz);
+static float _odometry_imu[3] = {0};
+static float _vel_imu[3] = {0};
+static float _accel_bias[3] = {0};
+static float _gyro_bias[3] = {0};
+static float _last_gyro[3] = {0};
+static float _last_vel[3] = {0};
+static float _last_odometry_imu[3] = {0};
+/////////////////////////
+/////////////////////////
 
 
 // printed if some invalid argument was given
@@ -687,7 +714,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch,
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
-	if (en_debug_pos)
+	if (en_debug)
 			printf("_cam_helper_cb entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
 
 	is_cam_connected = true;
@@ -888,8 +915,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {
+    static double imu_last_time = 0.0;
 
-	if (en_debug_pos)
+
+
+	if (en_debug)
 			printf("_new_imu_data_default_handler entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
 
 
@@ -953,11 +983,17 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	// So on average use every other packet.
 	if (!vio_manager->is_moving())
 	{
-    	perf_limit  = 6; //6
+    	perf_limit  = 5; //6
 	}
 	else
 	{
-		perf_limit = 3;  //3
+		if (n_packets > 100)
+			perf_limit = 10;  //3
+		else	 if (n_packets > 10)
+			perf_limit = 5;  //3
+		else
+			perf_limit = 1;  //3
+
 		if (!changed_motion_state)
 		{
 			fprintf(stderr, "[WARN] Motion detected, going to full processing\n");
@@ -968,6 +1004,9 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	for (int i = 0; i < n_packets; i+=perf_limit)
 //		for (int i = 0; i < n_packets; i+=perf_limit)
 	{
+
+		auto rT0_1 = boost::posix_time::microsec_clock::local_time();
+
 		// check if we somehow got an out-of-order imu sample and reject it
 		if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
 		{
@@ -979,6 +1018,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		}
 		else
 		{
+
 			// Create the data struct that we will use for ingesting data into the vio manager
 			ov_core::ImuData vio_manager_data;
 			vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09; // (seconds)
@@ -995,9 +1035,20 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 			t_am(1, 0) = data_array[i].accl_ms2[1];
 			t_am(2, 0) = data_array[i].accl_ms2[2];
 
-			j_am(0, 0) = data_array[i].accl_ms2[0];
-			j_am(1, 0) = data_array[i].accl_ms2[1];
-			j_am(2, 0) = fabs(data_array[i].accl_ms2[2])-9.81;
+//			j_am(0, 0) = data_array[i].accl_ms2[0];
+//			j_am(1, 0) = data_array[i].accl_ms2[1];
+//			j_am(2, 0) = data_array[i].accl_ms2[2];
+
+//	        double imu_dt = data_array[i].timestamp_ns  - imu_last_time;
+//			dead_reckon_position(imu_dt*1e-9,
+//					t_am(0, 0),
+//					t_am(1, 0),
+//					t_am(2, 0),
+//					t_wm(0, 0),
+//					t_wm(1, 0),
+//					t_wm(2, 0) );
+//			imu_last_time =  data_array[i].timestamp_ns ;
+
 
 			// NED to FLU systems as per VINS.
 			static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
@@ -1054,7 +1105,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 //
 //			}
 
-
 			  if (thread_update_running)
 				return;
 
@@ -1092,7 +1142,15 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 					}
 					thread_update_running = false;
 			});
+
 			thread.join();
+
+			usleep(100);
+
+
+
+
+
 
 //			image_update_running = false;
 /////////////////////////////////////////////////////////////////
@@ -1167,6 +1225,16 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 //		}
 //		last_cam_time = now_time;
 		}
+
+		auto rT0_2 = boost::posix_time::microsec_clock::local_time();
+		double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
+
+//		if (en_debug_pos)
+//		{
+//			printf("[TIME]: %.4f seconds total (%.1f hz) - %d\n" , time_total, 1.0 / time_total, n_packets);
+//
+//		}
+
 	}
 
 	}
@@ -1359,13 +1427,10 @@ static void _publish_default(double pose_timestamp)
 	static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
-
 	// get features
 	// this function will give us back as much info as available for features in various stages of the overall state
-	std::vector<output_feature> curr_pixel_locs =
-			vio_manager->get_pixel_loc_features();
-
-//	printf("points  %d\n", (int)curr_pixel_locs.size());
+	std::vector<output_feature> curr_pixel_locs;
+	int sz = vio_manager->get_pixel_loc_features(curr_pixel_locs);
 
 	for (size_t d = 0; d < curr_pixel_locs.size(); d++)
 	{
@@ -1400,7 +1465,6 @@ static void _publish_default(double pose_timestamp)
 			}
 		}
 	}
-
 	// check if its initialized or not
 	if (!vio_manager->initialized())
 	{
@@ -1654,22 +1718,33 @@ static void _publish_default(double pose_timestamp)
 						img_ringbuf->get_timestamp_at_position(4));
 				return;
 			}
-
 			// now, construct some cv::Mats with our images (we know them to be greyscale)
 			std::vector<cv::Mat> img_set;
 			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
 			{
-				cv::Mat img(curr_imgs->metadata.height,
-						curr_imgs->metadata.width,
-						CV_8UC1, curr_imgs->image_pixels);
-				cv::Mat img2(curr_imgs->metadata.height,
-						curr_imgs->metadata.width,
-						CV_8UC1,
-						curr_imgs->image_pixels
-								+ (curr_imgs->metadata.width
-										* curr_imgs->metadata.height));
-				img_set.push_back(img);
-				img_set.push_back(img2);
+				if (!en_debug_pos)
+				{
+
+					cv::Mat img(curr_imgs->metadata.height,
+							curr_imgs->metadata.width,
+							CV_8UC1, curr_imgs->image_pixels);
+					cv::Mat img2(curr_imgs->metadata.height,
+							curr_imgs->metadata.width,
+							CV_8UC1,
+							curr_imgs->image_pixels
+									+ (curr_imgs->metadata.width
+											* curr_imgs->metadata.height));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+				else
+				{
+					cv::Mat img(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
+					cv::Mat img2(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+
 			}
 			else
 			{
@@ -1683,39 +1758,80 @@ static void _publish_default(double pose_timestamp)
 
 			feat_ts_mutex.unlock();
 
-			for (size_t i = 0; i < curr_pixel_locs.size(); i++)
+
+			static int trk_id = -1;
+			static std::vector<float> trk_history_x;
+			static std::vector<float> trk_history_y;
+
+			if (trk_history_x.size() > 100)
 			{
-				// re-identified slam landmark
-				if (curr_pixel_locs[i].point_quality == OV_RE_HIGH)
+				trk_history_x.clear();
+				trk_history_y.clear();
+			}
+
+			if (trk_id < 0 && curr_pixel_locs.size() > 0)
+			{
+				trk_id = curr_pixel_locs[0].id;
+				printf("Monitoring id: %d\n", trk_id);
+			}
+
+			{
+				for (size_t i = 0; i < curr_pixel_locs.size(); i++)
 				{
-					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]),
-							cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+					if (!en_debug_pos)
+					{
+						if (curr_pixel_locs[i].point_quality == OV_RE_HIGH)
+						{
+							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
+									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
+											curr_pixel_locs[i].pix_loc[1]),
+									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
+						}
+						// slam landmark
+						else if (curr_pixel_locs[i].point_quality == OV_HIGH)
+						{
+							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
+									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
+											curr_pixel_locs[i].pix_loc[1]),
+									cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+						}
+						// tracked feature
+						else if (curr_pixel_locs[i].point_quality == OV_MEDIUM)
+						{
+							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
+									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
+											curr_pixel_locs[i].pix_loc[1]),
+									cv::Scalar(190), cv::MARKER_SQUARE, 8, 2);
+						}
+						else if (show_extra_points_on_overlay)
+						{
+							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
+									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
+											curr_pixel_locs[i].pix_loc[1]),
+									cv::Scalar(100), cv::MARKER_SQUARE, 8, 2);
+						}
+					}
+					else
+					{
+						if (curr_pixel_locs[i].id == trk_id)
+						{
+							trk_history_x.push_back(curr_pixel_locs[i].pix_loc[0]);
+							trk_history_y.push_back(curr_pixel_locs[i].pix_loc[1]);
+
+							for (size_t z = 0; z < trk_history_x.size(); z++)
+							{
+								cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
+										cv::Point2f(trk_history_x[z],
+												trk_history_y[z]),
+										cv::Scalar(255), cv::MARKER_DIAMOND, 24, 2);
+							}
+						}
+					}
+
 				}
-				// slam landmark
-				else if (curr_pixel_locs[i].point_quality == OV_HIGH)
-				{
-					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]),
-							cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
-				}
-				// tracked feature
-				else if (curr_pixel_locs[i].point_quality == OV_MEDIUM)
-				{
-					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]),
-							cv::Scalar(145), cv::MARKER_SQUARE, 8, 2);
-				}
-				else if (show_extra_points_on_overlay)
-				{
-					cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-							cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-									curr_pixel_locs[i].pix_loc[1]),
-							cv::Scalar(0), cv::MARKER_SQUARE, 8, 2);
-				}
+
+
+
 			}
 
 			cv::resize(img_set[0], img_set[0], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
@@ -1791,13 +1907,9 @@ static void _publish_default(double pose_timestamp)
 			// draw out to pipe
 			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
 					(char*) overlay_cp.data);
-
-			usleep(5);
-
 			delete curr_imgs;
-
-			usleep(10);
 		}
+
 	}
 
 	return;
@@ -2044,7 +2156,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 				baro_alt = dist - zero_alt;
 				if (last_val != -99999)
 				{
-					baro_alt = (0.3 * baro_alt) + (0.7 * last_val);
+					baro_alt = (0.25 * baro_alt) + (0.75 * last_val);
 
 					//v = dx/dt
 //					double baro_vel_z = (baro_alt - last_val) /  (baro_time_ms / 1000);
@@ -2587,4 +2699,218 @@ int main(int argc, char *argv[])
 
 	printf("Quiting VIO server\n");
 	return 0;
+}
+
+
+
+void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az, float *phi, float *theta, float *psi) {
+        float recipNorm;
+        float halfvx, halfvy, halfvz;
+        float halfex, halfey, halfez;
+        float qa, qb, qc;
+
+        // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+        if(!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f))) {
+
+                // Normalise accelerometer measurement
+                recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+                ax *= recipNorm;
+                ay *= recipNorm;
+                az *= recipNorm;
+
+                // Estimated direction of gravity and vector perpendicular to magnetic flux
+                halfvx = q1 * q3 - q0 * q2;
+                halfvy = q0 * q1 + q2 * q3;
+                halfvz = q0 * q0 - 0.5f + q3 * q3;
+
+                // Error is sum of cross product between estimated and measured direction of gravity
+                halfex = (ay * halfvz - az * halfvy);
+                halfey = (az * halfvx - ax * halfvz);
+                halfez = (ax * halfvy - ay * halfvx);
+
+                // Compute and apply integral feedback if enabled
+                if(twoKi > 0.0f) {
+                        integralFBx += twoKi * halfex * (1.0f / sampleFreq);    // integral error scaled by Ki
+                        integralFBy += twoKi * halfey * (1.0f / sampleFreq);
+                        integralFBz += twoKi * halfez * (1.0f / sampleFreq);
+                        gx += integralFBx;      // apply integral feedback
+                        gy += integralFBy;
+                        gz += integralFBz;
+                }
+                else {
+                        integralFBx = 0.0f;     // prevent integral windup
+                        integralFBy = 0.0f;
+                        integralFBz = 0.0f;
+                }
+
+                // Apply proportional feedback
+                gx += twoKp * halfex;
+                gy += twoKp * halfey;
+                gz += twoKp * halfez;
+        }
+
+        // Integrate rate of change of quaternion
+        gx *= (0.5f * (1.0f / sampleFreq));             // pre-multiply common factors
+        gy *= (0.5f * (1.0f / sampleFreq));
+        gz *= (0.5f * (1.0f / sampleFreq));
+        qa = q0;
+        qb = q1;
+        qc = q2;
+        q0 += (-qb * gx - qc * gy - q3 * gz);
+        q1 += (qa * gx + qc * gz - q3 * gy);
+        q2 += (qa * gy - qb * gz + q3 * gx);
+        q3 += (qa * gz + qb * gy - qc * gx);
+
+        // Normalise quaternion
+        recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+        q0 *= recipNorm;
+        q1 *= recipNorm;
+        q2 *= recipNorm;
+        q3 *= recipNorm;
+
+        *theta = asin(-2 * q1 * q3 + 2 * q0* q2);       // pitch
+        *phi  = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2* q2 + 1) + M_PI; // roll
+        *psi   = atan2(2*(q1*q2 + q0*q3),q0*q0+q1*q1-q2*q2-q3*q3);      //yaw
+
+        //      fprintf(stderr, "r: %6.2f p: %6.2f y: %6.2f\n",
+        //                      *phi*180.0/M_PI, *theta*180.0/M_PI,*psi*180.0/M_PI);
+}
+
+//---------------------------------------------------------------------------------------------------
+// Fast inverse square-root
+// See: http://en.wikipedia.org/wiki/Fast_inverse_square_root
+
+float invSqrt(float x) {
+        float halfx = 0.5f * x;
+        float y = x;
+        long i = *(long*)&y;
+        i = 0x5f3759df - (i>>1);
+        y = *(float*)&i;
+        y = y * (1.5f - (halfx * y * y));
+        return y;
+}
+
+static void dead_reckon_position(double dt,
+                float ax,
+                float ay,
+                float az,
+                float gx,
+                float gy,
+                float gz)
+{
+
+        float phi, theta, psi;
+
+        static bool started = false;
+
+        MahonyAHRSupdateIMU(gx, gy, gz, ax, ay, az, &phi, &theta, &psi);
+
+        if (!started)
+        {
+                float dt_gx = abs(phi - _last_gyro[0]);
+                float dt_gy = abs(theta - _last_gyro[1]);
+                float dt_gz = abs(psi - _last_gyro[2]);
+
+                _last_gyro[0] = phi;
+                _last_gyro[1] = theta;
+                _last_gyro[2] = psi;
+//              printf("%f %f %f\n", dt_gx, dt_gy, dt_gz);
+
+				if (dt_gx <= 0.00001 && dt_gy <= 0.00001 && dt_gz <= 0.00001)
+				{
+						printf("IMU settled and ready\n");
+						started = true;
+						_accel_bias[0] = ax;
+						_accel_bias[1] = ay;
+						_accel_bias[2] = az;
+						_gyro_bias[0] = phi;
+						_gyro_bias[1] = theta;
+						_gyro_bias[2] = psi;
+				}
+		}
+		else
+		{
+            phi -= _gyro_bias[0];
+            theta-= _gyro_bias[1];
+            psi -= _gyro_bias[2];
+
+            float cosPhi = (double)cos(phi);
+            float sinPhi = (double)sin(phi);
+            float cosThe = (double)cos(theta);
+            float sinThe = (double)sin(theta);
+            float cosPsi = (double)cos(psi);
+            float sinPsi = (double)sin(psi);
+
+            float dcm[3][3];
+            dcm[0][0] = cosThe * cosPsi;
+            dcm[0][1] = -cosPhi * sinPsi + sinPhi * sinThe * cosPsi;
+            dcm[0][2] = sinPhi * sinPsi + cosPhi * sinThe * cosPsi;
+
+            dcm[1][0] = cosThe * sinPsi;
+            dcm[1][1] = cosPhi * cosPsi + sinPhi * sinThe * sinPsi;
+            dcm[1][2] = -sinPhi * cosPsi + cosPhi * sinThe * sinPsi;
+
+            dcm[2][0] = -sinThe;
+            dcm[2][1] = sinPhi * cosThe;
+            dcm[2][2] = cosPhi * cosThe;
+
+            float accel_vec[3] = { ax - _accel_bias[0], ay - _accel_bias[1], (az - _accel_bias[2]) + 9.80665f};
+            float acc_mag = sqrt(accel_vec[0]*accel_vec[0] + accel_vec[1]*accel_vec[1] + accel_vec[2]*accel_vec[2]);
+
+            //printf("Staionary: %f %f %f - %f\n", accel_vec[0], accel_vec[1], accel_vec[2], acc_mag);
+//            bool stationary = acc_mag < 0.25;
+            bool stationary = 0;
+
+            float local_frame_accel[3] = {0,0,0};
+
+            for (int i = 0; i<3; i++)
+            {
+                    for (int j = 0; j<3; j++)
+                    {
+                            local_frame_accel[j] += dcm[j][i] * accel_vec[i];
+                    }
+            }
+
+            if (stationary)
+            {
+                    _vel_imu[0] = 0.;
+                    _vel_imu[1] = 0.;
+                    _vel_imu[2] = 0.;
+            }
+            else
+            {
+                    _vel_imu[0] = _last_vel[0] + local_frame_accel[0] * dt;
+                    _vel_imu[1] = _last_vel[1] + local_frame_accel[1] * dt;
+                    _vel_imu[2] = _last_vel[2] + local_frame_accel[2] * dt;
+            }
+
+            _last_vel[0] = _vel_imu[0];
+            _last_vel[1] = _vel_imu[1];
+            _last_vel[2] = _vel_imu[2];
+
+
+            _odometry_imu[0] = _last_odometry_imu[0] + _vel_imu[0] * dt;
+            _odometry_imu[1] = _last_odometry_imu[1] + _vel_imu[1] * dt;
+            _odometry_imu[2] = _last_odometry_imu[2] + _vel_imu[2] * dt;
+            _last_odometry_imu[0] = _odometry_imu[0];
+            _last_odometry_imu[1] = _odometry_imu[1];
+            _last_odometry_imu[2] = _odometry_imu[2];
+
+          static int ctn = 0;
+          if (ctn ++ % 10 == 0)
+              fprintf(stderr, "*, %6.2f\t%6.2f\t%6.2f\n",
+            		  _vel_imu[0],
+					  _vel_imu[1],
+					  _vel_imu[2]);
+
+//              fprintf(stderr, "*, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f\n",
+//                                                                      _vel_imu[0],
+//                                                                              _vel_imu[1],
+//                                                                              _vel_imu[2],
+//                                                                              accel_vec[0], accel_vec[1], accel_vec[2],
+//                                                                              gx, gy, gz,
+//                                                                              (double)phi*180/M_PI,
+//                                                                              (double)theta*180/M_PI,
+//                                                                              (double)psi*180/M_PI);
+		}
 }

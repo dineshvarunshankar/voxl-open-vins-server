@@ -407,14 +407,14 @@ int cam_load_extrinsics_file()
 				}
 			}
 
-			std::cout << "processing NED extrinsics: " << std::endl;
+			std::cout << "\nprocessing NED extrinsics: " << std::endl;
 			std::cout << rotation_temp_1 << std::endl;
 
 			// convert to FLU
 			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
 			double r,p,y;
 			get_RPY_from_NED(rotation_temp_1, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
-			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp_1);
+			get_RPY_from_NED_to_FLU((r+M_PI),p,(y+M_PI), rotation_temp_1);
 			std::cout << "\n[cam  " << cam_info_set_vec[i].name << cam_info_set_vec[i].extrinsics_extension_first << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
 					<< cam_info_set_vec[i].name << "]" << std::endl;
 			std::cout << rotation_temp_1 << std::endl;
@@ -1044,7 +1044,7 @@ int cam_config_file_print(void)
 		}
 		if (cam_info_set_vec[j].cam_wrt_imu_rot.size() > 1)
 		{
-			printf("cam %f wrt %s (stereo pair):\n", j + 0.5, tmp_imu_name);
+			printf("cam [pair_2] wrt %s (stereo pair):\n", tmp_imu_name);
 			for (int x = 0; x < 3; x++)
 			{
 				for (int y = 0; y < 3; y++)
