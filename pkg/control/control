@@ -1,9 +1,9 @@
 Package: voxl-open-vins-server
-Version: 0.2.6.5
+Version: 0.2.6.6
 Section: base
 Priority: optional
 Architecture: arm64
-Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-opencv,voxl-open-vins,voxl-eigen3,voxl-ceres-solver
+Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-opencv,voxl-open-vins,voxl-ceres-solver
 Conflicts:
 Maintainer: cliff.wong@modalai.com
 Description: Publishes VIO data over named pipe interface.
