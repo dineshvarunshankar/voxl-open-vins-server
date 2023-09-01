@@ -45,7 +45,6 @@
 //#include <Eigen/Dense>
 #include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 
-
 #include <iostream>
 #include <thread>
 #include <random>
@@ -75,10 +74,14 @@
 #define OV_VIO_OVERLAY_NAME "ov_overlay"
 #define OV_VIO_OVERLAY_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_OVERLAY_NAME "/"
 
+#define OV_STATUS_NAME "ov_status"
+#define OV_STATUS_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_STATUS_NAME "/"
+
 // server channels
 #define EXTENDED_CH 0
 #define SIMPLE_CH 1
 #define OVERLAY_CH 2
+#define OVSTATUS_CH 3
 
 // client channels and config
 #define IMU_CH 0
@@ -226,6 +229,24 @@ static int8_t verbosity_level
 
 static ext_vio_data_t d;  // complete "extended" vio MPA packet
 static vio_data_t s;      // simplified vio packet
+
+typedef struct _klt_feature_t{
+    uint32_t  id;               ///< unique ID for feature point
+    int32_t cam_id;             ///< ID of camera which the point was seen from (typically first)
+    float pix_loc[2];           ///< pixel location in the last frame
+//    float depth_error_stddev;   ///< depth error in meters
+} klt_feature_t;
+
+typedef struct _ov_status_t {
+    uint32_t magic_number;         ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+    int64_t timestamp_ns;          ///< Timestamp in clock_monotonic system time of the provided pose.
+    int32_t quality;
+    float p_dop;
+    float r_dop;
+    int num_features;
+    klt_feature_t features[VIO_MAX_REPORTED_FEATURES];
+} ov_status_t;
+static ov_status_t ov_status;
 
 
 std::string log_path = "";
@@ -1367,6 +1388,10 @@ static void _publish_default(double pose_timestamp)
 	s.magic_number = VIO_MAGIC_NUMBER;
 	s.error_code = global_error_codes;
 
+	// simple lib modal pipe standard vio packet
+	memset(&ov_status, 0, sizeof(ov_status));
+	ov_status.magic_number = VIO_MAGIC_NUMBER;
+
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
@@ -1384,6 +1409,7 @@ static void _publish_default(double pose_timestamp)
 	// float64[36] covariance
 
 	Eigen::VectorXd cov_varis = covariance_posori.diagonal();
+
 	double T_uncertainty = 0.0;
 	T_uncertainty += cov_varis(0, 0) * cov_varis(0, 0);
 	T_uncertainty += cov_varis(1, 1) * cov_varis(1, 1);
@@ -1402,8 +1428,7 @@ static void _publish_default(double pose_timestamp)
 	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
 	V_uncertainty = sqrt(V_uncertainty);
 
-#ifdef TRUE_MONTE
-
+#ifdef MONTE
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenSolver(covariance_posori);
 	Eigen::MatrixXd transform = eigenSolver.eigenvectors() * eigenSolver.eigenvalues().cwiseSqrt().asDiagonal();
 	static std::mt19937 gen{ std::random_device{}() };
@@ -1413,16 +1438,28 @@ static void _publish_default(double pose_timestamp)
 	Eigen::Vector3d  R_sigma = uncertain.segment(3,5);
 	T_uncertainty = (T_uncertainty * 0.6) + (0.4 * (sqrt((T_sigma.array() - T_sigma.mean()).square().sum() / (T_sigma.size() - 1))));
 	R_uncertainty = (R_uncertainty * 0.6) + (0.4* (sqrt((R_sigma.array() - R_sigma.mean()).square().sum() / (R_sigma.size() - 1))));
-	printf("Uncertainty in the robot's pose: xyz: %f R:%f\n", T_uncertainty, R_uncertainty);
-	printf("Get the uncertainty in the robot's pose: (%dx%d) %f\n", uncertain.rows(), uncertain.cols(), std_dev);
-	printf("(%d): ", (int)cov_varis.size());
-	for (int i=0; i<cov_varis.size(); i++)
-	{
-		printf("%f ", cov_varis(i));
-	}
-	printf("\n");
 
+	if (std::isnan(T_uncertainty))
+	{
+		T_uncertainty = 0;
+	}
+
+	if (std::isnan(R_uncertainty))
+	{
+		R_uncertainty = 0;
+	}
+
+	printf("Uncertainty in the robot's pose: xyz: %f R:%f\n", T_uncertainty, R_uncertainty);
 #endif
+
+//	printf("Get the uncertainty in the robot's pose: (%dx%d) %f\n", uncertain.rows(), uncertain.cols(), std_dev);
+//	printf("(%d): ", (int)cov_varis.size());
+//	for (int i=0; i<cov_varis.size(); i++)
+//	{
+//		printf("%f ", cov_varis(i));
+//	}
+//	printf("\n");
+
 	// correction matrix
 	static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
 	flu_ned_correction_mat(1, 1) = -1;
@@ -1666,10 +1703,30 @@ static void _publish_default(double pose_timestamp)
 	// fill in simplified struct inside the extended packet
 	memcpy(&d.v, &s, sizeof(vio_data_t));
 
+	if (en_ov_stats)
+	{
+		ov_status.timestamp_ns = s.timestamp_ns;
+		ov_status.quality = s.quality;
+		ov_status.p_dop = T_uncertainty;
+		ov_status.r_dop = R_uncertainty;
+		ov_status.num_features = curr_pixel_locs.size();
+
+		for (size_t b=0; b<curr_pixel_locs.size() ; b++)
+		{
+			ov_status.features[b].id  = curr_pixel_locs[b].id;
+			ov_status.features[b].cam_id = curr_pixel_locs[b].cam_id;
+			ov_status.features[b].pix_loc[0] = curr_pixel_locs[b].pix_loc[0];
+			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
+		}
+		pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
+		usleep(2);
+	}
+
 	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 	usleep(2);
 	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 	usleep(2);
+
 
 	// for debug only
 	if (en_debug)
@@ -1720,8 +1777,14 @@ static void _publish_default(double pose_timestamp)
 			}
 			// now, construct some cv::Mats with our images (we know them to be greyscale)
 			std::vector<cv::Mat> img_set;
+
+
+			static float font_size = 1.0;
+			static float border_scale = 1;
+
 			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
 			{
+				font_size = 0.55;
 				if (!en_debug_pos)
 				{
 
@@ -1748,18 +1811,19 @@ static void _publish_default(double pose_timestamp)
 			}
 			else
 			{
+				font_size = 0.33;
+				border_scale = 2;
+
 				cv::Mat img(curr_imgs->metadata.height,
 						curr_imgs->metadata.width,
 						CV_8UC1, curr_imgs->image_pixels);
 				img_set.push_back(img);
-
-				printf("GOT A NON STEREO IMAGE PAIR, UNEXPECTED\n");
 			}
 
 			feat_ts_mutex.unlock();
 
 
-			static int trk_id = -1;
+			static int16_t  trk_id = -1;
 			static std::vector<float> trk_history_x;
 			static std::vector<float> trk_history_y;
 
@@ -1813,7 +1877,7 @@ static void _publish_default(double pose_timestamp)
 					}
 					else
 					{
-						if (curr_pixel_locs[i].id == trk_id)
+						if (trk_id >= 0 && curr_pixel_locs[i].id == (uint16_t) trk_id)
 						{
 							trk_history_x.push_back(curr_pixel_locs[i].pix_loc[0]);
 							trk_history_y.push_back(curr_pixel_locs[i].pix_loc[1]);
@@ -1846,11 +1910,8 @@ static void _publish_default(double pose_timestamp)
 				cv::hconcat(img_set[0], img_set[1], overlay_cp);
 			}
 
-			static float font_size = 0.8;
-			static float border_scale = 1;
 			if (overlay_cp.cols <= OVERLAY_RES_W_X)
 			{
-				font_size = 0.55;
 				border_scale = 1;
 			}
 
@@ -1894,7 +1955,6 @@ static void _publish_default(double pose_timestamp)
 					draw_meta.exposure_ns / 1000000.0, draw_meta.gain,
 					s.quality, oos_pts_string);
 
-			font_size = 0.6;
 			cv::putText(
 					overlay_cp, //target image
 					str, //text
@@ -2292,6 +2352,24 @@ static int create_server_pipes(void)
 	pipe_server_set_available_control_commands(OVERLAY_CH,
 			OV_VIO_CONTROL_COMMANDS);
 
+
+	// init simple pipe
+	pipe_info_t info4 =
+	{
+		OV_STATUS_NAME,         // name
+		OV_STATUS_LOCATION,     // location
+		"ov_status_t",               // type
+		PROCESS_NAME,               // server_name
+		VIO_RECOMMENDED_PIPE_SIZE*2,  // size_bytes
+		0                           // server_pid
+	};
+
+	if (pipe_server_create(OVSTATUS_CH, info4, flags))
+	{
+		printf("pipe_server_create(SIMPLE_CH, info2, flags) failed\n");
+		_quit(-1);
+	}
+
 	return 0;
 }
 
@@ -2546,16 +2624,19 @@ static int connect_client_pipes(void)
 
 	fprintf(stderr, "imu pipe name: %s\n", imu_name);
 
-	// connect to baro
-	pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
-	pipe_client_set_simple_helper_cb(BARO_CH, _new_baro_data_default_handler,
-			NULL);
-	flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
-	if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, flags,
-			IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+	if (en_baro)
 	{
-		fprintf(stderr, "failed to open Baro\n");
-		return -1;
+		// connect to baro
+		pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
+		pipe_client_set_simple_helper_cb(BARO_CH, _new_baro_data_default_handler,
+				NULL);
+		flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
+		if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, flags,
+				IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+		{
+			fprintf(stderr, "failed to open Baro\n");
+			return -1;
+		}
 	}
 
 	return 0;

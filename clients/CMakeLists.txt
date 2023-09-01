@@ -42,8 +42,13 @@ target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
 set(TARGET voxl-evaluate-vins)
 add_executable(${TARGET} voxl-evaluate-vins.cpp)
 list(APPEND ALL_TARGETS ${TARGET})
-
 target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
+
+set(TARGET voxl-log-vins)
+add_executable(${TARGET} voxl-log-vins.cpp)
+list(APPEND ALL_TARGETS ${TARGET})
+target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
+
 
 
 install(

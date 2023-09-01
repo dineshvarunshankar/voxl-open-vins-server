@@ -7,7 +7,8 @@ Description=voxl-open-vins-server
 SourcePath=/usr/local/bin/voxl-open-vins-server
 After=voxl-camera-server.service
 After=voxl-imu-server.service
-Requires=voxl-camera-server.service
+# if using default modalai products
+#Requires=voxl-camera-server.service
 Requires=voxl-imu-server.service
 
 

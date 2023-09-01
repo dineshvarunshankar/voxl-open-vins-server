@@ -130,6 +130,9 @@ ov_core::TrackBase::HistogramMethod histogram_method;
 double knn_ratio;
 double track_frequency;
 
+bool en_ov_stats;
+bool en_baro;
+
 //std::string log_path;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {
@@ -244,6 +247,9 @@ int config_file_print(void) {
     printf("histogram_method:                  %s\n", hist_as_string(histogram_method).c_str());
     printf("knn_ratio:                  %6.5f\n", knn_ratio);
     printf("track_frequency:                  %6.5f\n", track_frequency);
+    printf("use baro:                  %s\n", en_baro ? "true" : "false");
+    printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
+
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -338,6 +344,10 @@ int config_file_read(void) {
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.85);
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 12.0);
+
+    json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 1);
+    json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
+
 
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

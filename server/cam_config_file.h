@@ -81,6 +81,7 @@ extern int min_pix_dist;
 extern int pyramid_levels;
 extern int window_size;
 
+
 extern bool en_database;
 extern int database_size;
 extern double max_angular_rate_before_blur;
