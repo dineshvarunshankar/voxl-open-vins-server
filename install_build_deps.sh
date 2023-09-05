@@ -11,6 +11,7 @@
 DEPS_QRB5165="
 libmodal-json
 libmodal-pipe
+libmodal-cv
 voxl-mavlink
 voxl-opencv
 libboost-filesystem-dev:arm64
@@ -28,11 +29,17 @@ libvoxl-cutils
 DEPS_APQ8096="
 libmodal-json
 libmodal-pipe
+libmodal-cv
+libvoxl-cutils
+libmodal-journal
 voxl-opencv
 voxl-boost
 voxl-open-vins
 voxl-eigen3
 voxl-ceres-solver
+voxl-mpa-tools
+voxl-mavlink
+voxl-eigen3
 "
 
 ## this list is just for tab-completion

@@ -3,7 +3,7 @@ Version: 0.2.7
 Section: base
 Priority: optional
 Architecture: arm64
-Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-opencv,voxl-open-vins,voxl-eigen3,voxl-ceres-solver
+Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-opencv,voxl-open-vins,voxl-ceres-solver
 Conflicts:
 Maintainer: cliff.wong@modalai.com
 Description: Publishes VIO data over named pipe interface.
