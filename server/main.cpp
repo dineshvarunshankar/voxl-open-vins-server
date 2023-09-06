@@ -1148,6 +1148,14 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						catch (const std::out_of_range& e)
 						{
 							fprintf(stderr, "failed feed_measurement_camera\n");
+							for (int i=0; i<cameras_used; i++)
+							{
+								pipe_client_flush(camera_pipe_channels[i]);
+							}
+							pipe_client_flush(IMU_CH);
+							camera_queue.clear();
+							thread_update_running = false;
+							break;
 						}
 
 						try
@@ -1356,6 +1364,10 @@ static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state,
 
 	// all is good (for now)
 	return 0;
+}
+
+static double map_double(double x, double in_min, double in_max, double out_min, double out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 
@@ -1696,9 +1708,15 @@ static void _publish_default(double pose_timestamp)
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
-	s.quality = calc_quality(s.state, s.velocity_covariance,
-			vel_imu_wrt_vio_holder.norm(), max_width, max_height,
-			d.n_total_features, cam_info_vec.size(), d.features);
+//	s.quality = calc_quality(s.state, s.velocity_covariance,
+//			vel_imu_wrt_vio_holder.norm(), max_width, max_height,
+//			d.n_total_features, cam_info_vec.size(), d.features);
+
+	// 2 inch percision
+	s.quality = map_double(T_uncertainty, 0.004, 0.05, 100, 0);
+
+	if (s.quality < 1)
+		s.quality = 0;
 
 	// fill in simplified struct inside the extended packet
 	memcpy(&d.v, &s, sizeof(vio_data_t));
