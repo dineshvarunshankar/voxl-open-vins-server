@@ -1729,7 +1729,11 @@ static void _publish_default(double pose_timestamp)
 		ov_status.r_dop = R_uncertainty;
 		ov_status.num_features = curr_pixel_locs.size();
 
-		for (size_t b=0; b<curr_pixel_locs.size() ; b++)
+		unsigned int max_sz = curr_pixel_locs.size();
+		if (max_sz >= VIO_MAX_REPORTED_FEATURES)
+			max_sz = VIO_MAX_REPORTED_FEATURES-1;
+
+		for (size_t b=0; b<max_sz ; b++)
 		{
 			ov_status.features[b].id  = curr_pixel_locs[b].id;
 			ov_status.features[b].cam_id = curr_pixel_locs[b].cam_id;
