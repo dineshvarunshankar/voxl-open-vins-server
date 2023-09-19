@@ -85,13 +85,13 @@ voxl-open-vins-server$ ./deploy_to_voxl.sh ssh 192.168.1.123
 
 ## Oct 2023 -- BETA Prerelease Binary Installation
 
-download nightly & untar (email a ModalAI representative for location of nightly builds and directions) 
+1. download nightly & untar (email a ModalAI representative for location of nightly builds and directions) 
 
 or
 
-edit your apt package manager
+2. edit your apt package manager
 
-'''bash
+```bash
 voxl-open-vins-server$ adb shell (to get on VOXL2 via USB)
 
 (logs into VOXL2)
@@ -110,6 +110,6 @@ voxl2$ exit
 
 power cycle VOXL2
 
-'''
+```
 
 Note on a fresh install, it is recommended the user run **vins-cal.py** to calibrate your IMU for OpenVINS.
