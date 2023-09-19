@@ -6,18 +6,24 @@ dependencies:
 * libmodal-json
 * libmodal-pipe
 * voxl-opencv
-* voxl-boost
-* voxl-eigen3
+* voxl-open-vins
+* voxl-common
+
 
 This README covers building this package. See docs.modalai.com for usage(eventually).
+
+Current OpenVINS for VOXL is only supported for VOXL2 flight hardware. It will build for older VOXL1, but **not recommended** to be used on VOXL1.
 
 
 ## Build Environment
 
-This project builds in the voxl-cross docker image (>= V1.7)
+This project builds in the voxl-cross docker image **(>= V2.6)**
 
 Follow the instructions here to build and install the voxl-cross docker image:
-https://gitlab.com/voxl-public/voxl-docker
+https://gitlab.com/voxl-public/voxl-docker 
+or 
+pickup a prebuilt docker image here: 
+https://developer.modalai.com/asset/5
 
 
 ## Build Instructions
@@ -25,7 +31,8 @@ https://gitlab.com/voxl-public/voxl-docker
 1) Launch the voxl-cross docker.
 
 ```bash
-~/git/voxl-open-vins-server$ voxl-docker -i voxl-cross
+~/git/voxl-open-vins-server$ voxl-docker -d /home/dev/modal -i voxl-cross:V2.6
+
 voxl-cross:~$
 ```
 
@@ -42,8 +49,6 @@ The build script in this template will build for 64-bit using different cross co
 
 ```bash
 voxl-cross:~$ ./build.sh qrb5165
-OR
-voxl-cross:~$ ./build.sh apq8096
 ```
 
 
@@ -51,8 +56,7 @@ voxl-cross:~$ ./build.sh apq8096
 
 ```bash
 voxl-cross:~$ ./make_package.sh deb
-OR
-voxl-cross:~$ ./make_package.sh ipk
+
 ```
 
 This will make a new package file in your working directory. The name and version number came from the package control file. If you are updating the package version, edit it there.
@@ -78,3 +82,34 @@ This deploy script can also push over a network given sshpass is installed and t
 (outside of docker)
 voxl-open-vins-server$ ./deploy_to_voxl.sh ssh 192.168.1.123
 ```
+
+## Oct 2023 -- BETA Prerelease Binary Installation
+
+download nightly & untar (email a ModalAI representative for location of nightly builds and directions) 
+
+or
+
+edit your apt package manager
+
+'''bash
+voxl-open-vins-server$ adb shell (to get on VOXL2 via USB)
+
+(logs into VOXL2)
+
+voxl2$ vi /etc/apt/sources.list.d/modalai.list
+
+( ensure the only line exists:
+  deb [trusted=yes] http://voxl-packages.modalai.com/ qrb5165 staging
+  save the file )
+
+voxl2$ apt update
+voxl2$ apt install voxl-open-vins-server
+voxl2$ systemctl enable voxl-open-vins-server
+voxl2$ systemctl disable voxl-qvio-server
+voxl2$ exit
+
+power cycle VOXL2
+
+'''
+
+Note on a fresh install, it is recommended the user run **vins-cal.py** to calibrate your IMU for OpenVINS.
