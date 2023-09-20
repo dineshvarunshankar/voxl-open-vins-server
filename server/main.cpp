@@ -991,280 +991,208 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	try
 	{
 
-	is_init = vio_manager->initialized();
-
-	// time this in debug mode
-	int64_t   process_time;
-
-	static bool changed_motion_state = false;
-	static double last_accel_mag = 0, last_gyro_mag = 0;
-
-	// TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
-	// by pausing caluclation while the publishing loop runs with new timestamps.
-	// So on average use every other packet.
-	if (!vio_manager->is_moving())
-	{
-    	perf_limit  = 5; //6
-	}
-	else
-	{
-		if (n_packets > 100)
-			perf_limit = 10;  //3
-		else	 if (n_packets > 10)
-			perf_limit = 5;  //3
-		else
-			perf_limit = 1;  //3
-
-		if (!changed_motion_state)
+		is_init = vio_manager->initialized();
+	
+		// time this in debug mode
+		int64_t   process_time;
+	
+		static bool changed_motion_state = false;
+		static double last_accel_mag = 0, last_gyro_mag = 0;
+	
+		// TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
+		// by pausing caluclation while the publishing loop runs with new timestamps.
+		// So on average use every other packet.
+		if (!vio_manager->is_moving())
 		{
-			fprintf(stderr, "[WARN] Motion detected, going to full processing\n");
-			changed_motion_state = true;
-		}
-	}
-
-	for (int i = 0; i < n_packets; i+=perf_limit)
-//		for (int i = 0; i < n_packets; i+=perf_limit)
-	{
-
-		auto rT0_1 = boost::posix_time::microsec_clock::local_time();
-
-		// check if we somehow got an out-of-order imu sample and reject it
-		if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
-		{
-			double dt = (last_imu_timestamp_ns - data_array[i].timestamp_ns)
-					* 1e-09;
-			fprintf(stderr, "WARNING out-of-order imu %fms before previous\n",
-					dt);
-			continue;
+			perf_limit  = 5; //6
 		}
 		else
 		{
-
-			// Create the data struct that we will use for ingesting data into the vio manager
-			ov_core::ImuData vio_manager_data;
-			vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09; // (seconds)
-
-			Eigen::Matrix<double, 3, 1> t_wm;
-			Eigen::Matrix<double, 3, 1> t_am;
-			Eigen::Matrix<double, 3, 1> j_am;
-
-			t_wm(0, 0) = data_array[i].gyro_rad[0];
-			t_wm(1, 0) = data_array[i].gyro_rad[1];
-			t_wm(2, 0) = data_array[i].gyro_rad[2];
-
-			t_am(0, 0) = data_array[i].accl_ms2[0];
-			t_am(1, 0) = data_array[i].accl_ms2[1];
-			t_am(2, 0) = data_array[i].accl_ms2[2];
-
-//			j_am(0, 0) = data_array[i].accl_ms2[0];
-//			j_am(1, 0) = data_array[i].accl_ms2[1];
-//			j_am(2, 0) = data_array[i].accl_ms2[2];
-
-//	        double imu_dt = data_array[i].timestamp_ns  - imu_last_time;
-//			dead_reckon_position(imu_dt*1e-9,
-//					t_am(0, 0),
-//					t_am(1, 0),
-//					t_am(2, 0),
-//					t_wm(0, 0),
-//					t_wm(1, 0),
-//					t_wm(2, 0) );
-//			imu_last_time =  data_array[i].timestamp_ns ;
-
-
-			// NED to FLU systems as per VINS.
-			static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
-			correction_mat(1,1) = -1;
-			correction_mat(2,2) = -1;
-//		    static Eigen::Matrix3d correction_mat((double*)world_correction.data);
-
-			t_wm = correction_mat * t_wm;
-		    t_am = correction_mat * t_am;
-
-
-		    // FLU
-		    vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
-			vio_manager_data.wm(1, 0) = t_wm(1, 0);  // pitch
-			vio_manager_data.wm(2, 0) = t_wm(2, 0);  //yaw
-			vio_manager_data.am(0, 0) = t_am(0, 0);  // X axis
-			vio_manager_data.am(1, 0) = t_am(1, 0);  // Y axis
-			vio_manager_data.am(2, 0) = t_am(2, 0);  // Z axis
-
-			vio_manager->feed_measurement_imu(vio_manager_data);
-			last_imu_timestamp_ns = data_array[i].timestamp_ns;
-			last_imu_time = vio_manager_data.timestamp;
-
-//			if (!vio_manager->is_moving() &&
-//					((boost::posix_time::microsec_clock::local_time() -  zeroTimeOut).total_microseconds() * 1e-6) > 5)
-//			{
-////				if ( j_am.norm() > 0.25 && t_wm.norm() > 0.005)
-//
-//				double acc_mag = j_am.norm();
-//				double gyro_mag = t_wm.norm();
-//				if (last_accel_mag != 0 && last_gyro_mag != 0)
-//				{
-//					if ( fabs(acc_mag-last_accel_mag) > 0.1 && fabs(gyro_mag-last_gyro_mag) > 0.001)
-//					{
-//							static bool run_once = false;
-//							if (!run_once)
-//							{
-//								fprintf(stderr, "[WARN] Motion before disparity, OVERRIDE ZUPT! %f %f\n",
-//										j_am.norm() , t_wm.norm()	);
-//								run_once = true;
-//							}
-//
-//							image_update_running = false;
-//
-//					}
-//					else
-//					{
-//						image_update_running = true;
-//						return;
-//					}
-//				}
-//				last_accel_mag = acc_mag ;
-//				last_gyro_mag = gyro_mag ;
-//
-//			}
-
-			  if (thread_update_running)
-				return;
-
-			  thread_update_running = true;
-
-			double timestamp_imu_inC = vio_manager_data.timestamp
-					- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-
-			std::thread thread([&] {
-
-					std::lock_guard<std::mutex> lck(camera_queue_mtx);
-		//			image_update_running = true;
-					while (!camera_queue.empty()
-							&& camera_queue.at(0).timestamp < timestamp_imu_inC)
-					{
-						try
+			if (n_packets > 100)
+				perf_limit = 10;  //3
+			else	 if (n_packets > 10)
+				perf_limit = 2;  //3
+			else
+				perf_limit = 1;  //3
+	
+			if (!changed_motion_state)
+			{
+				fprintf(stderr, "[WARN] Motion detected, going to full processing\n");
+				changed_motion_state = true;
+			}
+		}
+	
+		for (int i = 0; i < n_packets; i+=perf_limit)
+	//		for (int i = 0; i < n_packets; i+=perf_limit)
+		{
+	
+			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
+	
+			// check if we somehow got an out-of-order imu sample and reject it
+			if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
+			{
+				double dt = (last_imu_timestamp_ns - data_array[i].timestamp_ns)
+						* 1e-09;
+				fprintf(stderr, "WARNING out-of-order imu %fms before previous\n",
+						dt);
+				continue;
+			}
+			else
+			{
+	
+				// Create the data struct that we will use for ingesting data into the vio manager
+				ov_core::ImuData vio_manager_data;
+				vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09; // (seconds)
+	
+				Eigen::Matrix<double, 3, 1> t_wm;
+				Eigen::Matrix<double, 3, 1> t_am;
+				Eigen::Matrix<double, 3, 1> j_am;
+	
+				t_wm(0, 0) = data_array[i].gyro_rad[0];
+				t_wm(1, 0) = data_array[i].gyro_rad[1];
+				t_wm(2, 0) = data_array[i].gyro_rad[2];
+	
+				t_am(0, 0) = data_array[i].accl_ms2[0];
+				t_am(1, 0) = data_array[i].accl_ms2[1];
+				t_am(2, 0) = data_array[i].accl_ms2[2];
+	
+	//			j_am(0, 0) = data_array[i].accl_ms2[0];
+	//			j_am(1, 0) = data_array[i].accl_ms2[1];
+	//			j_am(2, 0) = data_array[i].accl_ms2[2];
+	
+	//	        double imu_dt = data_array[i].timestamp_ns  - imu_last_time;
+	//			dead_reckon_position(imu_dt*1e-9,
+	//					t_am(0, 0),
+	//					t_am(1, 0),
+	//					t_am(2, 0),
+	//					t_wm(0, 0),
+	//					t_wm(1, 0),
+	//					t_wm(2, 0) );
+	//			imu_last_time =  data_array[i].timestamp_ns ;
+	
+	
+				// NED to FLU systems as per VINS.
+				static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
+				correction_mat(1,1) = -1;
+				correction_mat(2,2) = -1;
+	//		    static Eigen::Matrix3d correction_mat((double*)world_correction.data);
+	
+				t_wm = correction_mat * t_wm;
+				t_am = correction_mat * t_am;
+	
+	
+				// FLU
+				vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
+				vio_manager_data.wm(1, 0) = t_wm(1, 0);  // pitch
+				vio_manager_data.wm(2, 0) = t_wm(2, 0);  //yaw
+				vio_manager_data.am(0, 0) = t_am(0, 0);  // X axis
+				vio_manager_data.am(1, 0) = t_am(1, 0);  // Y axis
+				vio_manager_data.am(2, 0) = t_am(2, 0);  // Z axis
+	
+				vio_manager->feed_measurement_imu(vio_manager_data);
+				last_imu_timestamp_ns = data_array[i].timestamp_ns;
+				last_imu_time = vio_manager_data.timestamp;
+	
+	//			if (!vio_manager->is_moving() &&
+	//					((boost::posix_time::microsec_clock::local_time() -  zeroTimeOut).total_microseconds() * 1e-6) > 5)
+	//			{
+	////				if ( j_am.norm() > 0.25 && t_wm.norm() > 0.005)
+	//
+	//				double acc_mag = j_am.norm();
+	//				double gyro_mag = t_wm.norm();
+	//				if (last_accel_mag != 0 && last_gyro_mag != 0)
+	//				{
+	//					if ( fabs(acc_mag-last_accel_mag) > 0.1 && fabs(gyro_mag-last_gyro_mag) > 0.001)
+	//					{
+	//							static bool run_once = false;
+	//							if (!run_once)
+	//							{
+	//								fprintf(stderr, "[WARN] Motion before disparity, OVERRIDE ZUPT! %f %f\n",
+	//										j_am.norm() , t_wm.norm()	);
+	//								run_once = true;
+	//							}
+	//
+	//							image_update_running = false;
+	//
+	//					}
+	//					else
+	//					{
+	//						image_update_running = true;
+	//						return;
+	//					}
+	//				}
+	//				last_accel_mag = acc_mag ;
+	//				last_gyro_mag = gyro_mag ;
+	//
+	//			}
+	
+				  if (thread_update_running)
+					return;
+	
+				  thread_update_running = true;
+	
+				double timestamp_imu_inC = vio_manager_data.timestamp
+						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
+	
+				std::thread thread([&] {
+	
+						std::lock_guard<std::mutex> lck(camera_queue_mtx);
+			//			image_update_running = true;
+						while (!camera_queue.empty()
+								&& camera_queue.at(0).timestamp < timestamp_imu_inC)
 						{
-							vio_manager->feed_measurement_camera(camera_queue.at(0));
-						}
-						catch (const std::out_of_range& e)
-						{
-							fprintf(stderr, "failed feed_measurement_camera\n");
-							for (int i=0; i<cameras_used; i++)
+							try
 							{
-								pipe_client_flush(camera_pipe_channels[i]);
+								vio_manager->feed_measurement_camera(camera_queue.at(0));
 							}
-							pipe_client_flush(IMU_CH);
-							camera_queue.clear();
-							thread_update_running = false;
-							break;
+							catch (const std::out_of_range& e)
+							{
+								fprintf(stderr, "failed feed_measurement_camera\n");
+								for (int i=0; i<cameras_used; i++)
+								{
+									pipe_client_flush(camera_pipe_channels[i]);
+								}
+								pipe_client_flush(IMU_CH);
+								camera_queue.clear();
+								thread_update_running = false;
+								break;
+							}
+	
+							try
+							{
+								_publish_default(last_imu_time);
+							}
+							catch (const std::out_of_range& e)
+							{
+								fprintf(stderr, "Could NOT publish overlay images\n");
+							}
+	
+							camera_queue.pop_front();
 						}
+						thread_update_running = false;
+				});
+	
+				thread.join();
+		
+			}
+	
+			auto rT0_2 = boost::posix_time::microsec_clock::local_time();
+			double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
+	
+			
+//			if (time_total < 0.005)
+//			{
+//				usleep(5000 - (time_total*1e+6));
+//			}
+//			auto rT0_3 = boost::posix_time::microsec_clock::local_time();
+//			double corrected_time = (rT0_3 - rT0_1).total_microseconds() * 1e-6;
 
-						try
-						{
-							_publish_default(last_imu_time);
-						}
-						catch (const std::out_of_range& e)
-						{
-							fprintf(stderr, "Could NOT publish overlay images\n");
-						}
-
-						camera_queue.pop_front();
-					}
-					thread_update_running = false;
-			});
-
-			thread.join();
-
-			usleep(100);
-
-
-
-
-
-
-//			image_update_running = false;
-/////////////////////////////////////////////////////////////////
-//
-//			  if (thread_update_running)
-//			    return;
-//			  thread_update_running = true;
-//			  std::thread thread([&] {
-//			    // Lock on the queue (prevents new images from appending)
-//			    std::lock_guard<std::mutex> lck(camera_queue_mtx);
-//
-//			      // Loop through our queue and see if we are able to process any of our camera measurements
-//			      // We are able to process if we have at least one IMU measurement greater than the camera time
-//			      double timestamp_imu_inC = vio_manager_data.timestamp
-//			    		  	  	  	  	  	  	  	  	  	  	  	  	  - vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-//
-//			      while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
-//						vio_manager->feed_measurement_camera(camera_queue.at(0));
-//
-//						_publish_default(last_imu_time);
-//
-//						camera_queue.pop_front();
-//			      }
-//			    thread_update_running = false;
-//			  });
-//
-//			  thread.detach();
-
-			  // If we are single threaded, then run single threaded
-			  // Otherwise detach this thread so it runs in the background!
-//			  if (!_app->get_params().use_multi_threading_subs) {
-//			    thread.join();
-//			  } else {
-//			    thread.detach();
-//			  }
-
-
-
-
-// TODO: multi camera
-//
-//        if (thread_update_running)
-//            return;
-//        thread_update_running = true;
-//        std::thread thread([&] {
-//            // Lock on the queue (prevents new images from appending)
-//            std::lock_guard<std::mutex> lck(camera_queue_mtx);
-//
-//    		double timestamp_imu_inC = vio_manager_data.timestamp - vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-//    		while (!camera_queue.empty() && camera_queue.at(0).timestamp < timestamp_imu_inC) {
-//    			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
-//    			double update_dt = 100.0 * (timestamp_imu_inC - camera_queue.at(0).timestamp);
-//    			vio_manager->feed_measurement_camera(camera_queue.at(0));
-//				_publish_default(timestamp_imu_inC);
-//    			camera_queue.pop_front();
-//    			auto rT0_2 = boost::posix_time::microsec_clock::local_time();
-//    			double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
-//    			//printf("[TIME]: %.4f seconds total (%.1f hz, %.2f ms behind)\n"  time_total, 1.0 / time_total, update_dt);
-//    		}
-//
-//    		thread_update_running = false;
-//        });
-//
-//        thread.join();
-//
-//		static long last_cam_time = 0;
-//		long now_time = _apps_time_monotonic_ns() ;
-//		if (last_cam_time> 0)
-//		{
-//			double cam_dt = now_time - last_cam_time;
-//			printf("imu frame time: %f %f %d\n",  cam_dt, 1/(cam_dt*1e-9), i);
-//		}
-//		last_cam_time = now_time;
+//			if (en_debug_pos)
+//			{
+//				printf("[TIME]: %.4f vs %.4f  - %d\n" , time_total,  corrected_time, n_packets);
+//			}
+	
 		}
-
-		auto rT0_2 = boost::posix_time::microsec_clock::local_time();
-		double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
-
-//		if (en_debug_pos)
-//		{
-//			printf("[TIME]: %.4f seconds total (%.1f hz) - %d\n" , time_total, 1.0 / time_total, n_packets);
-//
-//		}
-
-	}
 
 	}
 	catch (const std::out_of_range& e)
@@ -1272,6 +1200,64 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		fprintf(stderr, "IMU Process error!\n");
 	}
 	return;
+}
+
+static int _check_for_blowup_new(std::shared_ptr<ov_msckf::State> current_state,
+				double T_dop,
+				double R_dop,
+				int good_features)
+{
+	int64_t current_ts = current_state->_timestamp * 1e9;
+	static int64_t last_time_with_good_cov = 0;
+	static int64_t last_time_with_enough_features = 0;
+
+	// reset timers to current time after reset so we don't trip this during init
+	if (hard_reset_blowup_flag)
+	{
+		last_time_with_enough_features = current_ts;
+		last_time_with_good_cov = current_ts;
+		hard_reset_blowup_flag = 0;
+	}
+
+	if (T_dop < 80.0 || R_dop > 0.5)
+	{
+		return ERROR_CODE_VEL_INST_CERT;
+	}
+
+	float vel = sqrtf(
+			  (current_state->_imu->vel_fej()(0) * current_state->_imu->vel_fej()(0))
+			+ (current_state->_imu->vel_fej()(1) * current_state->_imu->vel_fej()(1))
+			+ (current_state->_imu->vel_fej()(2) * current_state->_imu->vel_fej()(2)));
+	if (vel > auto_reset_max_velocity)
+	{
+		fprintf(stderr,
+				"WARNING auto-resetting due to exceeding max velocity of %4.1fm/s\n",
+				(double) auto_reset_max_velocity);
+		return ERROR_CODE_VEL_INST_CERT;
+	}
+	
+
+	// min feature timeout check
+        if (good_features > auto_reset_min_features)
+        {
+                last_time_with_enough_features = current_ts;
+        }
+        else
+        {
+                float tmp = (float) (current_ts - last_time_with_enough_features)
+                                / 1000000000.0f;
+                if (tmp > auto_reset_min_feature_timeout_s)
+                {
+                        fprintf(stderr,
+                                        "WARNING auto-resetting due to low feature count\n");
+                        fprintf(stderr, "feats: %d, limit: %d\n", good_features,
+                                        auto_reset_min_features);
+                        return ERROR_CODE_LOW_FEATURES;
+                }
+        }
+
+
+	return 0;
 }
 
 
@@ -1294,12 +1280,9 @@ static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state,
 	// Now go through our 4 blowup criteria
 	// max velocity check  current_state->_imu->vel().cast<float>()
 	float vel = sqrtf(
-			(current_state->_imu->vel_fej()(0)
-					* current_state->_imu->vel_fej()(0))
-					+ (current_state->_imu->vel_fej()(1)
-							* current_state->_imu->vel_fej()(1))
-					+ (current_state->_imu->vel_fej()(2)
-							* current_state->_imu->vel_fej()(2)));
+			  (current_state->_imu->vel_fej()(0) * current_state->_imu->vel_fej()(0))
+			+ (current_state->_imu->vel_fej()(1) * current_state->_imu->vel_fej()(1))
+			+ (current_state->_imu->vel_fej()(2) * current_state->_imu->vel_fej()(2)));
 	if (vel > auto_reset_max_velocity)
 	{
 		fprintf(stderr,
@@ -1720,8 +1703,11 @@ static void _publish_default(double pose_timestamp)
 
 	// fill in simplified struct inside the extended packet
 	memcpy(&d.v, &s, sizeof(vio_data_t));
+	
+	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
-	if (en_ov_stats)
+	if ((pipe_server_get_num_clients(OVSTATUS_CH) > 0) && en_ov_stats)
 	{
 		ov_status.timestamp_ns = s.timestamp_ns;
 		ov_status.quality = s.quality;
@@ -1741,14 +1727,7 @@ static void _publish_default(double pose_timestamp)
 			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
 		}
 		pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
-		usleep(2);
 	}
-
-	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-	usleep(2);
-	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-	usleep(2);
-
 
 	// for debug only
 	if (en_debug)
@@ -1772,9 +1751,8 @@ static void _publish_default(double pose_timestamp)
 	// if someone has subscribed to the overlay, draw it
 	if (pipe_server_get_num_clients(OVERLAY_CH) > 0)
 	{
-		static cv::Mat overlay_cp;
-
-		if (every_other++ % 9 == 0)  // 10 fps
+		static cv::Mat overlay_cp;		
+		if (every_other++ % publish_frequency == 0) 
 		{
 
 			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
@@ -2238,7 +2216,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 				baro_alt = dist - zero_alt;
 				if (last_val != -99999)
 				{
-					baro_alt = (0.25 * baro_alt) + (0.75 * last_val);
+					baro_alt = (0.4 * baro_alt) + (0.6 * last_val);
 
 					//v = dx/dt
 //					double baro_vel_z = (baro_alt - last_val) /  (baro_time_ms / 1000);
@@ -2576,7 +2554,7 @@ static int read_external_configs(void)
 ///
 // VOXL 1.1 OV92XX camera actiavated!!!!!!!!!!!!!!!!!!!!!!!!!!
 ///
-//#define OV92XX 1
+#define OV92XX 1
 
 static int connect_client_pipes(void)
 {
@@ -2607,12 +2585,12 @@ static int connect_client_pipes(void)
 
 		fprintf(stderr, "Camera merge --- > ch: %d to cam id: %d\n", ch, i);
 
-#ifdef OV92XX
-		// OV92xx COLOR/GRAYSCALE OUTPUTS ONLY
-		sprintf(t_cam_nam, "%s_grey", cam_info_vec[i].name);
-#else
+//#ifdef OV92XX
+//		// OV92xx COLOR/GRAYSCALE OUTPUTS ONLY
+//		sprintf(t_cam_nam, "%s_grey", cam_info_vec[i].name);
+//#else
 		sprintf(t_cam_nam, "%s", cam_info_vec[i].name);
-#endif
+//#endif
 
 		if (std::find(tmp_camera_pipe_names.begin(), tmp_camera_pipe_names.end(), t_cam_nam) == tmp_camera_pipe_names.end())
 		{
