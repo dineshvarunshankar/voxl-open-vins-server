@@ -128,7 +128,8 @@ int num_opencv_threads;
 int fast_threshold;
 ov_core::TrackBase::HistogramMethod histogram_method;
 double knn_ratio;
-double track_frequency;
+double track_frequency; //ROS only
+int publish_frequency; //VOXL only
 
 bool en_ov_stats;
 bool en_baro;
@@ -247,6 +248,7 @@ int config_file_print(void) {
     printf("histogram_method:                  %s\n", hist_as_string(histogram_method).c_str());
     printf("knn_ratio:                  %6.5f\n", knn_ratio);
     printf("track_frequency:                  %6.5f\n", track_frequency);
+    printf("publish_frequency:                  %d\n", publish_frequency);
     printf("use baro:                  %s\n", en_baro ? "true" : "false");
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
 
@@ -284,40 +286,40 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_intrins_refinement", (int *)&cam_intrins_refinement, 1);
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
-    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 12);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 50);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 64);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 64);
+    json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 35);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 20);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 20);
 
-    json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 0);
-    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 5);
+    json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
+    json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
 
-    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.002);
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.003);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
-    json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 1.5);
-    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 1.0);
+    json_fetch_double_with_default(parent, "init_window_time", &init_window_time, 1.0);
+    json_fetch_double_with_default(parent, "init_imu_thresh", &init_imu_thresh, 0.5);
 
     json_fetch_double_with_default(parent, "imu_sigma_w", &imu_sigma_w, 0.0002);
     json_fetch_double_with_default(parent, "imu_sigma_wb", &imu_sigma_wb, 1.565e-06);
     json_fetch_double_with_default(parent, "imu_sigma_a", &imu_sigma_a, 0.05333);
     json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 0.00357402);
 
-    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 5.);
+    json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 1.);
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.);
 
-    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 5.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.);
+    json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 40.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.5);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
-    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.1);
+    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.03);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 1.0);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3.0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
@@ -335,15 +337,16 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
 
-    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 6);
-    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 20);
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 2);
+    json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
     int tmp_hist = 0;
-    json_fetch_int_with_default(parent, "histogram_method", &tmp_hist, 10);
+    json_fetch_int_with_default(parent, "histogram_method", &tmp_hist, 1);
     histogram_method = int_to_hist_method(tmp_hist);
 
-    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.85);
+    json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 12.0);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 10);
 
     json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);

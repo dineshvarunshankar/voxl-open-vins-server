@@ -168,7 +168,6 @@ static void _print_data(ov_status_t d)
 
 	for (int i=0; i<VIO_MAX_REPORTED_FEATURES; i++)
 	{
-
 		_featDB[d.features[i].id][0] =  d.features[i].pix_loc[0];
 		_featDB[d.features[i].id][1] =  d.features[i].pix_loc[1];
 	}

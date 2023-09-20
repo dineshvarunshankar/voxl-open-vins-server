@@ -51,6 +51,10 @@
 
 #define EXTRINS_BODY "body"
 
+void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion);
+void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R);
+
+//DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
 int get_RPY_from_NED_to_FLU(double roll, double pitch, double yaw, Eigen::Matrix<double,3,3>  &R);
 
@@ -76,7 +80,78 @@ double max_angular_rate_before_blur;
 cv::Matx33d tmp_world_correction = cv::Matx33d::eye();
 cJSON *cam_json = NULL;
 
+void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion) 
+{
+	static int camera_ctn = 0;
+	double r,p,y;
 
+	// Get the Euler angles in XYZ, RPY order.
+	Eigen::Vector3d eulerAngles = R.eulerAngles(0, 1, 2);
+
+	// TODO Fix anything needed for FLIPPED VOXL2 board, aka when IMU is upside down
+	
+	// Return the Euler angles.
+	  r = eulerAngles(0);
+	  p = M_PI - eulerAngles(1);
+	  y = eulerAngles(2) - M_PI;
+	  
+	printf("[INFO] Camera: %d -- converted extrinsics *in FLU* are: Roll: %f, Pitch %f, Yaw %f\n", 
+			camera_ctn++,
+			r/M_PI*180,
+			p/M_PI*180,
+			y/M_PI*180);
+
+	double c1 = cos( r / 2 );
+	double c2 = cos( p / 2 );
+	double c3 = cos( y / 2 );
+
+	double s1 = sin( r / 2 );
+	double s2 = sin( p / 2 );
+	double s3 = sin( y / 2 );
+
+	quaternion(0) = s1 * c2 * c3 + c1 * s2 * s3;
+	quaternion(1) = c1 * s2 * c3 - s1 * c2 * s3;
+	quaternion(2)  = c1 * c2 * s3 + s1 * s2 * c3;
+	quaternion(3)  = c1 * c2 * c3 - s1 * s2 * s3;
+
+	quat_2_rot(quaternion, R);
+  
+ }
+
+void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R)
+{
+	double x = quaternion(0);
+	double y = quaternion(1);
+	double z = quaternion(2);
+	double w = quaternion(3);
+	double x2 = x + x;
+	double y2 = y + y;
+	double z2 = z + z;
+	double xx = x * x2;
+	double xy = x * y2;
+	double xz = x * z2;
+	double yy = y * y2;
+	double yz = y * z2;
+	double zz = z * z2;
+	double wx = w * x2;
+	double wy = w * y2;
+	double wz = w * z2;
+
+	R(0,0) = ( 1 - ( yy + zz ) );
+	R(1,0) = ( xy + wz );
+	R(2,0) = ( xz - wy );
+
+	R(0,1) = ( xy - wz );
+	R(1,1) = ( 1 - ( xx + zz ) );
+	R(2,1) = ( yz + wx );
+
+	R(0,2) = ( xz + wy );
+	R(1,2) = ( yz - wx );
+	R(2,2) = ( 1 - ( xx + yy ) );
+
+}
+
+//DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw)
 {
     *roll  = atan2(R(2,1), R(2,2));
@@ -96,6 +171,7 @@ int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, 
     return 0;
 }
 
+//DEPRECATED
 int get_RPY_from_NED_to_FLU(double roll, double pitch, double yaw, Eigen::Matrix<double,3,3>  &R)
 {
     double c1 = cos(yaw);
@@ -410,23 +486,16 @@ int cam_load_extrinsics_file()
 			std::cout << "\nprocessing NED extrinsics: " << std::endl;
 			std::cout << rotation_temp_1 << std::endl;
 
-			// convert to FLU
-			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
-			double r,p,y;
-			get_RPY_from_NED(rotation_temp_1, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
-			get_RPY_from_NED_to_FLU((r+M_PI),p,(y+M_PI), rotation_temp_1);
-			std::cout << "\n[cam  " << cam_info_set_vec[i].name << cam_info_set_vec[i].extrinsics_extension_first << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
-					<< cam_info_set_vec[i].name << "]" << std::endl;
-			std::cout << rotation_temp_1 << std::endl;
-
 			// convert to quat
 			Eigen::Matrix<double, 4, 1> quaternion_1;
 			Eigen::Matrix<double, 3, 1> translation_1;
 
-			quaternion_1 = rot_2_quat(rotation_temp_1);
+			// convert extrinsics from NED  to FLU
+			extrinsicsNEDtoFLU(rotation_temp_1, quaternion_1);
+
 			translation_1[0] = extrins_holder.T_child_wrt_parent[0];
-			translation_1[1] = extrins_holder.T_child_wrt_parent[1];
-			translation_1[2] = extrins_holder.T_child_wrt_parent[2];
+			translation_1[1] = -1 * extrins_holder.T_child_wrt_parent[1];
+			translation_1[2] = -1 * extrins_holder.T_child_wrt_parent[2];
 
 			cv::Mat cam_wrt_imu_rot_1 = cv::Mat(3, 3, CV_64F);
 
@@ -470,24 +539,16 @@ int cam_load_extrinsics_file()
 			std::cout << "processing NED extrinsics: " << std::endl;
 			std::cout << rotation_temp_2 << std::endl;
 
-			// convert to FLU
-			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
-			get_RPY_from_NED(rotation_temp_2, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
-			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp_2);
-			std::cout << "\n[cam  " << cam_info_set_vec[i].name  << cam_info_set_vec[i].extrinsics_extension_second << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
-					<< cam_info_set_vec[i].name << "]" << std::endl;
-			std::cout << rotation_temp_2 << std::endl;
-
-
 			// convert to quat
 			Eigen::Matrix<double, 4, 1> quaternion_2;
 			Eigen::Matrix<double, 3, 1> translation_2;
-
-			quaternion_2 = rot_2_quat(rotation_temp_2);
+			
+			// convert extrinsics from NED  to FLU
+			extrinsicsNEDtoFLU(rotation_temp_2, quaternion_2);
 
 			translation_2[0] = extrins_holder.T_child_wrt_parent[0];
-			translation_2[1] = extrins_holder.T_child_wrt_parent[1];
-			translation_2[2] = extrins_holder.T_child_wrt_parent[2];
+			translation_2[1] = -1 * extrins_holder.T_child_wrt_parent[1];
+			translation_2[2] = -1 * extrins_holder.T_child_wrt_parent[2];
 
 			cv::Mat cam_wrt_imu_rot_2 = cv::Mat(3, 3, CV_64F);
 
@@ -545,24 +606,17 @@ int cam_load_extrinsics_file()
 				}
 			}
 
-			// convert to FLU
-			// TODO: sort of inefficent and code is duped in other libs, but explicit for now.
-			double r,p,y;
-			get_RPY_from_NED(rotation_temp, &r, &p, &y);   //TODO: pull from rcmath lib, has same logic
-			get_RPY_from_NED_to_FLU((r-M_PI),p,(y-M_PI), rotation_temp);
-			std::cout << "[cam " << i << "] using FLU imu-cam rotation [" << tmp_imu_name << " - "
-					<< cam_info_set_vec[i].name << "]" << std::endl;
-			std::cout << rotation_temp << std::endl;
-
 			// convert to quat
 			Eigen::Matrix<double, 4, 1> quaternion;
 			Eigen::Matrix<double, 3, 1> translation;
 
-			quaternion = rot_2_quat(rotation_temp);
+			// convert extrinsics from NED  to FLU
+			extrinsicsNEDtoFLU(rotation_temp, quaternion);
 
+			// WARNING: FLU coordindate system needs YZ flipped
 			translation[0] = extrins_holder.T_child_wrt_parent[0];
-			translation[1] = extrins_holder.T_child_wrt_parent[1];
-			translation[2] = extrins_holder.T_child_wrt_parent[2];
+			translation[1] = -1 * extrins_holder.T_child_wrt_parent[1];
+			translation[2] = -1 * extrins_holder.T_child_wrt_parent[2];
 
 			cv::Mat cam_wrt_imu_rot = cv::Mat(3, 3, CV_64F);
 
@@ -1159,17 +1213,17 @@ int cam_config_file_read(void)
 	json_fetch_string_with_default(parent, "tmp_imu_name", tmp_imu_name,
 			CM_CHAR_BUF_SIZE, "imu_apps");
 	json_fetch_int_with_default(parent, "num_features_to_track",
-			&num_features_to_track, 60);
+			&num_features_to_track, 40);
 	json_fetch_int_with_default(parent, "grid_x", &grid_x, 1);
 	json_fetch_int_with_default(parent, "grid_y", &grid_y, 1);
 	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 5);
-	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 2);
-	json_fetch_int_with_default(parent, "window_size", &window_size, 8);
+	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 3);
+	json_fetch_int_with_default(parent, "window_size", &window_size, 10);
 	json_fetch_bool_with_default(parent, "en_gyro", (int*) &en_gyro, 1);
 	json_fetch_bool_with_default(parent, "en_descriptors",
 			(int*) &en_descriptors, 0);
 	json_fetch_bool_with_default(parent, "en_database", (int*) &en_database, 1);
-	json_fetch_int_with_default(parent, "database_size", &database_size, 12);
+	json_fetch_int_with_default(parent, "database_size", &database_size, 50);
 	json_fetch_double_with_default(parent, "max_angular_rate_before_blur",
 			&max_angular_rate_before_blur, 40.0); // negative means ignored/disabled
 

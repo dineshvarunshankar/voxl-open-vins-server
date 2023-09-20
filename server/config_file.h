@@ -196,6 +196,7 @@ extern int fast_threshold;
 extern ov_core::TrackBase::HistogramMethod histogram_method;
 extern double knn_ratio;
 extern double track_frequency;
+extern int publish_frequency;
 extern bool en_ov_stats;
 extern bool en_baro;
 
