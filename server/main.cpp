@@ -643,12 +643,16 @@ static int _hard_reset(bool is_locked)
 
 static int _hard_reset_tbd(bool is_locked)
 {
+	
+	printf("_hard_reset_tbd\n");
 	// lock the mutex before calling any ov api calls
+	printf("locking managers\n");
 	if (!is_locked)
 		vio_manager_mutex.lock();
 	imu_lock_mutex.lock();
 
 	// stop it if it's running
+	printf("resetting managers\n");
 	if (is_initialized)
 	{
 		is_initialized = 0;
@@ -668,6 +672,7 @@ static int _hard_reset_tbd(bool is_locked)
 	R_uncertainty = 0;
 
 	// now start again
+	printf("restarting managers\n");
 	vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
 
 	if (vio_manager == NULL)
@@ -676,6 +681,7 @@ static int _hard_reset_tbd(bool is_locked)
 		_quit(-1);
 	}
 
+	printf("unlocking managers\n");
 	if (!is_locked)
 		vio_manager_mutex.unlock();
 	imu_lock_mutex.unlock();
@@ -928,6 +934,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	{
 		fprintf(stderr, "CAM Process error!\n");
 	}
+
+	thread_update_running = false;
+
 	delete curr_message;
 }
 
@@ -1141,33 +1150,32 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						while (!camera_queue.empty()
 								&& camera_queue.at(0).timestamp < timestamp_imu_inC)
 						{
-							try
-							{
+//							try
+//							{
 								vio_manager->feed_measurement_camera(camera_queue.at(0));
-							}
-							catch (const std::out_of_range& e)
-							{
-								fprintf(stderr, "failed feed_measurement_camera\n");
-								for (int i=0; i<cameras_used; i++)
-								{
-									pipe_client_flush(camera_pipe_channels[i]);
-								}
-								pipe_client_flush(IMU_CH);
-								camera_queue.clear();
-								thread_update_running = false;
-								break;
-							}
-	
-							try
-							{
+//							}
+//							catch (const std::out_of_range& e)
+//							{
+//								fprintf(stderr, "failed feed_measurement_camera (%d)\n", camera_queue.size());
+//								for (int i=0; i<cameras_used; i++)
+//								{
+//									pipe_client_flush(camera_pipe_channels[i]);
+//								}
+//								pipe_client_flush(IMU_CH);
+//								camera_queue.clear();
+//								break;
+//							}
+//	
+//							try
+//							{
 								_publish_default(last_imu_time);
-							}
-							catch (const std::out_of_range& e)
-							{
-								fprintf(stderr, "Could NOT publish overlay images\n");
-							}
+//							}
+//							catch (const std::out_of_range& e)
+//							{
+//								fprintf(stderr, "Could NOT publish overlay images\n");
+//							}
 	
-							camera_queue.pop_front();
+								camera_queue.pop_front();
 						}
 						thread_update_running = false;
 				});
