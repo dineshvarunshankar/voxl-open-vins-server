@@ -596,6 +596,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 {
 	while (main_running)
 	{
+		// 50Hz
 		usleep(20000);  // run about the same speed as the camera
 		int64_t current_time = _apps_time_monotonic_ns();
 		int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
@@ -1578,6 +1579,7 @@ static void _publish_default(double pose_timestamp)
 			fprintf(stderr,
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f\n", (current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", s.quality, imu_vel.norm());
 			s.state = VIO_STATE_FAILED;
+			s.quality = 0;
 			init_failure_detector_reset_flag = 1;		
 		}
 	}
