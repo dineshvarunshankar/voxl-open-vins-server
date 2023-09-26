@@ -119,7 +119,7 @@
 
 // auto reset parameters
 extern int en_auto_reset;
-extern float auto_reset_max_velocity;
+ extern float auto_reset_max_velocity;
 extern float auto_reset_max_v_cov_instant;
 extern float auto_reset_max_v_cov;
 extern float auto_reset_max_v_cov_timeout_s;
