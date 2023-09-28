@@ -562,8 +562,10 @@ static int _hard_reset_(bool fast_reset)
 	{
 		printf("FAST RESET requested!\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.zupt_max_velocity = 3.0;  
+		vio_manager_options.init_options.init_max_disparity = 15.0;
+		vio_manager_options.zupt_max_velocity = 5.0;  
 	}
+
 	vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
 	if (vio_manager == NULL)
 	{
@@ -572,6 +574,7 @@ static int _hard_reset_(bool fast_reset)
 	}
 	vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
 	vio_manager_options.init_options.init_window_time = oe_init_window_time;
+	vio_manager_options.init_options.init_max_disparity = 1.5;
 	
 	printf("unlocking managers\n");
 
@@ -596,8 +599,8 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 {
 	while (main_running)
 	{
-		// 50Hz
-		usleep(20000);  // run about the same speed as the camera
+		// 100Hz
+		usleep(15000);  // run about the same speed as the camera
 		int64_t current_time = _apps_time_monotonic_ns();
 		int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
 
@@ -1885,7 +1888,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.init_options.init_window_time = init_window_time;
 	vio_manager_options.init_options.init_imu_thresh = init_imu_thresh;
 	vio_manager_options.init_options.init_dyn_num_pose = max_clone_size;
-	vio_manager_options.init_options.init_max_disparity = 10000;
+	vio_manager_options.init_options.init_max_disparity = 1.5;
 	vio_manager_options.init_options.init_dyn_use = false;
 
 	/// IMU NOISE OPTIONS ///
@@ -1952,6 +1955,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.num_pts = num_features_to_track;
 	vio_manager_options.fast_threshold = fast_threshold;
 	vio_manager_options.min_px_dist = min_pix_dist;
+	
 	vio_manager_options.histogram_method = histogram_method;
 	vio_manager_options.knn_ratio = knn_ratio;
 	vio_manager_options.track_frequency = track_frequency;

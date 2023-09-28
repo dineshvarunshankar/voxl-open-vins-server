@@ -1162,7 +1162,7 @@ int cam_config_file_read(void)
 		ss << "cam" << i << "_name";
 		std_holder = ss.str();
 		json_fetch_string_with_default(parent, std_holder.c_str(),
-				string_holder, CM_CHAR_BUF_SIZE, "lepton0_raw");
+				string_holder, CM_CHAR_BUF_SIZE, "tracking");
 		if (strlen(string_holder) != 0)
 		{
 			camera_info_set curr_info;
@@ -1175,7 +1175,7 @@ int cam_config_file_read(void)
 		ss << "cam" << i << "_mode";
 		std_holder = ss.str();
 		json_fetch_string_with_default(parent, std_holder.c_str(),
-				string_holder, CM_CHAR_BUF_SIZE, "MONO");
+				string_holder, CM_CHAR_BUF_SIZE, "STEREO");
 		if (strlen(string_holder) != 0)
 		{
 			camera_mode curr_mode;
@@ -1188,7 +1188,7 @@ int cam_config_file_read(void)
 		ss << "cam" << i << "_extrinsics_extension_first";
 		std_holder = ss.str();
 		json_fetch_string_with_default(parent, std_holder.c_str(),
-				string_holder, CM_CHAR_BUF_SIZE, "");
+				string_holder, CM_CHAR_BUF_SIZE, "_front");
 
 		if (strlen(string_holder) != 0)
 		{
@@ -1201,7 +1201,7 @@ int cam_config_file_read(void)
 		ss << "cam" << i << "_extrinsics_extension_second";
 		std_holder = ss.str();
 		json_fetch_string_with_default(parent, std_holder.c_str(),
-				string_holder, CM_CHAR_BUF_SIZE, "");
+				string_holder, CM_CHAR_BUF_SIZE, "_down");
 		if (strlen(string_holder) != 0)
 		{
 			strncpy(cam_info_set_vec.back().extrinsics_extension_second,
@@ -1213,12 +1213,12 @@ int cam_config_file_read(void)
 	json_fetch_string_with_default(parent, "tmp_imu_name", tmp_imu_name,
 			CM_CHAR_BUF_SIZE, "imu_apps");
 	json_fetch_int_with_default(parent, "num_features_to_track",
-			&num_features_to_track, 40);
-	json_fetch_int_with_default(parent, "grid_x", &grid_x, 1);
-	json_fetch_int_with_default(parent, "grid_y", &grid_y, 1);
-	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 5);
+			&num_features_to_track, 20);
+	json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
+	json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
+	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 10);
 	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 3);
-	json_fetch_int_with_default(parent, "window_size", &window_size, 10);
+	json_fetch_int_with_default(parent, "window_size", &window_size, 25);
 	json_fetch_bool_with_default(parent, "en_gyro", (int*) &en_gyro, 1);
 	json_fetch_bool_with_default(parent, "en_descriptors",
 			(int*) &en_descriptors, 0);
