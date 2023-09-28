@@ -1956,6 +1956,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.num_pts = num_features_to_track;
 	vio_manager_options.fast_threshold = fast_threshold;
 	vio_manager_options.min_px_dist = min_pix_dist;
+	
 	vio_manager_options.histogram_method = histogram_method;
 	vio_manager_options.knn_ratio = knn_ratio;
 	vio_manager_options.track_frequency = track_frequency;
