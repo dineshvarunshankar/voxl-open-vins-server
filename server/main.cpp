@@ -562,7 +562,7 @@ static int _hard_reset_(bool fast_reset)
 	{
 		printf("FAST RESET requested!\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.init_options.init_max_disparity = 15.0;
+		vio_manager_options.init_options.init_max_disparity = 25.0;
 		vio_manager_options.zupt_max_velocity = 5.0;  
 	}
 
@@ -1239,19 +1239,22 @@ static double map_double(double x, double in_min, double in_max, double out_min,
 }
 
 // Looks at quality over time
-static bool quality_recovered(int cur_qual)
+static bool stable_quality(int cur_qual)
 {
 	static double last_good_qual_ts =  _apps_time_monotonic_ns();
-	double ts = (_apps_time_monotonic_ns() -last_good_qual_ts)*1e-9;
 	bool is_bad = false;
+	
+	if (cur_qual >= 30)
+		last_good_qual_ts =  _apps_time_monotonic_ns();
+		
 	// if quality is less than acceptable for more than 2 sec
-	if (cur_qual <= 25 &&  ts > auto_reset_min_feature_timeout_s)
+	double ts = (_apps_time_monotonic_ns() -last_good_qual_ts)*1e-9;
+	if ( ts > auto_reset_max_v_cov_timeout_s)
 	{
+		printf("ERROR: quality was bad for a long time!\n");
 		is_bad = true;
 	}
-	else
-		last_good_qual_ts =  _apps_time_monotonic_ns();
-
+	
 	return is_bad;
 }
 
@@ -1271,7 +1274,7 @@ static bool stable_state(int the_state)
 	{
 		last_good_state_ts =  _apps_time_monotonic_ns();
 	}
-	else if (ts > 2)
+	else if (ts > 3)
 	{
 		is_ready = true;
 	}
@@ -1279,6 +1282,39 @@ static bool stable_state(int the_state)
 	return is_ready;
 }
 
+// Looks at quality over time
+static bool stable_features(int cur_feats)
+{
+	static bool wait_for_features = true;
+	
+	if (wait_for_features)
+	{
+		if (cur_feats > 2)
+		{
+			wait_for_features = false;
+		}
+		return false;
+	}
+	
+	static double last_good_feat_ts =  _apps_time_monotonic_ns();
+	bool is_bad = false;
+	// if quality is less than acceptable for more than 2 sec
+	
+	// TODO use auto_reset_min_features!!!	
+	if (cur_feats > 1)
+		last_good_feat_ts =  _apps_time_monotonic_ns();
+		
+	double ts = (_apps_time_monotonic_ns() -last_good_feat_ts)*1e-9;
+
+	if ( ts > auto_reset_min_feature_timeout_s)
+	{
+		printf("ERROR: features were 0 for a long time!\n");
+		is_bad = true;
+		wait_for_features = true;
+	}
+	
+	return is_bad;
+}
 
 #define OVERLAY_RES_W_X 320
 #define OVERLAY_RES_H_Y 240
@@ -1577,7 +1613,7 @@ static void _publish_default(double pose_timestamp)
 	
 	if (!init_failure_detector_reset_flag && en_auto_reset && stable_state(s.state))
 	{		
-		if (current_state->error_flag == VIO_STATE_FAILED || s.quality <= 1 || quality_recovered(s.quality)  || imu_vel.norm() > auto_reset_max_velocity || V_uncertainty > auto_reset_max_v_cov_instant)
+		if (current_state->error_flag == VIO_STATE_FAILED || s.quality <= 1 || stable_quality(s.quality)  || stable_features(n_good_points)   || imu_vel.norm() > auto_reset_max_velocity || V_uncertainty > auto_reset_max_v_cov_instant)
 		{
 			fprintf(stderr,
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f\n", (current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", s.quality, imu_vel.norm());
@@ -1812,7 +1848,7 @@ static void _publish_default(double pose_timestamp)
 			draw_meta.format = IMAGE_FORMAT_RAW8;
 
 			char str[256];
-			sprintf(str, "CEP: %3.3f R_err: %3.2f   XYZ: %6.2lf %6.2lf %6.2lf",
+			sprintf(str, "CEP: %3.3f Rerr: %3.2f   XYZ: %6.2lf %6.2lf %6.2lf",
 					T_uncertainty, R_uncertainty * 180 / M_PI,
 					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
 					(double) s.T_imu_wrt_vio[2]);
