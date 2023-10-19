@@ -275,8 +275,8 @@ int config_file_read(void) {
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.01f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
-	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		2);
-	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s, 2.0f);
+	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		1);
+	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s, 3.0f);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
     json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
@@ -346,7 +346,7 @@ int config_file_read(void) {
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
-    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 10);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
 
     json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);

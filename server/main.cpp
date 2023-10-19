@@ -200,6 +200,8 @@ static camera_image_metadata_t draw_meta;
 
 static cv::Mat cached_overlay;
 static camera_image_metadata_t cached_meta;
+static bool not_displaying = true;
+
 std::mutex overlay_mutex;
 
 static cv::Mat world_correction;
@@ -234,6 +236,21 @@ static int8_t verbosity_level
 
 static ext_vio_data_t d;  // complete "extended" vio MPA packet
 static vio_data_t s;      // simplified vio packet
+
+static ext_vio_data_t d_copy;  // complete "extended" vio MPA packet
+
+typedef struct _bucket
+{
+	int64_t timestamp;
+	ext_vio_data_t d;
+	int used_pts;
+	int not_used_pts;
+	int q;
+	double cep;
+	double rerr;
+} display_bucket_t;
+static display_bucket_t display_snapshot;
+
 
 typedef struct _klt_feature_t{
     uint32_t  id;               ///< unique ID for feature point
@@ -588,36 +605,6 @@ static int _hard_reset_(bool fast_reset)
 	return 0;
 }
 
-// pose data is published from the same thread that does the camera processing
-// and pose estimation. That freezes, sometimes for over a second, during blowups
-// so this thread exists to keep data coming out during that situation, warning
-// consumers that there is an issue.
-// this does NOT monitor for blowup criteria, that's done in the camera thread
-// as soon as a new pose is calculated. This thread is to warn when that
-// camera thread freezes.
-static void* _health_thread_func(__attribute__((unused)) void *ctx)
-{
-	while (main_running)
-	{
-		// 100Hz
-		usleep(15000);  // run about the same speed as the camera
-		int64_t current_time = _apps_time_monotonic_ns();
-		int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
-
-		if (init_failure_detector_reset_flag)
-		{
-			uint64_t time_since_reset = current_time - time_of_last_reset;
-			if (time_since_reset > INIT_FAILURE_TIMEOUT_NS)
-			{
-				_hard_reset_(true);
-				init_failure_detector_reset_flag = 0;
-			}
-		}
-	}
-	
-	return NULL;
-}
-
 #ifdef BUILD_QRB5165
 // for qrb5165 only (right now) set the camera processing thread to run on
 // CPU 7 which is the fastest core
@@ -725,12 +712,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		if (image_update_running)
 		{
 			is_initialized = true;
-			s.state = VIO_STATE_OK;
 		}
 		else
 		{
 			is_initialized = false;
-			s.state = VIO_STATE_INITIALIZING;
 		}
 
 		memcpy(&d.v, &s, sizeof(vio_data_t));
@@ -785,8 +770,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		memcpy(curr_message->image_pixels, (uint8_t*) frame, meta.size_bytes);
 		img_ringbuf->insert_data(curr_message);
 
-		cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
-		std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
+		cv::Mat internal_img(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels);
+//		cv::Mat internal_img(meta.height, meta.width, CV_8UC1);
+//		std::memcpy(internal_img.data, curr_message->image_pixels, meta.size_bytes);
 		ov_core::CameraData message;
 		message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
 		if (ch == 2)
@@ -813,10 +799,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 			img_ringbuf->insert_data(curr_message);
 
-			cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1);
-			cv::Mat internal_img_2(meta.height, meta.width, CV_8UC1);
-			std::memcpy(internal_img_1.data, curr_message->image_pixels, meta.size_bytes/2);
-			std::memcpy(internal_img_2.data, 	(uint8_t*) curr_message->image_pixels + meta.size_bytes / 2, meta.size_bytes/2);
+			cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels);
+			cv::Mat internal_img_2(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels + meta.size_bytes / 2);
+//			std::memcpy(internal_img_1.data, curr_message->image_pixels, meta.size_bytes/2);
+//			std::memcpy(internal_img_2.data, 	(uint8_t*) curr_message->image_pixels + meta.size_bytes / 2, meta.size_bytes/2);
 
 
 			ov_core::CameraData message;
@@ -837,73 +823,53 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			camera_queue.push_back(message);
 			std::sort(camera_queue.begin(), camera_queue.end());
 
-//			internal_img_1.clear();
-//			internal_img_2.clear();
-
 		}
 		else
 			printf("Individual STEREO camera option has been disabled\n");
+	}
+//	else if (meta.format == IMAGE_FORMAT_NV12)
+//	{
+//		printf("IMAGE_FORMAT_NV12 CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//
+//		memcpy(curr_message->image_pixels, (uint8_t*) frame,
+//				meta.width * meta.height);
+//		curr_message->metadata.format = IMAGE_FORMAT_RAW8;
+//		curr_message->metadata.size_bytes = meta.width * meta.height;
+//	}
+//	else if (meta.format == IMAGE_FORMAT_STEREO_NV12
+//			|| meta.format == IMAGE_FORMAT_STEREO_NV21)
+//	{
+//		if (*cm == STEREO)
+//		{
+//			printf("IMAGE_FORMAT_NV12 STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//
+//			memcpy(curr_message->image_pixels, (uint8_t*) frame,meta.width * meta.height);
+//			memcpy(curr_message->image_pixels + (meta.width * meta.height),
+//					(uint8_t*) frame + (meta.width * meta.height * 3 / 2),
+//					meta.width * meta.height);
+//			curr_message->metadata.format = IMAGE_FORMAT_STEREO_RAW8;
+//			curr_message->metadata.size_bytes = meta.width * meta.height * 2;
+//		}
 //		else if (*cm == STEREO_LEFT_ONLY)
 //		{
-//			printf("STEREO LEFT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//			printf("IMAGE_FORMAT_NV12 STEREO_LEFT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//
 //			memcpy(curr_message->image_pixels, (uint8_t*) frame,
-//					meta.size_bytes / 2);
+//					meta.width * meta.height);
 //			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-//			curr_message->metadata.size_bytes /= 2;
+//			curr_message->metadata.size_bytes = meta.width * meta.height;
 //		}
 //		else if (*cm == STEREO_RIGHT_ONLY)
 //		{
-//			printf("STEREO RIGHT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//			printf("IMAGE_FORMAT_NV12 STEREO_RIGHT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+//
 //			memcpy(curr_message->image_pixels,
 //					(uint8_t*) frame + meta.size_bytes / 2,
-//					meta.size_bytes / 2);
+//					meta.width * meta.height);
 //			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-//			curr_message->metadata.size_bytes /= 2;
+//			curr_message->metadata.size_bytes = meta.width * meta.height;
 //		}
-	}
-	else if (meta.format == IMAGE_FORMAT_NV12)
-	{
-		printf("IMAGE_FORMAT_NV12 CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
-
-		memcpy(curr_message->image_pixels, (uint8_t*) frame,
-				meta.width * meta.height);
-		curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-		curr_message->metadata.size_bytes = meta.width * meta.height;
-	}
-	else if (meta.format == IMAGE_FORMAT_STEREO_NV12
-			|| meta.format == IMAGE_FORMAT_STEREO_NV21)
-	{
-		if (*cm == STEREO)
-		{
-			printf("IMAGE_FORMAT_NV12 STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
-
-			memcpy(curr_message->image_pixels, (uint8_t*) frame,meta.width * meta.height);
-			memcpy(curr_message->image_pixels + (meta.width * meta.height),
-					(uint8_t*) frame + (meta.width * meta.height * 3 / 2),
-					meta.width * meta.height);
-			curr_message->metadata.format = IMAGE_FORMAT_STEREO_RAW8;
-			curr_message->metadata.size_bytes = meta.width * meta.height * 2;
-		}
-		else if (*cm == STEREO_LEFT_ONLY)
-		{
-			printf("IMAGE_FORMAT_NV12 STEREO_LEFT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
-
-			memcpy(curr_message->image_pixels, (uint8_t*) frame,
-					meta.width * meta.height);
-			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-			curr_message->metadata.size_bytes = meta.width * meta.height;
-		}
-		else if (*cm == STEREO_RIGHT_ONLY)
-		{
-			printf("IMAGE_FORMAT_NV12 STEREO_RIGHT_ONLY CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
-
-			memcpy(curr_message->image_pixels,
-					(uint8_t*) frame + meta.size_bytes / 2,
-					meta.width * meta.height);
-			curr_message->metadata.format = IMAGE_FORMAT_RAW8;
-			curr_message->metadata.size_bytes = meta.width * meta.height;
-		}
-	}
+//	}
 	}
 	catch (const std::out_of_range& e)
 	{
@@ -948,7 +914,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 	if (!is_cam_connected || !main_running)
 	{
-		s.state = VIO_STATE_INITIALIZING;
 		memcpy(&d.v, &s, sizeof(vio_data_t));
 		is_initialized = false;
 		// send to both pipes
@@ -1086,154 +1051,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	return;
 }
 
-#ifdef NOTUSED
-static int _check_for_blowup_new(std::shared_ptr<ov_msckf::State> current_state,
-				double T_dop,
-				double R_dop,
-				int good_features)
-{
-	int64_t current_ts = current_state->_timestamp * 1e9;
-	static int64_t last_time_with_good_cov = 0;
-	static int64_t last_time_with_enough_features = 0;
-
-	// reset timers to current time after reset so we don't trip this during init
-	if (hard_reset_blowup_flag)
-	{
-		last_time_with_enough_features = current_ts;
-		last_time_with_good_cov = current_ts;
-		hard_reset_blowup_flag = 0;
-	}
-
-	if (T_dop < 80.0 || R_dop > 0.5)
-	{
-		return ERROR_CODE_VEL_INST_CERT;
-	}
-
-	float vel = sqrtf(
-			  (current_state->_imu->vel_fej()(0) * current_state->_imu->vel_fej()(0))
-			+ (current_state->_imu->vel_fej()(1) * current_state->_imu->vel_fej()(1))
-			+ (current_state->_imu->vel_fej()(2) * current_state->_imu->vel_fej()(2)));
-	if (vel > auto_reset_max_velocity)
-	{
-		fprintf(stderr,
-				"WARNING auto-resetting due to exceeding max velocity of %4.1fm/s\n",
-				(double) auto_reset_max_velocity);
-		return ERROR_CODE_VEL_INST_CERT;
-	}
-	
-
-	// min feature timeout check
-        if (good_features > auto_reset_min_features)
-        {
-                last_time_with_enough_features = current_ts;
-        }
-        else
-        {
-                float tmp = (float) (current_ts - last_time_with_enough_features)
-                                / 1000000000.0f;
-                if (tmp > auto_reset_min_feature_timeout_s)
-                {
-                        fprintf(stderr,
-                                        "WARNING auto-resetting due to low feature count\n");
-                        fprintf(stderr, "feats: %d, limit: %d\n", good_features,
-                                        auto_reset_min_features);
-                        return ERROR_CODE_LOW_FEATURES;
-                }
-        }
-
-
-	return 0;
-}
-
-// return 0 if all is well, otherwise return the reason for blowup
-static int _check_for_blowup(std::shared_ptr<ov_msckf::State> current_state,
-		Eigen::Matrix<double, 12, 12> cov_plus, int good_features)
-{
-	int64_t current_ts = current_state->_timestamp * 1e9;
-	static int64_t last_time_with_good_cov = 0;
-	static int64_t last_time_with_enough_features = 0;
-
-	// reset timers to current time after reset so we don't trip this during init
-	if (hard_reset_blowup_flag)
-	{
-		last_time_with_enough_features = current_ts;
-		last_time_with_good_cov = current_ts;
-		hard_reset_blowup_flag = 0;
-	}
-
-	// Now go through our 4 blowup criteria
-	// max velocity check  current_state->_imu->vel().cast<float>()
-	float vel = sqrtf(
-			  (current_state->_imu->vel_fej()(0) * current_state->_imu->vel_fej()(0))
-			+ (current_state->_imu->vel_fej()(1) * current_state->_imu->vel_fej()(1))
-			+ (current_state->_imu->vel_fej()(2) * current_state->_imu->vel_fej()(2)));
-	if (vel > auto_reset_max_velocity)
-	{
-		fprintf(stderr,
-				"WARNING auto-resetting due to exceeding max velocity of %4.1fm/s\n",
-				(double) auto_reset_max_velocity);
-		return ERROR_CODE_VEL_INST_CERT;
-	}
-
-	// get max velocity covariance
-	double cov = cov_plus(6, 6);
-	if (cov_plus(7, 7) > cov)
-		cov = cov_plus(7, 7);
-	if (cov_plus(8, 8) > cov)
-		cov = cov_plus(8, 8);
-
-	// min feature timeout check
-	if (good_features > auto_reset_min_features)
-	{
-		last_time_with_enough_features = current_ts;
-	}
-	else
-	{
-		float tmp = (float) (current_ts - last_time_with_enough_features)
-				/ 1000000000.0f;
-		if (tmp > auto_reset_min_feature_timeout_s)
-		{
-			fprintf(stderr,
-					"WARNING auto-resetting due to low feature count\n");
-			fprintf(stderr, "feats: %d, limit: %d\n", good_features,
-					auto_reset_min_features);
-			return ERROR_CODE_LOW_FEATURES;
-		}
-	}
-
-	// max v cov timeout check
-	if (cov < auto_reset_max_v_cov)
-	{
-		last_time_with_good_cov = current_ts;
-	}
-	else
-	{
-		float tmp = (current_ts - last_time_with_good_cov) / 1000000000.0f;
-		if (tmp > auto_reset_max_v_cov_timeout_s)
-		{
-			fprintf(stderr,
-					"WARNING auto-resetting due to high vel covariance\n");
-			fprintf(stderr, "vel cov: %6.5f, limit: %6.5f\n", cov,
-					auto_reset_max_v_cov);
-			return ERROR_CODE_VEL_WINDOW_CERT;
-		}
-	}
-
-	// check for instant vel covariance limit
-	if (cov > auto_reset_max_v_cov_instant)
-	{
-		fprintf(stderr,
-				"WARNING auto-resetting due to vel covariance instant limit\n");
-		fprintf(stderr, "vel cov: %6.5f, limit: %6.5f\n", cov,
-				auto_reset_max_v_cov_instant);
-		return ERROR_CODE_VEL_INST_CERT;
-	}
-
-	// all is good (for now)
-	return 0;
-}
-#endif
-
 static double map_double(double x, double in_min, double in_max, double out_min, double out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
@@ -1289,7 +1106,7 @@ static bool stable_features(int cur_feats)
 	
 	if (wait_for_features)
 	{
-		if (cur_feats > 2)
+		if (cur_feats > 3)
 		{
 			wait_for_features = false;
 		}
@@ -1316,20 +1133,670 @@ static bool stable_features(int cur_feats)
 	return is_bad;
 }
 
+
 #define OVERLAY_RES_W_X 320
 #define OVERLAY_RES_H_Y 240
 
-static void _publish_default(double pose_timestamp)
+static void _post_snapshot()
 {
-
 	static int skip_cnt = 0;
 	static int target_id = -1;
+	static float font_size = 1.0;
+	static float border_scale = 1;
+	static cv::Mat overlay_cp;		
+	static char reinit_str[32];
+	static int reinit_time = 0;
+	static int reinit_disp_time = 0;
+
+	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) 	// if someone has subscribed to the overlay, draw it
+	{
+		not_displaying = false;
+		{
+			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
+
+//			feat_ts_mutex.lock();
+			// TODO May not exists, then what
+			//double target_time = pose_timestamp*1e9;
+			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
+			//int ret = img_ringbuf->get_data_at_time((int64_t)display_snapshot.timestamp, curr_imgs);
+						
+			if (ret < 0)
+			{
+//				feat_ts_mutex.unlock();
+				fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %ld %ld %ld %ld %ld %ld\n",
+						display_snapshot.timestamp,
+						img_ringbuf->get_timestamp_at_position(0),
+						img_ringbuf->get_timestamp_at_position(1),
+						img_ringbuf->get_timestamp_at_position(2),
+						img_ringbuf->get_timestamp_at_position(3),
+						img_ringbuf->get_timestamp_at_position(4));
+				return;
+			}
+			else if (en_debug)
+			{
+				printf("Time Delta: %f\n", (display_snapshot.timestamp - img_ringbuf->get_timestamp_at_position(0))*1e-9);
+			}
+			// now, construct some cv::Mats with our images (we know them to be greyscale)
+			std::vector<cv::Mat> img_set;
+
+
+			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
+			{
+				font_size = 0.55;
+				if (!en_debug_pos)
+				{
+
+					cv::Mat img(curr_imgs->metadata.height,
+							curr_imgs->metadata.width,
+							CV_8UC1, curr_imgs->image_pixels);
+					cv::Mat img2(curr_imgs->metadata.height,
+							curr_imgs->metadata.width,
+							CV_8UC1,
+							curr_imgs->image_pixels
+									+ (curr_imgs->metadata.width
+											* curr_imgs->metadata.height));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+				else
+				{
+					cv::Mat img(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
+					cv::Mat img2(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+
+			}
+			else
+			{
+				font_size = 0.33;
+				border_scale = 2;
+
+				cv::Mat img(curr_imgs->metadata.height,
+						curr_imgs->metadata.width,
+						CV_8UC1, curr_imgs->image_pixels);
+				img_set.push_back(img);
+			}
+
+//			feat_ts_mutex.unlock();
+
+
+			static int16_t  trk_id = -1;
+			static std::vector<float> trk_history_x;
+			static std::vector<float> trk_history_y;
+
+			if (trk_history_x.size() > 100)
+			{
+				trk_history_x.clear();
+				trk_history_y.clear();
+			}
+
+			if (trk_id < 0 && display_snapshot.d.n_total_features > 0)
+			{
+				trk_id = display_snapshot.d.features[0].id;
+				printf("Monitoring id: %d\n", trk_id);
+			}
+
+			{
+				for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
+				{
+					if (!en_debug_pos)
+					{
+						if (display_snapshot.d.features[i].point_quality == (int) OV_RE_HIGH)
+						{
+							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
+						}
+						// slam landmark
+						else if (display_snapshot.d.features[i].point_quality == (int) OV_HIGH)
+						{
+							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+						}
+						// tracked feature
+						else if (display_snapshot.d.features[i].point_quality == (int) OV_MEDIUM)
+						{
+							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(190), cv::MARKER_SQUARE, 8, 2);
+						}
+						else if (show_extra_points_on_overlay)
+						{
+							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(100), cv::MARKER_SQUARE, 8, 2);
+						}
+					}
+					else
+					{
+						if (trk_id >= 0 && display_snapshot.d.features[i].id == (uint16_t) trk_id)
+						{
+							trk_history_x.push_back(display_snapshot.d.features[i].pix_loc[0]);
+							trk_history_y.push_back(display_snapshot.d.features[i].pix_loc[1]);
+
+							for (size_t z = 0; z < trk_history_x.size(); z++)
+							{
+								cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+										cv::Point2f(trk_history_x[z],
+												trk_history_y[z]),
+										cv::Scalar(255), cv::MARKER_DIAMOND, 24, 2);
+							}
+						}
+					}
+				}
+			}
+
+			cv::resize(img_set[0], img_set[0], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+
+			if (img_set.size() == 1)
+			{
+				overlay_cp = img_set[0];
+			}
+			else
+			{
+				cv::resize(img_set[1], img_set[1], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+				cv::hconcat(img_set[0], img_set[1], overlay_cp);
+			}
+
+			if (overlay_cp.cols <= OVERLAY_RES_W_X)
+			{
+				border_scale = 1;
+			}
+
+			cv::copyMakeBorder(overlay_cp, overlay_cp,
+			DRAW_BONUS_ROWS_TOP / border_scale,
+			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
+					cv::Scalar(0));
+
+			draw_meta = curr_imgs->metadata;
+			draw_meta.width = overlay_cp.cols;
+			draw_meta.height = overlay_cp.rows;
+			draw_meta.size_bytes = draw_meta.width * draw_meta.height;
+			draw_meta.format = IMAGE_FORMAT_RAW8;
+
+			char str[256];
+			sprintf(str, "XYZ: %6.2lf %6.2lf %6.2lf  CEP: %3.3f  Rerr: %3.2f",
+						(double) s.T_imu_wrt_vio[0], 
+						(double) s.T_imu_wrt_vio[1],
+						(double) s.T_imu_wrt_vio[2],
+						display_snapshot.cep, 
+						display_snapshot.rerr * 180 / M_PI);
+			int baseline = 0;
+			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
+					font_size, font_size, &baseline);
+
+			cv::putText(
+					overlay_cp, //target image
+					str, //text
+					cv::Point((overlay_cp.cols - text_size.width) / 2,
+							text_size.height * 3 / 2), //top-left position
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
+					font_size, cv::LINE_AA);
+
+			char oos_pts_string[96];
+			
+			if (show_extra_points_on_overlay)
+				sprintf(oos_pts_string, "#pts: %2d  (%2d)", display_snapshot.used_pts,
+						display_snapshot.not_used_pts);
+			else
+				oos_pts_string[0] = 0;
+			
+			sprintf(str, "Q: %3d %s  %s  ex(ms): %6.1f Gain: %5d",
+				s.quality,  
+				(s.state == VIO_STATE_OK ? "OK" : "INIT"), 
+				oos_pts_string,
+				draw_meta.exposure_ns / 1000000.0, 
+				draw_meta.gain);
+
+			cv::putText(
+					overlay_cp, //target image
+					str, //text
+					cv::Point((overlay_cp.cols - text_size.width) / 2,
+							overlay_cp.rows - text_size.height / 2 + 2), //top-left position
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
+					font_size, cv::LINE_AA);
+
+			
+			if (init_failure_detector_reset_flag)
+			{
+							  reinit_disp_time++;
+                              sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
+                              cv::putText(
+                            		  	  	  overlay_cp, //target image
+                                              reinit_str, //text
+                                              cv::Point((overlay_cp.cols * 0.1),
+                                            		  overlay_cp.rows*0.5), //top-left position
+                                              cv::FONT_HERSHEY_COMPLEX, 1.5,
+                                              cv::Scalar(255, 255, 255), //font color
+                                              1.5, cv::LINE_AA);
+			}
+
+			
+			// draw out to pipe
+			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
+					(char*) overlay_cp.data);
+			delete curr_imgs;
+		}
+		
+		not_displaying = true;
+
+	}
+
+}
+
+
+
+// pose data is published from the same thread that does the camera processing
+// and pose estimation. That freezes, sometimes for over a second, during blowups
+// so this thread exists to keep data coming out during that situation, warning
+// consumers that there is an issue.
+// this does NOT monitor for blowup criteria, that's done in the camera thread
+// as soon as a new pose is calculated. This thread is to warn when that
+// camera thread freezes.
+static void* _health_thread_func(__attribute__((unused)) void *ctx)
+{
+	while (main_running)
+	{
+		// 66Hz
+		usleep(33333);  // run about the same speed as the camera
+		int64_t current_time = _apps_time_monotonic_ns();
+		int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
+
+		if (init_failure_detector_reset_flag)
+		{
+			uint64_t time_since_reset = current_time - time_of_last_reset;
+			if (time_since_reset > INIT_FAILURE_TIMEOUT_NS)
+			{
+				_hard_reset_(true);
+				init_failure_detector_reset_flag = 0;
+			}
+		}
+	}
 	
+	return NULL;
+}
+
+static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
+{
+    sched_param sch_params;
+    sch_params.sched_priority = 19;
+	pthread_setschedparam(pthread_self(), SCHED_OTHER, &sch_params);
+
+	while (main_running)
+	{
+		double u_freq = (1.0/publish_frequency) * 1e6;
+		usleep(u_freq);  // run about the same speed as the camera
+		_post_snapshot();		
+	}
+	
+	return NULL;
+}
+
+
+static void _publish_default_working(double pose_timestamp)
+{
+	int nPoints;
+	int n_good_points = 0;
+	int n_oos_points = 0;
+	int i, j;
+	
+	// make sure we start with clean data structs and apply any global error codes
+	// full extended vio packet
+	memset(&d, 0, sizeof(d));
+	d.v.magic_number = VIO_MAGIC_NUMBER;
+	d.v.error_code = global_error_codes;
+
+	// simple lib modal pipe standard vio packet
+	memset(&s, 0, sizeof(s));
+	s.magic_number = VIO_MAGIC_NUMBER;
+	s.error_code = global_error_codes;
+
+	// simple lib modal pipe standard vio packet
+	memset(&ov_status, 0, sizeof(ov_status));
+	ov_status.magic_number = VIO_MAGIC_NUMBER;
+
+	// record that we just got a successful pose and point cloud
+	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
+
+	// check if its initialized or not
+	if (!vio_manager->initialized())
+	{
+		s.state = VIO_STATE_INITIALIZING;
+		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
+		// send to both pipes
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		return;
+	}
+	else
+	{
+		s.state = VIO_STATE_OK;
+		is_initialized = true;
+	}
 
 	std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state(); // contains a few extra pieces we need
-//	Eigen::Matrix<double, 12, 12> cov_plus =
-//			Eigen::Matrix<double, 12, 12>::Zero();  // covariance!!!!
 
+	Eigen::Matrix<double, 13, 1> state_plus = Eigen::Matrix<double, 13, 1>::Zero();
+	Eigen::Matrix<double, 12, 12> cov_plus = Eigen::Matrix<double, 12, 12>::Zero();
+	if (!vio_manager->get_propagator()->fast_state_propagate(current_state, pose_timestamp, state_plus, cov_plus))
+	{
+		  printf("CANNOT PROP STATE\n");
+	  	  return;
+	}
+
+	std::vector < std::shared_ptr < ov_type::Type >> statevars;
+	statevars.push_back(current_state->_imu->p());
+	statevars.push_back(current_state->_imu->q());
+	statevars.push_back(current_state->_imu->v());
+	Eigen::Matrix<double, 9, 9> covariance_posori =
+			ov_msckf::StateHelper::get_marginal_covariance(current_state,
+					statevars);
+	Eigen::VectorXd cov_varis = covariance_posori.diagonal();
+
+	double T_uncertainty = 0.0;
+	T_uncertainty += cov_varis(0, 0) * cov_varis(0, 0);
+	T_uncertainty += cov_varis(1, 1) * cov_varis(1, 1);
+	T_uncertainty += cov_varis(2, 2) * cov_varis(2, 2);
+	T_uncertainty = sqrt(T_uncertainty);
+
+	double R_uncertainty = 0.0;
+	R_uncertainty += cov_varis(3, 3) * cov_varis(3, 3);
+	R_uncertainty += cov_varis(4, 4) * cov_varis(4, 4);
+	R_uncertainty += cov_varis(5, 5) * cov_varis(5, 5);
+	R_uncertainty = sqrt(R_uncertainty);
+
+	double V_uncertainty = 0.0;
+	V_uncertainty += cov_varis(6, 6) * cov_varis(6, 6);
+	V_uncertainty += cov_varis(7, 7) * cov_varis(7, 7);
+	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
+	V_uncertainty = sqrt(V_uncertainty);
+	
+	if (en_debug)
+		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
+
+#ifdef MONTE
+	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenSolver(covariance_posori);
+	Eigen::MatrixXd transform = eigenSolver.eigenvectors() * eigenSolver.eigenvalues().cwiseSqrt().asDiagonal();
+	static std::mt19937 gen{ std::random_device{}() };
+	static std::normal_distribution<> dist;
+	Eigen::VectorXd uncertain = transform * Eigen::VectorXd{ 6 }.unaryExpr([&](auto x) { return dist(gen); });
+	Eigen::Vector3d  T_sigma = uncertain.segment(0,2);
+	Eigen::Vector3d  R_sigma = uncertain.segment(3,5);
+	T_uncertainty = (T_uncertainty * 0.6) + (0.4 * (sqrt((T_sigma.array() - T_sigma.mean()).square().sum() / (T_sigma.size() - 1))));
+	R_uncertainty = (R_uncertainty * 0.6) + (0.4* (sqrt((R_sigma.array() - R_sigma.mean()).square().sum() / (R_sigma.size() - 1))));
+
+	if (std::isnan(T_uncertainty))
+	{
+		T_uncertainty = 0;
+	}
+
+	if (std::isnan(R_uncertainty))
+	{
+		R_uncertainty = 0;
+	}
+
+	printf("Uncertainty in the robot's pose: xyz: %f R:%f\n", T_uncertainty, R_uncertainty);
+#endif
+
+//	printf("Get the uncertainty in the robot's pose: (%dx%d) %f\n", uncertain.rows(), uncertain.cols(), std_dev);
+//	printf("(%d): ", (int)cov_varis.size());
+//	for (int i=0; i<cov_varis.size(); i++)
+//	{
+//		printf("%f ", cov_varis(i));
+//	}
+//	printf("\n");
+
+	// correction matrix
+	static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
+	flu_ned_correction_mat(1, 1) = -1;
+	flu_ned_correction_mat(2, 2) = -1;
+	// get features
+	// this function will give us back as much info as available for features in various stages of the overall state
+	std::vector<output_feature> curr_pixel_locs;
+	int sz = vio_manager->get_pixel_loc_features(curr_pixel_locs);
+
+	for (size_t d = 0; d < curr_pixel_locs.size(); d++)
+	{
+		if (curr_pixel_locs[d].pix_loc[0] > 0.0f
+				&& curr_pixel_locs[d].pix_loc[1] > 0.0f)
+		{
+			if (curr_pixel_locs[d].point_quality == OV_HIGH)
+			{
+				n_good_points++;
+			}
+			else if (curr_pixel_locs[d].point_quality == OV_MEDIUM)
+			{
+				// UNUSED points
+				n_oos_points++;
+			}
+		}
+	}
+	
+	// sometimes qvio will report covariance as invalid but state is still OKAY
+	// this is NOT alright, in this case manually set the state to failed.
+	//
+	// Rotation
+	if (cov_varis(3, 3) < 0.0f || cov_varis(4, 4) < 0.0f
+			|| cov_varis(5, 5) < 0.0f)
+	{
+		printf( "ERROR: diagonal went negative\n");
+		s.state = VIO_STATE_FAILED;
+	}
+
+	// don't send packets from the past, this can happen when qvio stalls
+	// during a reset
+	if (static_cast<int64_t>(current_state->_timestamp * 1e9)
+			< last_sent_timestamp_ns)
+	{
+		fprintf(stderr, "WARNING: skipping pose data from the past %f %ld\n",
+				current_state->_timestamp * 1e9, last_sent_timestamp_ns);
+		return;
+	}
+
+	// All checks passed, after this point this function should not return
+	// until the end
+	last_sent_timestamp_ns = static_cast<int64_t>(current_state->_timestamp
+			* 1e9);
+
+	// populate some other data
+	s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+	d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
+	last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0)
+			* 1e9;
+	s.n_feature_points = n_good_points;
+	d.last_cam_frame_id = last_frame_frame_id;
+	d.last_cam_timestamp_ns = last_frame_timestamp_ns;
+
+	Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder;
+	imu_wrt_wio_holder[0] = state_plus(4);
+	imu_wrt_wio_holder[1] = state_plus(5);
+	imu_wrt_wio_holder[2] = state_plus(6);
+		
+	if (gravity_vector_direction == 1)
+	{
+		imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
+	}
+
+	//    std::cout << "POS:\n" << imu_wrt_wio_holder << std::endl;
+
+	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) =
+			imu_wrt_wio_holder.cast<float>();
+	
+	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder;
+	vel_imu_wrt_vio_holder[0] = state_plus(7);
+	vel_imu_wrt_vio_holder[1] = state_plus(8);
+	vel_imu_wrt_vio_holder[2] = state_plus(9);
+		
+	if (gravity_vector_direction == 1)
+	{
+		vel_imu_wrt_vio_holder = flu_ned_correction_mat
+				* vel_imu_wrt_vio_holder;
+	}
+	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<
+			float>();
+
+	Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
+	if (gravity_vector_direction == -1)
+	{
+		final_out = flu_ned_correction_mat * final_out;
+	}
+	else
+	{
+		final_out = flu_ned_correction_mat.transpose() * final_out
+				* flu_ned_correction_mat;
+	}
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
+			final_out.cast<float>();
+
+	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
+	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
+			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
+	if (gravity_vector_direction == -1)
+		cam_out = flu_ned_correction_mat * cam_out;
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
+			cam_out.cast<float>();
+
+	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
+			current_state->_calib_IMUtoCAM[0]->quat().transpose())
+			* current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) =
+			current_state->_imu->bias_g_fej().cast<float>();
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) =
+			current_state->_imu->bias_a_fej().cast<float>();
+
+	// pose covariance diagonals, 6 entries
+	s.pose_covariance[0] = (float) cov_varis(0, 0);
+	s.pose_covariance[6] = (float) cov_varis(1, 1);
+	s.pose_covariance[11] = (float) cov_varis(2, 2);
+	s.pose_covariance[15] = (float) cov_varis(3, 3);
+	s.pose_covariance[18] = (float) cov_varis(4, 4);
+	s.pose_covariance[20] = (float) cov_varis(5, 5);
+
+	// velocity covariance diagonals, 3 entries
+	s.velocity_covariance[0] = (float) cov_varis(6, 6);
+	s.velocity_covariance[6] = (float) cov_varis(7, 7);
+	s.velocity_covariance[11] = (float) cov_varis(8, 8);
+
+	// open vins does not estimate this, but reports it
+	double imu_angular_vel[3];
+	imu_angular_vel[0] = state_plus(10);
+	imu_angular_vel[1] = state_plus(11);
+	imu_angular_vel[2] = state_plus(12);
+
+	Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
+	imu_angular_vel_holder = flu_ned_correction_mat * imu_angular_vel_holder;
+
+	//imu_angular_vel_holder = world_correction_mat * imu_angular_vel_holder;
+	s.imu_angular_vel[0] = imu_angular_vel_holder(0);
+	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
+	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
+
+	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
+	// voxl flips it to actual
+	float grav_vec[3] =
+	{ 0, 0, (float) gravity_vector_direction };
+	memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+
+	// limit the number of features to what fits in our pipe packet
+	d.n_total_features = (int) curr_pixel_locs.size();
+	if (d.n_total_features > VIO_MAX_REPORTED_FEATURES)
+	{
+		d.n_total_features = VIO_MAX_REPORTED_FEATURES;
+	}
+
+	memcpy(d.features, curr_pixel_locs.data(),
+			d.n_total_features * sizeof(vio_feature_t));
+
+	// 2 inch percision
+	s.quality = map_double(T_uncertainty, 0.004375, 0.04, 100, 0);
+
+	if (s.quality < 1)
+		s.quality = 0;
+	
+	if (!init_failure_detector_reset_flag && en_auto_reset && stable_state(s.state))
+	{		
+		if (current_state->error_flag == VIO_STATE_FAILED || s.quality <= 1 || stable_quality(s.quality)  || stable_features(n_good_points)   || vel_imu_wrt_vio_holder.norm() > auto_reset_max_velocity || V_uncertainty > auto_reset_max_v_cov_instant)
+		{
+			fprintf(stderr,
+					"====> WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f\n", (current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", s.quality, vel_imu_wrt_vio_holder.norm());
+			s.state = VIO_STATE_FAILED;
+			s.quality = -1;
+			init_failure_detector_reset_flag = 1;		
+		}
+	}
+
+	// fill in simplified struct inside the extended packet
+	memcpy(&d.v, &s, sizeof(vio_data_t));
+	
+	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+	
+	if ((pipe_server_get_num_clients(OVSTATUS_CH) > 0) && en_ov_stats)
+	{		
+		ov_status.timestamp_ns = s.timestamp_ns;
+		ov_status.quality = s.quality;
+		ov_status.p_dop = T_uncertainty;
+		ov_status.r_dop = R_uncertainty;
+		ov_status.num_features = curr_pixel_locs.size();
+
+		unsigned int max_sz = curr_pixel_locs.size();
+		if (max_sz >= VIO_MAX_REPORTED_FEATURES)
+			max_sz = VIO_MAX_REPORTED_FEATURES-1;
+
+		for (size_t b=0; b<max_sz ; b++)
+		{
+			ov_status.features[b].id  = curr_pixel_locs[b].id;
+			ov_status.features[b].cam_id = curr_pixel_locs[b].cam_id;
+			ov_status.features[b].pix_loc[0] = curr_pixel_locs[b].pix_loc[0];
+			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
+		}
+		pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
+	}
+
+	// for debug only
+	if (en_debug)
+	{
+		printf("state: ");
+		pipe_print_vio_state(s.state);
+		printf(" err: ");
+		pipe_print_vio_error(s.error_code);
+		printf("\n");
+	}
+	if (en_debug_pos)
+	{
+		printf("%6.3f %6.3f %6.3f ", (double) s.T_imu_wrt_vio[0],
+				(double) s.T_imu_wrt_vio[1], (double) s.T_imu_wrt_vio[2]);
+		printf("\n");
+	}
+
+	// turn off dropped frame code now we have informed everyone.
+	global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
+
+	if (not_displaying)
+	{
+		display_snapshot.d = d;
+		display_snapshot.timestamp = last_real_pose_timestamp_ns;
+		display_snapshot.used_pts = n_good_points;
+		display_snapshot.not_used_pts = n_oos_points;
+		display_snapshot.q = s.quality;
+		display_snapshot.cep = T_uncertainty;
+		display_snapshot.rerr = R_uncertainty;
+	}
+	
+	return;
+}
+
+static void _publish_default(double pose_timestamp)
+{
 	int nPoints;
 	int n_good_points = 0;
 	int n_oos_points = 0;
@@ -1353,10 +1820,33 @@ static void _publish_default(double pose_timestamp)
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
+	
+	// check if its initialized or not
+	if (!vio_manager->initialized())
+	{
+		s.state = VIO_STATE_INITIALIZING;
+		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
+		// send to both pipes
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		
+		return;
+	}
+	else
+	{
+		s.state = VIO_STATE_OK;
+		is_initialized = true;
+	}
+
+	std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state(); // contains a few extra pieces we need
+
 	std::vector < std::shared_ptr < ov_type::Type >> statevars;
 	statevars.push_back(current_state->_imu->p());
 	statevars.push_back(current_state->_imu->q());
 	statevars.push_back(current_state->_imu->v());
+	
+	
 	Eigen::Matrix<double, 9, 9> covariance_posori =
 			ov_msckf::StateHelper::get_marginal_covariance(current_state,
 					statevars);
@@ -1434,24 +1924,7 @@ static void _publish_default(double pose_timestamp)
 		{
 			if (curr_pixel_locs[d].point_quality == OV_HIGH)
 			{
-				// USED points
 				n_good_points++;
-				// if we aren't over our max feature count and we have a 3d estimate, correct it to our real world
-				if (n_good_points <= VIO_MAX_REPORTED_FEATURES)
-				{
-					double d_tsf[3] =
-					{ curr_pixel_locs[d].tsf[0], curr_pixel_locs[d].tsf[1],
-							curr_pixel_locs[d].tsf[2] };
-
-					Eigen::Matrix<double, 3, 1> curr_feat_holder(d_tsf);
-#ifdef MAYNEED
-					curr_feat_holder = world_correction_mat * curr_feat_holder;
-#endif
-
-					// replaces with corrected values
-					Eigen::MatrixXf::Map(curr_pixel_locs[d].tsf, 3, 1) =
-							curr_feat_holder.cast<float>();
-				}
 			}
 			else if (curr_pixel_locs[d].point_quality == OV_MEDIUM)
 			{
@@ -1460,23 +1933,9 @@ static void _publish_default(double pose_timestamp)
 			}
 		}
 	}
-	// check if its initialized or not
-	if (!vio_manager->initialized())
-	{
-		s.state = VIO_STATE_INITIALIZING;
-		memcpy(&d.v, &s, sizeof(vio_data_t));
-		is_initialized = false;
-		// send to both pipes
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-		return;
-	}
-	else
-	{
-		s.state = VIO_STATE_OK;
-		is_initialized = true;
-	}
+		
 
+	
 	// sometimes qvio will report covariance as invalid but state is still OKAY
 	// this is NOT alright, in this case manually set the state to failed.
 	//
@@ -1606,7 +2065,7 @@ static void _publish_default(double pose_timestamp)
 			d.n_total_features * sizeof(vio_feature_t));
 
 	// 2 inch percision
-	s.quality = map_double(T_uncertainty, 0.004, 0.05, 100, 0);
+	s.quality = map_double(T_uncertainty, 0.004375, 0.04, 100, 0);
 
 	if (s.quality < 1)
 		s.quality = 0;
@@ -1628,9 +2087,9 @@ static void _publish_default(double pose_timestamp)
 	
 	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-
+	
 	if ((pipe_server_get_num_clients(OVSTATUS_CH) > 0) && en_ov_stats)
-	{
+	{		
 		ov_status.timestamp_ns = s.timestamp_ns;
 		ov_status.quality = s.quality;
 		ov_status.p_dop = T_uncertainty;
@@ -1670,231 +2129,17 @@ static void _publish_default(double pose_timestamp)
 	// turn off dropped frame code now we have informed everyone.
 	global_error_codes &= ~ERROR_CODE_DROPPED_CAM;
 
-	if (!init_failure_detector_reset_flag && pipe_server_get_num_clients(OVERLAY_CH) > 0) 	// if someone has subscribed to the overlay, draw it
-	{
-		static cv::Mat overlay_cp;		
-		if (every_other++ % publish_frequency == 0) 
-		{
-
-			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
-
-			feat_ts_mutex.lock();
-			// TODO May not exists, then what
-			double target_time = pose_timestamp*1e9;
-			//int ret = img_ringbuf->get_data_at_time((int64_t)target_time, curr_imgs);
-			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
-
-			if (ret < 0)
-			{
-				feat_ts_mutex.unlock();
-				fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %f %ld %ld %ld %ld %ld\n",
-						target_time,
-						img_ringbuf->get_timestamp_at_position(0),
-						img_ringbuf->get_timestamp_at_position(1),
-						img_ringbuf->get_timestamp_at_position(2),
-						img_ringbuf->get_timestamp_at_position(3),
-						img_ringbuf->get_timestamp_at_position(4));
-				return;
-			}
-			// now, construct some cv::Mats with our images (we know them to be greyscale)
-			std::vector<cv::Mat> img_set;
-
-
-			static float font_size = 1.0;
-			static float border_scale = 1;
-
-			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
-			{
-				font_size = 0.55;
-				if (!en_debug_pos)
-				{
-
-					cv::Mat img(curr_imgs->metadata.height,
-							curr_imgs->metadata.width,
-							CV_8UC1, curr_imgs->image_pixels);
-					cv::Mat img2(curr_imgs->metadata.height,
-							curr_imgs->metadata.width,
-							CV_8UC1,
-							curr_imgs->image_pixels
-									+ (curr_imgs->metadata.width
-											* curr_imgs->metadata.height));
-					img_set.push_back(img);
-					img_set.push_back(img2);
-				}
-				else
-				{
-					cv::Mat img(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
-					cv::Mat img2(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
-					img_set.push_back(img);
-					img_set.push_back(img2);
-				}
-
-			}
-			else
-			{
-				font_size = 0.33;
-				border_scale = 2;
-
-				cv::Mat img(curr_imgs->metadata.height,
-						curr_imgs->metadata.width,
-						CV_8UC1, curr_imgs->image_pixels);
-				img_set.push_back(img);
-			}
-
-			feat_ts_mutex.unlock();
-
-
-			static int16_t  trk_id = -1;
-			static std::vector<float> trk_history_x;
-			static std::vector<float> trk_history_y;
-
-			if (trk_history_x.size() > 100)
-			{
-				trk_history_x.clear();
-				trk_history_y.clear();
-			}
-
-			if (trk_id < 0 && curr_pixel_locs.size() > 0)
-			{
-				trk_id = curr_pixel_locs[0].id;
-				printf("Monitoring id: %d\n", trk_id);
-			}
-
-			{
-				for (size_t i = 0; i < curr_pixel_locs.size(); i++)
-				{
-					if (!en_debug_pos)
-					{
-						if (curr_pixel_locs[i].point_quality == OV_RE_HIGH)
-						{
-							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-											curr_pixel_locs[i].pix_loc[1]),
-									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
-						}
-						// slam landmark
-						else if (curr_pixel_locs[i].point_quality == OV_HIGH)
-						{
-							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-											curr_pixel_locs[i].pix_loc[1]),
-									cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
-						}
-						// tracked feature
-						else if (curr_pixel_locs[i].point_quality == OV_MEDIUM)
-						{
-							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-											curr_pixel_locs[i].pix_loc[1]),
-									cv::Scalar(190), cv::MARKER_SQUARE, 8, 2);
-						}
-						else if (show_extra_points_on_overlay)
-						{
-							cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-									cv::Point2f(curr_pixel_locs[i].pix_loc[0],
-											curr_pixel_locs[i].pix_loc[1]),
-									cv::Scalar(100), cv::MARKER_SQUARE, 8, 2);
-						}
-					}
-					else
-					{
-						if (trk_id >= 0 && curr_pixel_locs[i].id == (uint16_t) trk_id)
-						{
-							trk_history_x.push_back(curr_pixel_locs[i].pix_loc[0]);
-							trk_history_y.push_back(curr_pixel_locs[i].pix_loc[1]);
-
-							for (size_t z = 0; z < trk_history_x.size(); z++)
-							{
-								cv::drawMarker(img_set[curr_pixel_locs[i].cam_id],
-										cv::Point2f(trk_history_x[z],
-												trk_history_y[z]),
-										cv::Scalar(255), cv::MARKER_DIAMOND, 24, 2);
-							}
-						}
-					}
-
-				}
-
-
-
-			}
-
-			cv::resize(img_set[0], img_set[0], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
-
-			if (img_set.size() == 1)
-			{
-				overlay_cp = img_set[0];
-			}
-			else
-			{
-				cv::resize(img_set[1], img_set[1], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
-				cv::hconcat(img_set[0], img_set[1], overlay_cp);
-			}
-
-			if (overlay_cp.cols <= OVERLAY_RES_W_X)
-			{
-				border_scale = 1;
-			}
-
-			cv::copyMakeBorder(overlay_cp, overlay_cp,
-			DRAW_BONUS_ROWS_TOP / border_scale,
-			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
-					cv::Scalar(0));
-
-			draw_meta = curr_imgs->metadata;
-			draw_meta.width = overlay_cp.cols;
-			draw_meta.height = overlay_cp.rows;
-			draw_meta.size_bytes = draw_meta.width * draw_meta.height;
-			draw_meta.format = IMAGE_FORMAT_RAW8;
-
-			char str[256];
-			sprintf(str, "CEP: %3.3f Rerr: %3.2f   XYZ: %6.2lf %6.2lf %6.2lf",
-					T_uncertainty, R_uncertainty * 180 / M_PI,
-					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
-					(double) s.T_imu_wrt_vio[2]);
-			int baseline = 0;
-			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
-					font_size, font_size, &baseline);
-
-			cv::putText(
-					overlay_cp, //target image
-					str, //text
-					cv::Point((overlay_cp.cols - text_size.width) / 2,
-							text_size.height * 3 / 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size,
-					cv::Scalar(255, 255, 255), //font color
-					font_size, cv::LINE_AA);
-
-			char oos_pts_string[96];
-			if (show_extra_points_on_overlay)
-				sprintf(oos_pts_string, "#pts: %2d  (%2d)", n_good_points,
-						n_oos_points);
-			else
-				oos_pts_string[0] = 0;
-
-			sprintf(str, "ex(ms): %6.1f Gain: %5d Q: %3d %s ",
-					draw_meta.exposure_ns / 1000000.0, draw_meta.gain,
-					s.quality, oos_pts_string);
-
-			cv::putText(
-					overlay_cp, //target image
-					str, //text
-					cv::Point((overlay_cp.cols - text_size.width) / 2,
-							overlay_cp.rows - text_size.height / 2 + 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size,
-					cv::Scalar(255, 255, 255), //font color
-					font_size, cv::LINE_AA);
-
-			// draw out to pipe
-			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
-					(char*) overlay_cp.data);
-			delete curr_imgs;
-		}
-
-	}
-
+	display_snapshot.d = d;
+	display_snapshot.timestamp = last_real_pose_timestamp_ns;
+	display_snapshot.used_pts = n_good_points;
+	display_snapshot.not_used_pts = n_oos_points;
+	display_snapshot.q = s.quality;
+	display_snapshot.cep = T_uncertainty;
+	display_snapshot.rerr = R_uncertainty;
+		
 	return;
 }
+
 
 static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 {
@@ -2585,9 +2830,9 @@ int main(int argc, char *argv[])
 
 		struct sched_param param;
 		memset(&param, 0, sizeof(sched_param));
-		param.sched_priority = 95;
+		param.sched_priority = 97;
 		fprintf(stderr, "setting scheduler\n");
-		int ret = sched_setscheduler(0, SCHED_FIFO, &param);
+		int ret = sched_setscheduler(0, SCHED_RR, &param);
 		if(ret==-1){
 			fprintf(stderr, "WARNING Failed to set priority, errno = %d\n", errno);
 			fprintf(stderr, "This seems to be a problem with ADB, the scheduler\n");
@@ -2640,12 +2885,18 @@ int main(int argc, char *argv[])
 	pthread_attr_t tattr;
 	pthread_attr_init(&tattr);
 	pthread_create(&health_thread, &tattr, _health_thread_func, NULL);
+
+	pthread_attr_t tattr_overlay;
+	pthread_attr_init(&tattr_overlay);
+	pthread_create(&overlay_thread, &tattr_overlay, _overlay_thread_func, NULL);
+	
 	while (main_running)
 	{
-		usleep(1e6); // 1 sec
+		usleep(1e6);
 	}
 
 	pthread_join(health_thread, NULL);
+	pthread_join(overlay_thread, NULL);
 
 	// Shutdown Nicely
 	_quit(0);
