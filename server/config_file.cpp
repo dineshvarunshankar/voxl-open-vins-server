@@ -133,6 +133,7 @@ int publish_frequency; //VOXL only
 
 bool en_ov_stats;
 bool en_baro;
+double max_allowable_cep;
 
 //std::string log_path;
 
@@ -251,7 +252,8 @@ int config_file_print(void) {
     printf("publish_frequency:                  %d\n", publish_frequency);
     printf("use baro:                  %s\n", en_baro ? "true" : "false");
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
-
+    printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
+    
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -350,8 +352,9 @@ int config_file_read(void) {
 
     json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
+    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 0.1524);
 
-
+    
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
         cJSON_Delete(parent);

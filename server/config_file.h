@@ -199,6 +199,7 @@ extern double track_frequency;
 extern int publish_frequency;
 extern bool en_ov_stats;
 extern bool en_baro;
+extern double max_allowable_cep;
 
 
 // read only our own config file without printing the contents
