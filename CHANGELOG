@@ -1,4 +1,6 @@
-0.2.6.6
+0.2.18
+    * many things
+0.2.6
     * Remove voxl-eigen3 as a runtime dependency
 0.2.5
     * def updates for latest open vins
