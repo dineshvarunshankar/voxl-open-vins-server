@@ -1214,10 +1214,10 @@ int cam_config_file_read(void)
 			CM_CHAR_BUF_SIZE, "imu_apps");
 	json_fetch_int_with_default(parent, "num_features_to_track",
 			&num_features_to_track, 20);
-	json_fetch_int_with_default(parent, "grid_x", &grid_x, 10);
-	json_fetch_int_with_default(parent, "grid_y", &grid_y, 10);
-	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 10);
-	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 3);
+	json_fetch_int_with_default(parent, "grid_x", &grid_x, 5);
+	json_fetch_int_with_default(parent, "grid_y", &grid_y, 5);
+	json_fetch_int_with_default(parent, "min_pix_dist", &min_pix_dist, 50);
+	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 5);
 	json_fetch_int_with_default(parent, "window_size", &window_size, 25);
 	json_fetch_bool_with_default(parent, "en_gyro", (int*) &en_gyro, 1);
 	json_fetch_bool_with_default(parent, "en_descriptors",

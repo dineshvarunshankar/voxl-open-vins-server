@@ -164,7 +164,11 @@ static void _print_data(ov_status_t d)
 //	if (_featDB.size() > MAX_DB_SZ)
 //		_featDB.clear();
 
-	printf("*, %f, %ld, %d, %f, %f, %d,",(int) _featDB.size(), d.timestamp_ns*1e-9, d.quality, d.p_dop, d.r_dop, d.num_features);
+	printf("*, %d, %f, %f, %f, %f, %d,",(int) _featDB.size(), (double) d.timestamp_ns*1e-9, 
+			(double)d.quality, 
+			(double)d.p_dop, 
+			(double)d.r_dop, 
+			(int)d.num_features);
 
 	for (int i=0; i<VIO_MAX_REPORTED_FEATURES; i++)
 	{

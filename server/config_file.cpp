@@ -133,6 +133,8 @@ int publish_frequency; //VOXL only
 
 bool en_ov_stats;
 bool en_baro;
+int takeoff_cam;
+double takeoff_threshold = -0.5f;
 double max_allowable_cep;
 
 //std::string log_path;
@@ -251,6 +253,8 @@ int config_file_print(void) {
     printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("publish_frequency:                  %d\n", publish_frequency);
     printf("use baro:                  %s\n", en_baro ? "true" : "false");
+    printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
+    printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
     
@@ -325,21 +329,21 @@ int config_file_read(void) {
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
-    json_fetch_int_with_default(parent, "max_runs", &max_runs, 1);
+    json_fetch_int_with_default(parent, "max_runs", &max_runs, 5);
     json_fetch_double_with_default(parent, "init_lamda", &init_lamda, 1e-3);
-    json_fetch_double_with_default(parent, "max_lamda", &max_lamda, 1e6);
+    json_fetch_double_with_default(parent, "max_lamda", &max_lamda, 1e10);
     json_fetch_double_with_default(parent, "min_dx", &min_dx, 1e-6);
     json_fetch_double_with_default(parent, "min_dcost", &min_dcost, 1e-6);
     json_fetch_double_with_default(parent, "lam_mult", &lam_mult, 10);
-    json_fetch_double_with_default(parent, "min_dist", &min_dist, 0.01);
-    json_fetch_double_with_default(parent, "max_dist", &max_dist, 16);
-    json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 0.08);
-    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 50000);
+    json_fetch_double_with_default(parent, "min_dist", &min_dist, 0.1);
+    json_fetch_double_with_default(parent, "max_dist", &max_dist, 60);
+    json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 40);
+    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 10000);
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
 
-    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 2);
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 7);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
     int tmp_hist = 0;
@@ -350,10 +354,15 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
 
-    json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 1);
+    json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 0);
+    json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, -1);
+    json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 0.1524);
 
+    
+    if (takeoff_cam >= 0)
+    	use_mask = true;
     
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
