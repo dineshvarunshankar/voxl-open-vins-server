@@ -86,7 +86,7 @@ static std::string camera_mode_as_string(camera_mode cm){
     else return "UNKNOWN";
 }
 
-static camera_mode string_camera_mode_to_enum(char* str_cm){
+static camera_mode string_camera_mode_to_enum(const char* str_cm){
     if (!strncmp(str_cm, "MONO", sizeof("MONO"))){
         return MONO;
     }

@@ -49,10 +49,17 @@
 
 #include "rc_transform.h"
 
+//
+// USE NEW CONFIG format defined by VFT
+//
+#define VERSION_FORMAT  2
+
+
 #define EXTRINS_BODY "body"
 
 void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion);
 void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R);
+void make_default_groups(cJSON* groups_json, int* n_groups) ;
 
 //DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
@@ -72,13 +79,13 @@ int height;
 bool en_gyro;
 bool en_descriptors;
 
-bool en_database;
-int database_size;
+bool en_ext_feature_tracker;
+char ext_feat_trk_name[CM_CHAR_BUF_SIZE];
 
-double max_angular_rate_before_blur;
 
 cv::Matx33d tmp_world_correction = cv::Matx33d::eye();
 cJSON *cam_json = NULL;
+
 
 void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion) 
 {
@@ -467,8 +474,13 @@ int cam_load_extrinsics_file()
 
 	        //CAM 1
 	        memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+#if VERSION_FORMAT == 1	        
 	        strcpy(ext_name, cam_info_set_vec[i].name);
 	        strcat(ext_name, cam_info_set_vec[i].extrinsics_extension_first);
+#else	        
+	        strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_first);
+#endif
+	        
             if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
                 fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
             }
@@ -1114,6 +1126,471 @@ int cam_config_file_print(void)
 	return 0;
 }
 
+
+///
+// TODO Following is a duopliate of what is in VFT, refactor to the camera config library
+//
+static void _remove_old_fields(
+    cJSON* parent
+) {
+    // remove fields from old config file
+        json_remove_if_present(parent, "cam0_enable");
+        json_remove_if_present(parent, "cam0_name");
+        json_remove_if_present(parent, "cam0_mode");
+        json_remove_if_present(parent, "cam0_extrinsics_extension_first");
+        json_remove_if_present(parent, "cam0_extrinsics_extension_second");
+        json_remove_if_present(parent, "cam1_enable");
+        json_remove_if_present(parent, "cam1_name");
+        json_remove_if_present(parent, "cam1_mode");
+        json_remove_if_present(parent, "cam1_extrinsics_extension_first");
+        json_remove_if_present(parent, "cam1_extrinsics_extension_second");
+        json_remove_if_present(parent, "cam2_enable");
+        json_remove_if_present(parent, "cam2_name");
+        json_remove_if_present(parent, "cam2_mode");
+        json_remove_if_present(parent, "cam2_extrinsics_extension_first");
+        json_remove_if_present(parent, "cam2_extrinsics_extension_second");
+        json_remove_if_present(parent, "cam3_enable");
+        json_remove_if_present(parent, "cam3_name");
+        json_remove_if_present(parent, "cam3_mode");
+        json_remove_if_present(parent, "cam3_extrinsics_extension_first");
+        json_remove_if_present(parent, "cam3_extrinsics_extension_second");
+
+        json_remove_if_present(parent, "imu_name");
+        json_remove_if_present(parent, "num_features_to_track");
+        json_remove_if_present(parent, "grid_x");
+        json_remove_if_present(parent, "grid_y");
+        json_remove_if_present(parent, "min_pix_dist");
+        json_remove_if_present(parent, "pyramid_levels");
+        json_remove_if_present(parent, "window_size");
+        json_remove_if_present(parent, "en_gyro");
+        json_remove_if_present(parent, "en_descriptors");
+        json_remove_if_present(parent, "max_angular_rate_before_blur");
+        json_remove_if_present(parent, "en_flowback");
+        json_remove_if_present(parent, "flowback_pixel_max");
+        json_remove_if_present(parent, "en_refinement");
+        json_remove_if_present(parent, "en_blur");
+        json_remove_if_present(parent, "blur_size");
+        json_remove_if_present(parent, "lk_count");
+        json_remove_if_present(parent, "lk_eps");
+        json_remove_if_present(parent, "hgraphy_ransac_threshold");
+        json_remove_if_present(parent, "hgraphy_max_iters");
+        json_remove_if_present(parent, "hgraphy_confidence");
+        json_remove_if_present(parent, "en_logging");
+        json_remove_if_present(parent, "database_size");
+        json_remove_if_present(parent, "tracker_type");
+}
+
+///
+// TODO Following is a duopliate of what is in VFT, refactor to the camera config library
+//
+void make_default_groups(
+    cJSON* groups_json,
+    int* n_groups
+) {
+    // tmp vars for holding
+    int int_holder;
+    char string_holder[CM_CHAR_BUF_SIZE];
+    int group_counter = 0;
+
+    // TRACKING SINGLE
+    {
+        // default group info
+        cJSON* tracking_single = cJSON_CreateObject();
+        json_fetch_bool_with_default(tracking_single, "enable", &int_holder, 0);
+        json_fetch_string_with_default(tracking_single, "group_name", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_single");
+        json_fetch_string_with_default(tracking_single, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
+        json_fetch_string_with_default(tracking_single, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
+        cJSON* tracking_single_cams = json_fetch_array_and_add_if_missing(tracking_single, "group_cams", &int_holder);
+        cJSON* tracking_cam = cJSON_CreateObject();
+
+        // default tracking info
+        json_fetch_bool_with_default(tracking_cam, "enable", &int_holder, 1);
+        json_fetch_string_with_default(tracking_cam, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
+        json_fetch_string_with_default(tracking_cam, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_int_with_default(tracking_cam, "num_features", &int_holder, 50);
+
+        // add tracking_cameras to group_cams
+        cJSON_AddItemToArray(tracking_single_cams, tracking_cam);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, tracking_single);
+        group_counter += 1;
+    }
+
+    // TRACKING LR 
+    {
+        // default group info
+        cJSON* tracking_LR = cJSON_CreateObject();
+        json_fetch_bool_with_default(tracking_LR, "enable", &int_holder, 0);
+        json_fetch_string_with_default(tracking_LR, "group_name", string_holder, MODAL_PIPE_MAX_PATH_LEN-1, "tracking_LR");
+        json_fetch_string_with_default(tracking_LR, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
+        json_fetch_string_with_default(tracking_LR, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
+        cJSON* tracking_LR_cams = json_fetch_array_and_add_if_missing(tracking_LR, "group_cams", &int_holder);
+        cJSON* tracking_L = cJSON_CreateObject();
+        cJSON* tracking_R = cJSON_CreateObject();
+
+        // default tracking info
+        json_fetch_bool_with_default(tracking_L, "enable", &int_holder, 0);
+        json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
+        json_fetch_string_with_default(tracking_L, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "trackingL");
+        json_fetch_string_with_default(tracking_R, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "trackingR");
+        json_fetch_string_with_default(tracking_L, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_string_with_default(tracking_R, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_int_with_default(tracking_L, "num_features", &int_holder, 50);
+        json_fetch_int_with_default(tracking_R, "num_features", &int_holder, 50);
+
+        // add cameras to group_cams
+        cJSON_AddItemToArray(tracking_LR_cams, tracking_L);
+        cJSON_AddItemToArray(tracking_LR_cams, tracking_R);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, tracking_LR);
+        group_counter += 1;
+    }
+
+    // TRACKING FDR
+    {
+        // default group info
+        cJSON* tracking_FDR = cJSON_CreateObject();
+        json_fetch_bool_with_default(tracking_FDR, "enable", &int_holder, 0);
+        json_fetch_string_with_default(tracking_FDR, "group_name", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_FDR");
+        json_fetch_string_with_default(tracking_FDR, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
+        json_fetch_string_with_default(tracking_FDR, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
+        cJSON* tracking_FDR_cams = json_fetch_array_and_add_if_missing(tracking_FDR, "group_cams", &int_holder);
+        cJSON* tracking_F = cJSON_CreateObject();
+        cJSON* tracking_D = cJSON_CreateObject();
+        cJSON* tracking_R = cJSON_CreateObject();
+
+        // default tracking info
+        json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
+        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
+        json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
+        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
+        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
+        json_fetch_string_with_default(tracking_R, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_rear");
+        json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_string_with_default(tracking_R, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+        json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+        json_fetch_int_with_default(tracking_R, "num_features", &int_holder, 50);
+
+        // add cameras to group_cams
+        cJSON_AddItemToArray(tracking_FDR_cams, tracking_F);
+        cJSON_AddItemToArray(tracking_FDR_cams, tracking_D);
+        cJSON_AddItemToArray(tracking_FDR_cams, tracking_R);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, tracking_FDR);
+        group_counter += 1;
+    }
+
+    // TRACKING FD  VINS_DUAL_COLOR
+    {
+        // default group info
+        cJSON* tracking_FD_vins = cJSON_CreateObject();
+        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 0);
+        json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
+        json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "");
+        json_fetch_string_with_default(tracking_FD_vins, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "");
+        cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
+        cJSON* tracking_F = cJSON_CreateObject();
+        cJSON* tracking_D = cJSON_CreateObject();
+
+        // default tracking info
+        json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
+        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
+        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_front");
+        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_down");
+        json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+        json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+
+        // add cameras to group_cams
+        cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
+        cJSON_AddItemToArray(tracking_FD_cams, tracking_D);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, tracking_FD_vins);
+        group_counter += 1;
+    }
+    
+    // TRACKING FD  VINS_DUAL_MONOCHROME
+    {
+        // default group info
+        cJSON* tracking_FD_vins = cJSON_CreateObject();
+        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 0);
+        json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+        json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "");
+        json_fetch_string_with_default(tracking_FD_vins, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "");
+        cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
+        cJSON* tracking_F = cJSON_CreateObject();
+        cJSON* tracking_D = cJSON_CreateObject();
+
+        // default tracking info
+        json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
+        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
+        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
+        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
+        json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+        json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+
+        // add cameras to group_cams
+        cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
+        cJSON_AddItemToArray(tracking_FD_cams, tracking_D);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, tracking_FD_vins);
+        group_counter += 1;
+    }
+
+    // LEPTON
+    {
+        // default group info
+        cJSON* lepton = cJSON_CreateObject();
+        json_fetch_bool_with_default(lepton, "enable", &int_holder, 0);
+        json_fetch_string_with_default(lepton, "group_name", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "lepton");
+        json_fetch_string_with_default(lepton, "output_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "lepton_feats");
+        json_fetch_string_with_default(lepton, "overlay_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "lepton_feat_overlay");
+        cJSON* lepton_cams = json_fetch_array_and_add_if_missing(lepton, "group_cams", &int_holder);
+        cJSON* lepton_cam = cJSON_CreateObject();
+
+        // default lepton info
+        json_fetch_bool_with_default(lepton_cam, "enable", &int_holder, 1);
+        json_fetch_string_with_default(lepton_cam, "input_pipe", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "lepton0_raw");
+        json_fetch_string_with_default(lepton_cam, "tracker_type", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "ocv");    // opencv for now until we can verify cvp
+        json_fetch_int_with_default(lepton_cam, "num_features", &int_holder, 50);
+
+        // add tracking_cameras to group_cams
+        cJSON_AddItemToArray(lepton_cams, lepton_cam);
+
+        // add tracking to groups
+        cJSON_AddItemToArray(groups_json, lepton);
+        group_counter += 1;
+    }
+
+    // pass out the number of groups added for iter purposes
+    *n_groups = group_counter;
+}
+
+
+// ========================================================================
+#if VERSION_FORMAT == 2   
+#pragma message "USING VERSION 2 format that is compliant with VFT" 
+
+///
+// TODO Following is a duopliate of what is in VFT, refactor to the camera config library
+//
+int cam_config_file_read(void)
+{
+
+    // if config file does not exist, make one and initialize it with a header
+	int ret = json_make_empty_file_with_header_if_missing(CAM_CONFIG_FILE,
+			CAM_CONFIG_FILE_HEADER);
+	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED new config file: %s\n", CAM_CONFIG_FILE);
+		return -1;
+	}
+	else if (ret > 0)
+	{
+		fprintf(stderr, "Creating new config file: %s\n", CAM_CONFIG_FILE);
+	}
+
+	cJSON *parent = json_read_file(CAM_CONFIG_FILE);
+	if (parent == NULL)
+	{
+		fprintf(stderr, "FAILED to parse: %s\n", CAM_CONFIG_FILE);
+		return -1;
+	}
+    // get version of config file, if not 2.0...
+    char string_holder[CM_CHAR_BUF_SIZE];
+    memset(string_holder, '\0', CM_CHAR_BUF_SIZE);
+    json_fetch_string_with_default(parent, "version", string_holder, CM_CHAR_BUF_SIZE, "2.0");
+
+    // now gather ptr to goups and iter though
+    int n_groups;
+	cJSON* groups_json = json_fetch_array_and_add_if_missing(parent, "groups", &n_groups);
+
+    // if no camera groups, lets create some
+    if(n_groups == 0) make_default_groups(groups_json, &n_groups);
+
+    // parse groups in JSON
+    for(int group_i = 0; group_i < n_groups; group_i++) {
+        cJSON* group_item = cJSON_GetArrayItem(groups_json, group_i);
+        // check if we actually want this camera group
+        int group_item_enabled;
+        json_fetch_bool_with_default(group_item, "enable", &group_item_enabled, 0);
+        if(!group_item_enabled) 
+        {
+        	printf("Skipping camera group index: %d, not enabled\n", group_i);
+        	continue;
+        }
+        
+        // now iter through cameras to populate data
+        int n_group_cameras;
+        cJSON* group_cameras_json = json_fetch_array(group_item, "group_cams", &n_group_cameras);
+        for(int camera_i = 0; camera_i < n_group_cameras; camera_i++) {
+            
+            cJSON* camera_item = cJSON_GetArrayItem(group_cameras_json, camera_i);
+
+            // check if specific cam is enabled
+            int camera_item_enabled;
+            json_fetch_bool_with_default(camera_item, "enable", &camera_item_enabled, 0); if(!camera_item_enabled) continue;
+
+            tracker_input_t camera_item_input;
+
+            // if enabled, fetch 
+            json_fetch_string_with_default(camera_item, "input_pipe", camera_item_input.input_pipe, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
+            json_fetch_string_with_default(group_item, "output_pipe", camera_item_input.output_pipe, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
+            json_fetch_string_with_default(group_item, "overlay_pipe", camera_item_input.overlay_pipe, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
+            json_fetch_int_with_default(camera_item, "num_features", &camera_item_input.num_features, 50);
+
+            json_fetch_string_with_default(camera_item, "tracker_type", string_holder, 64, "cvp");
+            if(!strcmp(string_holder, "cvp")) {
+                camera_item_input.tracker_type = TRACKER_CVP;
+            } else if(!strcmp(string_holder, "ocv")) {
+                camera_item_input.tracker_type = TRACKER_OCV;
+            } else if(!strcmp(string_holder, "vins")) {
+            	static int camera_count = 0;
+            	
+            	
+            	// tracking group name
+                json_fetch_string_with_default(group_item, "group_name", string_holder, 
+                    MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+                
+                if (camera_count == 0)
+                {
+        			camera_info_set curr_info;
+        			strncpy(curr_info.name, string_holder, CM_CHAR_BUF_SIZE);
+        			cam_info_set_vec.push_back(curr_info);
+        			camera_mode curr_mode;
+        			curr_mode = string_camera_mode_to_enum("STEREO");
+        			cam_info_set_vec.back().cam_mode = curr_mode;
+        		}
+    			
+                json_fetch_string_with_default(camera_item, "input_pipe", string_holder, 
+                    MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+                if (camera_count == 0)
+                	strncpy(cam_info_set_vec.back().extrinsics_extension_first, string_holder, CM_CHAR_BUF_SIZE);
+                else if (camera_count == 1)
+                	strncpy(cam_info_set_vec.back().extrinsics_extension_second, string_holder, CM_CHAR_BUF_SIZE);
+                //TODO else (camera_count == 2)
+                		
+                camera_count++;
+                
+                printf("camera count: %d\n",camera_count );
+                
+            } else if(!strcmp(string_holder, "both")) {
+                camera_item_input.tracker_type = TRACKER_BOTH;
+            } else {
+                fprintf(stderr, "ERROR: Invalid tracker type specified in config\n");
+                return -1;
+            }
+        }
+    }
+    // remove fields from config file v1
+    _remove_old_fields(parent);
+
+    // check if we got any errors in that process
+	if(json_get_parse_error_flag()) {
+		fprintf(stderr, "failed to parse data in %s\n", CAM_CONFIG_FILE);
+		cJSON_Delete(parent);
+		return -1;
+	}
+	if(json_get_modified_flag()) {
+		printf("The JSON config file data was modified during parsing, saving the changes to disk\n");
+		json_write_to_file_with_header(CAM_CONFIG_FILE, parent, CAM_CONFIG_FILE_HEADER);
+	}
+
+    cJSON_Delete(parent);
+    
+    // These have been optimized  for OpenVINS on VOXL, do not need to change
+    strcpy(tmp_imu_name, "imu_apps");
+    num_features_to_track = 20;
+    grid_x = 5;
+    grid_y = 5;
+    min_pix_dist = 50;
+    pyramid_levels = 5;
+    window_size = 25;
+    en_gyro = 1;
+    
+	ret = cam_load_intrinsics_file();
+	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED cam_load_intrinsics_file: %d\n", ret);
+		return ret;
+	}
+
+	ret = cam_load_extrinsics_file();
+	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED cam_load_extrinsics_file: %d\n", ret);
+		return ret;
+	}
+
+	ret = get_config_as_json();
+	if (ret < 0)
+	{
+		fprintf(stderr, "FAILED get_config_as_json: %d\n", ret);
+		return ret;
+	}
+	printf("Done transfer camera configuration transfer\n");
+
+    return 0;
+
+}
+
+// ========================================================================
+#else    
+
+#pragma message "USING VERSION 1 format that is compliant with OPTIFLOW THERM"
+
 int cam_config_file_read(void)
 {
 	int ret = json_make_empty_file_with_header_if_missing(CAM_CONFIG_FILE,
@@ -1220,12 +1697,6 @@ int cam_config_file_read(void)
 	json_fetch_int_with_default(parent, "pyramid_levels", &pyramid_levels, 5);
 	json_fetch_int_with_default(parent, "window_size", &window_size, 25);
 	json_fetch_bool_with_default(parent, "en_gyro", (int*) &en_gyro, 1);
-	json_fetch_bool_with_default(parent, "en_descriptors",
-			(int*) &en_descriptors, 0);
-	json_fetch_bool_with_default(parent, "en_database", (int*) &en_database, 1);
-	json_fetch_int_with_default(parent, "database_size", &database_size, 50);
-	json_fetch_double_with_default(parent, "max_angular_rate_before_blur",
-			&max_angular_rate_before_blur, 40.0); // negative means ignored/disabled
 
 	if (json_get_parse_error_flag())
 	{
@@ -1267,3 +1738,6 @@ int cam_config_file_read(void)
 
 	return 0;
 }
+#endif
+// ========================================================================
+

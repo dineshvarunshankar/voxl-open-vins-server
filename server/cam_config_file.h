@@ -102,4 +102,22 @@ int cam_load_extrinsics_file();
 int get_config_as_json();
 
 
+// TODO need a lib to extract global camera data instead of pull from VFT
+typedef enum {
+    TRACKER_OCV  = 0,    // run the original OpenCV feature tracker
+    TRACKER_CVP  = 1,    // run the custom CVP feature tracker
+    TRACKER_BOTH = 2     // run both of the above
+} tracker_type_t;
+
+
+typedef struct tracker_input_t {
+    char input_pipe[CM_CHAR_BUF_SIZE];
+    char output_pipe[CM_CHAR_BUF_SIZE];
+    char overlay_pipe[CM_CHAR_BUF_SIZE];
+    int num_features;
+    tracker_type_t tracker_type;
+} tracker_input_t;
+
+
+
 #endif // CAM_CONFIG_FILE_H
