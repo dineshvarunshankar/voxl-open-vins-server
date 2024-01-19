@@ -533,8 +533,14 @@ int cam_load_extrinsics_file()
 
 	        //CAM 2
             memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+            
+#if VERSION_FORMAT == 1	        
             strcpy(ext_name, cam_info_set_vec[i].name);
             strcat(ext_name, cam_info_set_vec[i].extrinsics_extension_second);
+#else
+            strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_second);
+#endif           
+            
             if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
                 fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
             }
