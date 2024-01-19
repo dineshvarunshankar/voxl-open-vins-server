@@ -1516,7 +1516,16 @@ int cam_config_file_read(void)
         			strncpy(curr_info.name, string_holder, CM_CHAR_BUF_SIZE);
         			cam_info_set_vec.push_back(curr_info);
         			camera_mode curr_mode;
-        			curr_mode = string_camera_mode_to_enum("STEREO");
+        			if (n_group_cameras > 1)
+        			{
+        				printf("Multiple camera will need STEREO mode\n");
+        				curr_mode = string_camera_mode_to_enum("STEREO");
+        			}
+        			else
+        			{
+        				printf("MONO mode\n");
+        				curr_mode = string_camera_mode_to_enum("MONO");
+        			}
         			cam_info_set_vec.back().cam_mode = curr_mode;
         		}
     			
