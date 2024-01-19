@@ -533,8 +533,14 @@ int cam_load_extrinsics_file()
 
 	        //CAM 2
             memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+            
+#if VERSION_FORMAT == 1	        
             strcpy(ext_name, cam_info_set_vec[i].name);
             strcat(ext_name, cam_info_set_vec[i].extrinsics_extension_second);
+#else
+            strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_second);
+#endif           
+            
             if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
                 fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
             }
@@ -1347,7 +1353,7 @@ void make_default_groups(
     {
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 0);
+        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
         json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
         json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
