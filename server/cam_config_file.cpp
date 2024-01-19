@@ -1347,7 +1347,7 @@ void make_default_groups(
     {
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 0);
+        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
         json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
         json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
