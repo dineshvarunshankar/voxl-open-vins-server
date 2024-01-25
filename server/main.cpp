@@ -57,6 +57,7 @@
 #include "common.h"
 #include "img_ringbuffer.h"
 #include "rc_transform.h"
+#include "cpu_monitor_interface.h"
 
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
@@ -88,6 +89,7 @@
 #define FEATURE_CH 1
 #define FEAT_OVERLAY_CH 2
 #define BARO_CH 3
+#define CPU_CH 4
 
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
@@ -97,6 +99,8 @@
 #define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
 #define FEATURE_OVERLAY_NAME "feat_overlay"
 #define FEATURE_OVERLAY_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_OVERLAY_NAME "/"
+
+#define CPU_PIPE_DIR MODAL_PIPE_DEFAULT_BASE_DIR  "cpu_monitor/"
 
 // after 300ms with no response, the health monitor thread assumes mvVISLAM
 // has locked up while processing a frame and starts sending messages indicating
@@ -194,6 +198,7 @@ std::mutex baro_lock_mutex;
 static int is_initialized = 0;
 static int blank_counter = 0;
 static int fade_counter = 0;
+static int idler_limit  = 0;
 static int64_t last_time_alignment_ns = 0;
 static int32_t last_frame_frame_id = 0;
 static int64_t last_frame_timestamp_ns = 0;
@@ -722,7 +727,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch,
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
-	
+	static int idler_ctn = 0;
 //	if (en_debug)
 //			printf("_cam_helper_cb entrance %f\n",  (double)_apps_time_monotonic_ns()* 1e-9);
 						 
@@ -753,6 +758,15 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			resume_processing = 0;
 		}
 		return;
+	}
+	
+	if (idler_limit > 0 && idler_ctn++ < idler_limit)
+	{
+		return;
+	}
+	else
+	{
+		idler_ctn = 0;
 	}
 	
 	std::lock_guard<std::mutex> cam_lg(cam_lock_mutex);
@@ -965,7 +979,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 {    
 	double cam_imu_time_delta = (double)(_apps_time_monotonic_ns()-last_cam_time)*1e-9;
 
-	if (is_initialized)
+	if (is_initialized && idler_limit <= 0)
 	{
 		if (!bypass_reset_checks && cam_imu_time_delta > 0.15)
 		{
@@ -2170,6 +2184,64 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 		}
 			
 }
+static void _simple_cpu_cb(__attribute__((unused))int ch, char* raw_data, int bytes, __attribute__((unused)) void* context)
+{
+	
+    int n_packets;
+    cpu_stats_t *data_array = modal_cpu_validate_pipe_data(raw_data, bytes, &n_packets);
+    if (data_array == NULL) return;
+
+    // only use most recent packet
+    cpu_stats_t data = data_array[n_packets-1];
+
+    if (data.cpu_t_max > 85.0  || data.flags&CPU_STATS_FLAG_STANDBY_ACTIVE)
+    {
+    	idler_limit  = 3; // 10Hz
+    }
+    else
+    {
+    	idler_limit = 0;
+    }
+    
+#ifdef DEV
+    for(int i=0; i < data.num_cpu; i++){
+            printf("cpu%d %12.1f %s%8.1f %s%8.2f%s\n",
+                    i,
+                    (double)data.cpu_freq[i],
+                    GET_COLOR_GT(data.cpu_t[i], TEMP_RED_THRESH, TEMP_YLW_THRESH),
+                    (double)data.cpu_t[i],
+                    GET_COLOR_GT(data.cpu_load[i], LOAD_RED_THRESH, LOAD_YLW_THRESH),
+                    (double)data.cpu_load[i],
+                    RESET_FONT);
+    }
+
+
+    // Standby
+    if(data.flags&CPU_STATS_FLAG_STANDBY_ACTIVE){
+            printf("Standby Active\n");
+    }
+    else printf("Standby Not Active\n");
+
+    // overload flags
+    if(data.flags&CPU_STATS_FLAG_CPU_OVERLOAD){
+            printf(COLOR_RED "CPU OVERLOAD WARNING" RESET_FONT "\n");
+    }
+    if(data.flags&CPU_STATS_FLAG_CPU_OVERHEAT){
+            printf(COLOR_RED "CPU OVERHEAT WARNING" RESET_FONT "\n");
+    }
+#endif
+    
+	return;
+}
+
+
+
+static void _disconnect_cpu_cb(__attribute__((unused)) int ch,
+		__attribute__((unused)) void *context)
+{
+	return;
+}
+
 
 static int create_server_pipes(void)
 {
@@ -2659,6 +2731,25 @@ int main(int argc, char *argv[])
 	pthread_attr_t tattr_overlay;
 	pthread_attr_init(&tattr_overlay);
 	pthread_create(&overlay_thread, &tattr_overlay, _overlay_thread_func, NULL);
+	
+	//////////////////////////
+	// connect to CPU monitor for throttling cpu to prevent thermal runaway
+    pipe_client_set_simple_helper_cb(CPU_CH, _simple_cpu_cb, NULL);
+    pipe_client_set_disconnect_cb(CPU_CH, _disconnect_cpu_cb, NULL);
+    // for this test we will use the simple helper
+    int flags = EN_PIPE_CLIENT_SIMPLE_HELPER;
+    // init connection to server. In auto-reconnect mode this will "succeed"
+    // even if the server is offline, but it will connect later on automatically
+    ret = pipe_client_open(CPU_CH, CPU_PIPE_DIR, PROCESS_NAME, flags, CPU_STATS_RECOMMENDED_READ_BUF_SIZE);
+    // check for success
+    if(ret){
+            fprintf(stderr, "ERROR opening CPU channel:\n");
+            pipe_print_error(ret);
+            return -1;
+    }
+	//////////////////////////
+
+	
 	
 	while (main_running)
 	{
