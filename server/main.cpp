@@ -59,7 +59,6 @@
 #include "rc_transform.h"
 #include "cpu_monitor_interface.h"
 
-
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
 // These are the paths of the named pipe interfaces
@@ -116,7 +115,6 @@
 // init after  image frames recevoied at start up
 #define INIT_TIMEOUT_FRAMES 30
 
-
 // not really sure if this will be needed
 #define SILENT_STD(x)                             \
     {                                             \
@@ -145,9 +143,9 @@ static double last_feature_time;
 static double last_imu_time;
 static int64_t last_cam_time;
 static int64_t time_avg;
-static int avg  = 0;
+static int avg = 0;
 static uint8_t thresh_level = 127;
-static int perf_limit  = 1;
+static int perf_limit = 1;
 static int start_idx = 0;
 static int cameras_used = 0;
 static int camera_pipe_channels[10];
@@ -156,6 +154,11 @@ static double T_uncertainty = 0;
 static double R_uncertainty = 0;
 static int gravity_vector_direction = -1;
 static float alt_z = 0.0;
+static bool changed_motion_state = false;
+static bool imu_moved = false;
+static bool is_armed = false;
+static bool use_takeoff_cam  = true;
+static bool has_idle_images  = false;
 
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
@@ -198,7 +201,7 @@ std::mutex baro_lock_mutex;
 static int is_initialized = 0;
 static int blank_counter = 0;
 static int fade_counter = 0;
-static int idler_limit  = 0;
+static int idler_limit = -1;
 static int64_t last_time_alignment_ns = 0;
 static int32_t last_frame_frame_id = 0;
 static int64_t last_frame_timestamp_ns = 0;
@@ -206,6 +209,10 @@ static int64_t last_frame_timestamp_ns = 0;
 // Thermal stuff
 cv::Mat last_img8;
 cv::Mat last_img;
+
+// idle image stuff
+cv::Mat idle_image1;
+cv::Mat idle_image2;
 
 
 // overlay image stream stuff
@@ -244,11 +251,15 @@ static void _publish(double vio_dt);
 static void _publish_default(double pose_timestamp);
 static bool show_extra_points_on_overlay = true;
 
+// FUNCTIONS PROTOTSYPES
 static int _hard_reset(bool is_locked);
 static int connect_client_pipes(void);
+void reset_states();
 
 static int8_t verbosity_level
-{ static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT) };
+{ 
+	static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT) 
+};
 
 static ext_vio_data_t d;  // complete "extended" vio MPA packet
 static vio_data_t s;      // simplified vio packet
@@ -267,29 +278,29 @@ typedef struct _bucket
 } display_bucket_t;
 static display_bucket_t display_snapshot;
 
-
-typedef struct _klt_feature_t{
-    uint32_t  id;               ///< unique ID for feature point
-    int32_t cam_id;             ///< ID of camera which the point was seen from (typically first)
-    float pix_loc[2];           ///< pixel location in the last frame
+typedef struct _klt_feature_t
+{
+	uint32_t id;               ///< unique ID for feature point
+	int32_t cam_id; ///< ID of camera which the point was seen from (typically first)
+	float pix_loc[2];           ///< pixel location in the last frame
 //    float depth_error_stddev;   ///< depth error in meters
 } klt_feature_t;
 
-typedef struct _ov_status_t {
-    uint32_t magic_number;         ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
-    int64_t timestamp_ns;          ///< Timestamp in clock_monotonic system time of the provided pose.
-    int32_t quality;
-    float p_dop;
-    float r_dop;
-    int num_features;
-    klt_feature_t features[VIO_MAX_REPORTED_FEATURES];
+typedef struct _ov_status_t
+{
+	uint32_t magic_number; ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
+	int64_t timestamp_ns; ///< Timestamp in clock_monotonic system time of the provided pose.
+	int32_t quality;
+	float p_dop;
+	float r_dop;
+	int num_features;
+	klt_feature_t features[VIO_MAX_REPORTED_FEATURES];
 } ov_status_t;
 static ov_status_t ov_status;
 
-
 std::string log_path = "";
 
-static RingBuffer *img_ringbuf = 	new RingBuffer(5);
+static RingBuffer *img_ringbuf = new RingBuffer(5);
 
 std::atomic<bool> thread_update_running;
 std::atomic<bool> image_update_running;
@@ -303,29 +314,31 @@ static double baro_alt = 0.;
 #define sampleFreq      1000.0f                 // sample frequency in Hz
 #define twoKpDef        (2.0f * 0.01f)   // 2 * proportional gain
 #define twoKiDef        (2.0f * 0.0f)   // 2 * integral gain
-volatile float twoKp = twoKpDef;                                                                                        // 2 * proportional gain (Kp)
-volatile float twoKi = twoKiDef;                                                                                        // 2 * integral gain (Ki)
-volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;                                      // quaternion of sensor frame relative to auxiliary frame
-volatile float integralFBx = 0.0f,  integralFBy = 0.0f, integralFBz = 0.0f;     // integral error terms scaled by Ki
-void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az, float *phi, float *theta, float *psi);
+volatile float twoKp = twoKpDef;                   // 2 * proportional gain (Kp)
+volatile float twoKi = twoKiDef;                       // 2 * integral gain (Ki)
+volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
+volatile float integralFBx = 0.0f, integralFBy = 0.0f, integralFBz = 0.0f; // integral error terms scaled by Ki
+void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay,
+		float az, float *phi, float *theta, float *psi);
 float invSqrt(float x);
-static void dead_reckon_position(double dt,
-                float ax,
-                float ay,
-                float az,
-                float gx,
-                float gy,
-                float gz);
-static float _odometry_imu[3] = {0};
-static float _vel_imu[3] = {0};
-static float _accel_bias[3] = {0};
-static float _gyro_bias[3] = {0};
-static float _last_gyro[3] = {0};
-static float _last_vel[3] = {0};
-static float _last_odometry_imu[3] = {0};
+static void dead_reckon_position(double dt, float ax, float ay, float az,
+		float gx, float gy, float gz);
+static float _odometry_imu[3] =
+{ 0 };
+static float _vel_imu[3] =
+{ 0 };
+static float _accel_bias[3] =
+{ 0 };
+static float _gyro_bias[3] =
+{ 0 };
+static float _last_gyro[3] =
+{ 0 };
+static float _last_vel[3] =
+{ 0 };
+static float _last_odometry_imu[3] =
+{ 0 };
 /////////////////////////
 /////////////////////////
-
 
 // printed if some invalid argument was given
 static void _print_usage(void)
@@ -431,10 +444,10 @@ static bool _parse_opts(int argc, char *argv[])
 			thresh_level = static_cast<uint8_t>(std::atoi(optarg));
 			printf("===> Threshold: %d\n", thresh_level);
 			break;
-			
-        case 't':
-                en_debug_timing_cam = 1;
-                break;
+
+		case 't':
+			en_debug_timing_cam = 1;
+			break;
 
 		case 'v':
 			verbosity_level = static_cast<uint8_t>(std::atoi(optarg));
@@ -560,53 +573,91 @@ static void quaternionToRPY(double qx, double qy, double qz, double qw,
 	yaw = std::atan2(siny_cosp, cosy_cosp);
 }
 
+void reset_states()
+{
+	 last_feature_time = 0;
+	 last_imu_time = 0;
+	 last_cam_time = 0;
+	 perf_limit = 1;
+	 start_idx = 0;
+	 every_other = 0;
+	 T_uncertainty = 0;
+	 R_uncertainty = 0;
+	alt_z = 0.0;
+	changed_motion_state = false;
+	imu_moved = false;
+	is_armed = false;
+	use_takeoff_cam  = true;
+	has_idle_images  = false;
+	last_imu_timestamp_ns = 0;
+	last_feat_timestamp_ns = 0;
+	last_real_pose_timestamp_ns = 0;
+	last_sent_timestamp_ns = 0;
+	last_cep_timestamp_ns = 0;
+	is_init = 0;
+
+	init_failure_detector_reset_flag = 0;
+	time_of_last_reset = 0;
+
+	is_initialized = 0;
+	blank_counter = 0;
+	fade_counter = 0;
+	idler_limit = -1;
+	last_time_alignment_ns = 0;
+	last_frame_frame_id = 0;
+	last_frame_timestamp_ns = 0;
+}
+
+
 static int _hard_reset_(bool fast_reset)
 {
-	
+
 	// Lock all external data handlers not related to VINS core instance
 	imu_lock_mutex.lock();
 	cam_lock_mutex.lock();
 	baro_lock_mutex.lock();
 	publish_lock_mutex.lock();
-			
+	
+	// update my state
+	last_state = VIO_STATE_FAILED;
 
+	printf("[INFO] restarting managers\n");
+	
 	// stop it if it's running
-	printf("resetting managers\n");
 	if (is_initialized)
 	{
 		is_initialized = 0;
 		vio_manager.reset();  // delete VINS core instance!
 	}
-	
+
 	// clear MPA pipe buffers
-	for (int i=0; i<cameras_used; i++)
+	for (int i = 0; i < cameras_used; i++)
 	{
-		  pipe_client_flush(camera_pipe_channels[i]);
+		pipe_client_flush(camera_pipe_channels[i]);
 	}
 	pipe_client_flush(IMU_CH);
 	pipe_client_flush(BARO_CH);
 	camera_queue.clear();
 
-	// update my state
-	last_state = VIO_STATE_FAILED;
-
-	// clear quality
-	T_uncertainty = 0;
-	R_uncertainty = 0;
 
 	// now start again
-	printf("restarting managers\n");
-	double oe_init_window_time = vio_manager_options.init_options.init_window_time;
+	double oe_init_window_time =
+			vio_manager_options.init_options.init_window_time;
 	double oe_zupt_max_vel = vio_manager_options.zupt_max_velocity;
+	double oe_init_max_disparity= vio_manager_options.init_options.init_max_disparity;
+	double oe_zupt_max_disparity= vio_manager_options.zupt_max_disparity;
+	
 	if (fast_reset)
 	{
 		printf("FAST RESET requested!\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.init_options.init_max_disparity = 25.0;
-		vio_manager_options.zupt_max_disparity = 0;
-		vio_manager_options.zupt_max_velocity = 5.0;  
+		vio_manager_options.init_options.init_max_disparity = 6.0;
+		vio_manager_options.zupt_max_disparity = 1;
+		vio_manager_options.zupt_max_velocity = 5.0;
 	}
-
+	
+	reset_states();
+	
 	vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
 	if (vio_manager == NULL)
 	{
@@ -615,16 +666,16 @@ static int _hard_reset_(bool fast_reset)
 	}
 	vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
 	vio_manager_options.init_options.init_window_time = oe_init_window_time;
-	vio_manager_options.init_options.init_max_disparity = zupt_max_disparity;
-	vio_manager_options.zupt_max_disparity = zupt_max_disparity; 
+	vio_manager_options.init_options.init_max_disparity = oe_init_max_disparity;
+	vio_manager_options.zupt_max_disparity = oe_zupt_max_disparity;
 
-	printf("unlocking managers\n");
+	printf("[INFO] unlocking managers\n");
 
 	imu_lock_mutex.unlock();
 	cam_lock_mutex.unlock();
 	baro_lock_mutex.unlock();
 	publish_lock_mutex.unlock();
-	
+
 	time_of_last_reset = _apps_time_monotonic_ns();
 
 	return 0;
@@ -680,14 +731,14 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 	if (strncmp(string, RESET_VIO_HARD, strlen(RESET_VIO_HARD)) == 0)
 	{
 		resume_processing = 0;
-		printf("Client requested hard reset\n");
+		fprintf(stderr, "[ERROR] Client requested hard reset\n");
 		_hard_reset_(true);  // close and restart the object
 		return;
 	}
 	else if (strncmp(string, RESET_VIO_SOFT, strlen(RESET_VIO_SOFT)) == 0)
 	{
 		resume_processing = 0;
-		printf("Client requested reset\n");
+		fprintf(stderr,"[ERROR] Client requested reset\n");
 		_hard_reset_(false);  // close and restart the object
 		return;
 	}
@@ -730,12 +781,13 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	static int idler_ctn = 0;
 //	if (en_debug)
 //			printf("_cam_helper_cb entrance %f\n",  (double)_apps_time_monotonic_ns()* 1e-9);
-						 
+
 	is_cam_connected = true;
 	// camera working, reset errors
 	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
 
-	if (!is_imu_connected || !main_running || image_update_running || resume_processing >= 1)
+	if (!is_imu_connected || !main_running || image_update_running
+			|| resume_processing >= 1)
 	{
 		if (image_update_running)
 		{
@@ -754,22 +806,31 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		// TODO replace with histogram analysis
 		if (resume_processing++ > 12)
 		{
-			printf("Resume processing done\n");
+			if(en_debug)
+				printf("[THERMAL] Resume processing done\n");
+			
 			resume_processing = 0;
 		}
 		return;
 	}
-	
+
 	if (idler_limit > 0 && idler_ctn++ < idler_limit)
 	{
+		if (en_debug)
+		{
+			printf("load balance: %d\n", idler_ctn);
+		}
+
+
+		last_cam_time = _apps_time_monotonic_ns();
 		return;
 	}
 	else
 	{
 		idler_ctn = 0;
 	}
-	
-	std::lock_guard<std::mutex> cam_lg(cam_lock_mutex);
+
+	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
 
 	//	if (image_update_running)
 //	{
@@ -807,162 +868,224 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	try
 	{
 
-	if (meta.format == IMAGE_FORMAT_RAW8)
-	{
-		memcpy(curr_message->image_pixels, (uint8_t*) frame, meta.size_bytes);
-		img_ringbuf->insert_data(curr_message);
-
-		cv::Mat internal_img(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels);
-		ov_core::CameraData message;
-		message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-		if (ch == 2)
-			message.sensor_ids.push_back(1);
-		else
-			message.sensor_ids.push_back(0);
-
-		message.images.push_back(internal_img.clone());
-		message.masks.push_back(
-				cv::Mat::zeros(internal_img.rows, internal_img.cols, CV_8UC1));
-		std::lock_guard<std::mutex> lck(camera_queue_mtx);
-		camera_queue.push_back(message);
-
-		std::sort(camera_queue.begin(), camera_queue.end());
-		
-		is_thermal = false;
-
-	}
-	else if (meta.format == IMAGE_FORMAT_RAW16)
-	{
-		cv::Mat internal_img(meta.height, meta.width, CV_16UC1, (uint8_t*) frame);
-		
-		/////////////////////// THERMAL ONLY ////////////////////////
-		cv::Mat img_8;
-		
-        //need to convert 16 bit image to 8 bit
-        double min_pixel, max_pixel;
-        cv::minMaxLoc(internal_img, &min_pixel, &max_pixel);
-
-        bool use_last = false;  // TODO make a param
-        
-        if (use_last && !last_img.empty()) {
-            //also consider the previous image when determining the conversion
-            double last_min_pixel, last_max_pixel;
-            cv::minMaxLoc(last_img, &last_min_pixel, &last_max_pixel);
-
-            max_pixel = std::max(max_pixel, last_max_pixel);
-            min_pixel = std::min(min_pixel, last_min_pixel);
-        }        
-
-        double min_temp_delta = 400.0;  
-        double pixel_diff = std::max(max_pixel - min_pixel, (double)min_temp_delta);
-
-        double alpha_convert = 255.0/pixel_diff;
-        double beta_convert = -min_pixel*alpha_convert;
-
-        internal_img.convertTo(img_8, CV_8UC1, alpha_convert, beta_convert);
-        internal_img = img_8; 
-        
-        threshold(internal_img, internal_img,  thresh_level, 0, cv::THRESH_TOZERO);
-
-//        cv::Mat mask = cv::Mat(internal_img.size(), CV_8UC1);
-//        threshold(internal_img, mask, thresh_level, 255, cv::THRESH_BINARY);
-
-        if (use_last && !last_img.empty()) { 
-            last_img.convertTo(last_img8, CV_8UC1, alpha_convert, beta_convert);
-        }
-        
-		/////////////////////// THERMAL ONLY ////////////////////////
-		memcpy(curr_message->image_pixels, (uint8_t*) internal_img.data, internal_img.total() * internal_img.elemSize());
-
-		img_ringbuf->insert_data(curr_message);
-		
-		ov_core::CameraData message;
-		message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-		if (ch == 2)
-			message.sensor_ids.push_back(1);
-		else
-			message.sensor_ids.push_back(0);
-
-		message.images.push_back(internal_img.clone());
-		message.masks.push_back(
-				cv::Mat::zeros(internal_img.rows, internal_img.cols, CV_8UC1));
-///		message.masks.push_back(mask.clone());
-
-		std::lock_guard<std::mutex> lck(camera_queue_mtx);
-		camera_queue.push_back(message);
- 
-		is_thermal = true;
-		
-		std::sort(camera_queue.begin(), camera_queue.end());
-	}
-	else if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
-	{
-		if (*cm == STEREO)
+		if (meta.format == IMAGE_FORMAT_RAW8)
 		{
-			// NOTE: the stereo image comes in as a concatenated single image via vertical tiled (width = width, height = img_ctn * height)
-//			printf("STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
 			memcpy(curr_message->image_pixels, (uint8_t*) frame,
 					meta.size_bytes);
-
 			img_ringbuf->insert_data(curr_message);
 
-			cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels);
-			cv::Mat internal_img_2(meta.height, meta.width, CV_8UC1, (uint8_t*) curr_message->image_pixels + meta.size_bytes / 2);
-
+			cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
+					(uint8_t*) curr_message->image_pixels);
 			ov_core::CameraData message;
 			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-			message.sensor_ids.push_back(0);
-			message.sensor_ids.push_back(1);
-
-			message.images.push_back(internal_img_1.clone());
-			message.images.push_back(internal_img_2.clone());
-
-			if (takeoff_cam >= 0)
-			{
-				if (takeoff_cam == 0)
-				{
-					message.masks.push_back(
-						cv::Mat::zeros(internal_img_1.rows, internal_img_1.cols, CV_8UC1));
-					message.masks.push_back(
-						cv::Mat::ones(internal_img_2.rows, internal_img_2.cols, CV_8UC1));
-				}
-				else if (takeoff_cam == 1)
-				{
-					message.masks.push_back(
-						cv::Mat::ones(internal_img_1.rows, internal_img_1.cols, CV_8UC1));
-					message.masks.push_back(
-						cv::Mat::zeros(internal_img_2.rows, internal_img_2.cols, CV_8UC1));
-				}
-				
-				if ((double)alt_z < takeoff_threshold) // turn off, we are in the air
-				{
-					printf("Detected Takeoff, going to multicamera VINS normal operations\n");
-					takeoff_cam = -1;
-				}
-			}
+			if (ch == 2)
+				message.sensor_ids.push_back(1);
 			else
-			{
-				message.masks.push_back(
-					cv::Mat::zeros(internal_img_1.rows, internal_img_1.cols, CV_8UC1));
-				message.masks.push_back(
-					cv::Mat::zeros(internal_img_2.rows, internal_img_2.cols, CV_8UC1));
-			}
+				message.sensor_ids.push_back(0);
 
-			std::lock_guard<std::mutex> lck(camera_queue_mtx);
+			message.images.push_back(internal_img.clone());
+			message.masks.push_back(
+					cv::Mat::zeros(internal_img.rows, internal_img.cols,
+							CV_8UC1));
+			std::lock_guard < std::mutex > lck(camera_queue_mtx);
 			camera_queue.push_back(message);
+
 			std::sort(camera_queue.begin(), camera_queue.end());
 
 			is_thermal = false;
 
 		}
-		else
-			printf("Individual STEREO camera option has been disabled\n");
-	}
-	
-	last_cam_time = _apps_time_monotonic_ns();
+		else if (meta.format == IMAGE_FORMAT_RAW16)
+		{
+			cv::Mat internal_img(meta.height, meta.width, CV_16UC1,
+					(uint8_t*) frame);
 
-	}
-	catch (const std::out_of_range& e)
+			/////////////////////// THERMAL ONLY ////////////////////////
+			cv::Mat img_8;
+
+			//need to convert 16 bit image to 8 bit
+			double min_pixel, max_pixel;
+			cv::minMaxLoc(internal_img, &min_pixel, &max_pixel);
+
+			bool use_last = false;  // TODO make a param
+
+			if (use_last && !last_img.empty())
+			{
+				//also consider the previous image when determining the conversion
+				double last_min_pixel, last_max_pixel;
+				cv::minMaxLoc(last_img, &last_min_pixel, &last_max_pixel);
+
+				max_pixel = std::max(max_pixel, last_max_pixel);
+				min_pixel = std::min(min_pixel, last_min_pixel);
+			}
+
+			double min_temp_delta = 400.0;
+			double pixel_diff = std::max(max_pixel - min_pixel,
+					(double) min_temp_delta);
+
+			double alpha_convert = 255.0 / pixel_diff;
+			double beta_convert = -min_pixel * alpha_convert;
+
+			internal_img.convertTo(img_8, CV_8UC1, alpha_convert, beta_convert);
+			internal_img = img_8;
+
+			threshold(internal_img, internal_img, thresh_level, 0,
+					cv::THRESH_TOZERO);
+
+//        cv::Mat mask = cv::Mat(internal_img.size(), CV_8UC1);
+//        threshold(internal_img, mask, thresh_level, 255, cv::THRESH_BINARY);
+
+			if (use_last && !last_img.empty())
+			{
+				last_img.convertTo(last_img8, CV_8UC1, alpha_convert,
+						beta_convert);
+			}
+
+			/////////////////////// THERMAL ONLY ////////////////////////
+			memcpy(curr_message->image_pixels, (uint8_t*) internal_img.data,
+					internal_img.total() * internal_img.elemSize());
+
+			img_ringbuf->insert_data(curr_message);
+
+			ov_core::CameraData message;
+			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+			if (ch == 2)
+				message.sensor_ids.push_back(1);
+			else
+				message.sensor_ids.push_back(0);
+
+			message.images.push_back(internal_img.clone());
+			message.masks.push_back(
+					cv::Mat::zeros(internal_img.rows, internal_img.cols,
+							CV_8UC1));
+///		message.masks.push_back(mask.clone());
+
+			std::lock_guard < std::mutex > lck(camera_queue_mtx);
+			camera_queue.push_back(message);
+
+			is_thermal = true;
+
+			std::sort(camera_queue.begin(), camera_queue.end());
+		}
+		else if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
+		{
+			if (*cm == STEREO)
+			{
+				// NOTE: the stereo image comes in as a concatenated single image via vertical tiled (width = width, height = img_ctn * height)
+//			printf("STEREO CH %d %f\n", ch, curr_message->metadata.timestamp_ns * 1e-09);
+				memcpy(curr_message->image_pixels, (uint8_t*) frame,
+						meta.size_bytes);
+
+				img_ringbuf->insert_data(curr_message);
+
+				cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1,
+						(uint8_t*) curr_message->image_pixels);
+				cv::Mat internal_img_2(meta.height, meta.width, CV_8UC1,
+						(uint8_t*) curr_message->image_pixels
+								+ meta.size_bytes / 2);
+
+				ov_core::CameraData message;
+				message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+				message.sensor_ids.push_back(0);
+				message.sensor_ids.push_back(1);
+
+				// TODO dynamic apeture
+#ifdef DYN_AP				
+				static cv::Mat idle_mask1(internal_img_1.rows,
+						internal_img_1.cols, CV_8UC1, cv::Scalar(0));
+//				static int rectX1 = (internal_img_1.cols - 640) / 2;
+//				static int rectY1 = (internal_img_1.rows - 620) / 2;
+//				cv::rectangle(idle_mask1, cv::Rect(rectX1, rectY1, 640, 180), cv::Scalar(255), -1);  	
+				cv::rectangle(idle_mask1, cv::Rect(426, 266, internal_img_1.cols-426, internal_img_1.rows-266), cv::Scalar(255), -1);  	
+				
+				static cv::Mat idle_mask2(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(0));
+//				static int rectX2 = (internal_img_2.cols -640 ) / 2;
+//				static int rectY2 = (internal_img_2.rows - 620) / 2;
+//				cv::rectangle(idle_mask2, cv::Rect(rectX2, rectY2, 640, 180), cv::Scalar(255), -1);  	
+				cv::rectangle(idle_mask2, cv::Rect(426, 266, internal_img_2.cols-426, internal_img_2.rows-266), cv::Scalar(255), -1);  	
+#endif
+				
+				static cv::Mat ignore_mask1(internal_img_1.rows,
+						internal_img_1.cols, CV_8UC1, cv::Scalar(255));
+				static cv::Mat ignore_mask2(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(255));
+				
+				static cv::Mat use_mask1(internal_img_1.rows,
+						internal_img_1.cols, CV_8UC1, cv::Scalar(0));
+				static cv::Mat use_mask2(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(0));
+
+				if (vio_manager->initialized() && !imu_moved)
+				{
+					if (en_debug)
+						printf("Idling\n");
+					
+					if (!has_idle_images)
+					{
+						if (en_debug)
+							printf("Capture new idle images\n");								
+						idle_image1 = internal_img_1.clone();
+						idle_image2 = internal_img_2.clone();
+						has_idle_images = true;
+					}
+					
+					message.images.push_back(idle_image1);
+					message.images.push_back(idle_image2);
+				}
+				else
+				{
+					message.images.push_back(internal_img_1.clone());
+					message.images.push_back(internal_img_2.clone());
+				}
+				
+				if (use_takeoff_cam)
+				{
+					if (takeoff_cam == 0)
+					{
+						if (en_debug)
+							printf("in takeoff %f\n", (double)alt_z);
+						message.masks.push_back(use_mask1);
+						message.masks.push_back(ignore_mask1);
+					}
+					else if (takeoff_cam == 1)
+					{
+						if (en_debug)
+							printf("in takeoff %f\n", (double)alt_z);
+						message.masks.push_back(ignore_mask2);
+						message.masks.push_back(use_mask2);
+					}
+
+					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+					{
+						printf(
+								"Detected Takeoff, going to multicamera VINS normal operations\n");
+						use_takeoff_cam = false;
+
+						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+						idler_limit = -1;
+					}
+				}
+				else
+				{
+					message.masks.push_back(use_mask1);
+					message.masks.push_back(use_mask2);
+				}
+
+				std::lock_guard < std::mutex > lck(camera_queue_mtx);
+				camera_queue.push_back(message);
+				std::sort(camera_queue.begin(), camera_queue.end());
+
+				is_thermal = false;
+
+			}
+			else
+				printf("Individual STEREO camera option has been disabled\n");
+		}
+
+		last_cam_time = _apps_time_monotonic_ns();
+
+	} catch (const std::out_of_range &e)
 	{
 		fprintf(stderr, "CAM Process error!\n");
 	}
@@ -972,29 +1095,29 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	delete curr_message;
 }
 
-
 // imu callback registered to the imu server
 static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
-{    
-	double cam_imu_time_delta = (double)(_apps_time_monotonic_ns()-last_cam_time)*1e-9;
+{	
+	double cam_imu_time_delta = (double) (_apps_time_monotonic_ns()
+			- last_cam_time) * 1e-9;
 
 	if (is_initialized && idler_limit <= 0)
 	{
 		if (!bypass_reset_checks && cam_imu_time_delta > 0.15)
 		{
-			printf("-----------> UNSTABLE <----------------\n");
+			printf("-----------> UNSTABLE [THERMAL?]  <----------------\n");
 			bypass_reset_checks = true;
 		}
 		else if (bypass_reset_checks && cam_imu_time_delta < 0.1)
 		{
-			printf("-----------> STABLE <----------------\n");
+			printf("-----------> STABLE [THERMAL?]  <----------------\n");
 			bypass_reset_checks = false;
 			resume_processing = 1;
 		}
 	}
-	
-	std::lock_guard<std::mutex> imu_lg(imu_lock_mutex);
+
+	std::lock_guard < std::mutex > imu_lg(imu_lock_mutex);
 
 //	if (en_debug)
 //			printf("_new_imu_data_default_handler entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
@@ -1012,7 +1135,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		printf("ERROR: no IMU n_packets extracted from imu data\n");
 		return;
 	}
-
 
 	// flag that imu data is active, remove the error, skip data if camera is disconnected
 	is_imu_connected = 1;
@@ -1033,184 +1155,215 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	{
 
 		is_init = vio_manager->initialized();
-		
+
 		// time this in debug mode
-		int64_t   process_time;
-	
-		static bool changed_motion_state = false;
+		int64_t process_time;
+
 		static double last_accel_mag = 0, last_gyro_mag = 0;
-	    static int last_perf_limit = 0;
+		static int last_perf_limit = 0;
 
 		// TODO current IMU is setup to batch send imu values. This has a conflict with OV's internal processing system
 		// by pausing caluclation while the publishing loop runs with new timestamps.
 		// So on average use every other packet.
 		if (!vio_manager->is_moving())
 		{
-			perf_limit  = 5; //6
+			perf_limit = 5; //6
 		}
 		else
 		{
-			
+
 			if (n_packets > 100)
 				perf_limit = 10;  //3
-			else	 if (n_packets > 15)
-				perf_limit = 3;  
+			else if (n_packets > 15)
+				perf_limit = 3;
 			else
-				perf_limit = 1;  
-	
+				perf_limit = 1;
+
 			if (!changed_motion_state)
 			{
-				fprintf(stderr, "[WARN] Motion detected, going to full processing\n");
+				// ARM CHECK?
+				fprintf(stderr,
+						"[WARN] Motion detected, going to full processing\n");
 				changed_motion_state = true;
 			}
 		}
-		
+
 		if (en_debug && perf_limit != last_perf_limit)
 		{
-			printf( "WARNING: IMU processing rate changed: %d\n", perf_limit);
+			printf("WARNING: IMU processing rate changed: %d\n", perf_limit);
 		}
-		
+
 		last_perf_limit = perf_limit;
-		
-		for (int i = 0; i < n_packets; i+=perf_limit)
-	//		for (int i = 0; i < n_packets; i+=perf_limit)
+
+		for (int i = 0; i < n_packets; i += perf_limit)
+		//		for (int i = 0; i < n_packets; i+=perf_limit)
 		{
-	
+
 //			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
-	
+
+			int64_t  dt_long =  (data_array[i].timestamp_ns-last_imu_timestamp_ns);
+			double dt = (double) dt_long * 1e-09;
+
 			// check if we somehow got an out-of-order imu sample and reject it
 			if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
 			{
-				double dt = (last_imu_timestamp_ns - data_array[i].timestamp_ns)
-						* 1e-09;
-				fprintf(stderr, "WARNING out-of-order imu %fms before previous\n",
-						dt);
+				fprintf(stderr,
+						"WARNING out-of-order imu %fms before previous\n", dt);
 				continue;
 			}
 			else
 			{
-	
+
 				// Create the data struct that we will use for ingesting data into the vio manager
 				ov_core::ImuData vio_manager_data;
 				vio_manager_data.timestamp = data_array[i].timestamp_ns * 1e-09; // (seconds)
-	
+
 				Eigen::Matrix<double, 3, 1> t_wm;
 				Eigen::Matrix<double, 3, 1> t_am;
-				Eigen::Matrix<double, 3, 1> j_am;
-	
+
 				t_wm(0, 0) = data_array[i].gyro_rad[0];
 				t_wm(1, 0) = data_array[i].gyro_rad[1];
 				t_wm(2, 0) = data_array[i].gyro_rad[2];
-	
+
 				t_am(0, 0) = data_array[i].accl_ms2[0];
 				t_am(1, 0) = data_array[i].accl_ms2[1];
 				t_am(2, 0) = data_array[i].accl_ms2[2];
-	
+
+				
+				
+				if (dt <0.01)
+				{
+					static int ramp = 0;
+					static double prev_accel = 0;
+					double accel_mag = t_am.norm();
+					static double base_accel = accel_mag;
+
+					if (ramp++ < 256)
+					{
+						base_accel = accel_mag;
+					}
+					else
+					{
+						double d_accel = accel_mag-base_accel;
+						d_accel  = (0.6 * d_accel) - (0.4 * prev_accel);
+						prev_accel = d_accel; 		
+						if (d_accel > 0.7)
+						{
+							imu_moved = true;
+							vio_manager->force_moving();
+						}
+					}
+				}
+								
 				// NED to FLU systems as per VINS.
-				static Eigen::Matrix3d correction_mat = Eigen::Matrix3d::Identity();
-				correction_mat(1,1) = -1;
-				correction_mat(2,2) = -1;
-	
+				static Eigen::Matrix3d correction_mat =
+						Eigen::Matrix3d::Identity();
+				correction_mat(1, 1) = -1;
+				correction_mat(2, 2) = -1;
+
 				t_wm = correction_mat * t_wm;
 				t_am = correction_mat * t_am;
-	
-				// FLU
+
+				// FLU set data for VINS
 				vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
 				vio_manager_data.wm(1, 0) = t_wm(1, 0);  // pitch
 				vio_manager_data.wm(2, 0) = t_wm(2, 0);  //yaw
 				vio_manager_data.am(0, 0) = t_am(0, 0);  // X axis
 				vio_manager_data.am(1, 0) = t_am(1, 0);  // Y axis
 				vio_manager_data.am(2, 0) = t_am(2, 0);  // Z axis
-	
+
 				vio_manager->feed_measurement_imu(vio_manager_data);
+				
 				last_imu_timestamp_ns = data_array[i].timestamp_ns;
 				last_imu_time = vio_manager_data.timestamp;
-	
-				  if (thread_update_running)
-					return;
-	
-				  thread_update_running = true;
-	
-				double timestamp_imu_inC = vio_manager_data.timestamp
-						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-	
-				std::thread thread([&] {
-	
-						std::lock_guard<std::mutex> lck(camera_queue_mtx);
-						std::lock_guard<std::mutex> pub_lg(publish_lock_mutex);
 
-						while (!camera_queue.empty()
-								&& camera_queue.at(0).timestamp < timestamp_imu_inC)
-						{
-								vio_manager->feed_measurement_camera(camera_queue.at(0));
-								_publish_default(last_imu_time);
-								camera_queue.pop_front();
-						}
-						thread_update_running = false;
+				if (thread_update_running)
+					return;
+
+				thread_update_running = true;
+
+				double timestamp_imu_inC = vio_manager_data.timestamp
+						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(
+								0);
+
+				std::thread thread([&]
+				{
+
+					std::lock_guard < std::mutex > lck(camera_queue_mtx);
+					std::lock_guard < std::mutex > pub_lg(publish_lock_mutex);
+
+				while (!camera_queue.empty() && camera_queue.at(0).timestamp< timestamp_imu_inC)
+				{
+					vio_manager->feed_measurement_camera(camera_queue.at(0));
+					_publish_default(last_imu_time);
+					camera_queue.pop_front();
+				}
+					thread_update_running = false;
 				});
-	
+
 				thread.join();
-		
+
 			}
-	
+
 //			auto rT0_2 = boost::posix_time::microsec_clock::local_time();
 //			double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
-	
+
 		}
 
-	}
-	catch (const std::out_of_range& e)
+	} catch (const std::out_of_range &e)
 	{
 		fprintf(stderr, "IMU Process error!\n");
 	}
 	return;
 }
 
-static double map_double(double x, double in_min, double in_max, double out_min, double out_max) {
-  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+static double map_double(double x, double in_min, double in_max, double out_min,
+		double out_max)
+{
+	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 // Looks at quality over time
 static bool stable_quality(int cur_qual)
 {
-	static double last_good_qual_ts =  _apps_time_monotonic_ns();
+	static double last_good_qual_ts = _apps_time_monotonic_ns();
 	bool is_bad = false;
-	
+
 	if (cur_qual >= 1)
-		last_good_qual_ts =  _apps_time_monotonic_ns();
-		
+		last_good_qual_ts = _apps_time_monotonic_ns();
+
 	// if quality is less than acceptable for more than 2 sec
-	double ts = (_apps_time_monotonic_ns() -last_good_qual_ts)*1e-9;
-	if ( ts > auto_reset_max_v_cov_timeout_s)
+	double ts = (_apps_time_monotonic_ns() - last_good_qual_ts) * 1e-9;
+	if (ts > auto_reset_max_v_cov_timeout_s)
 	{
-		printf("ERROR: quality was bad for a long time!\n");
+		printf("[ERROR] quality was bad for a long time!\n");
 		is_bad = true;
 	}
-	
+
 	return is_bad;
 }
 
 // looks at state during initialization to avoid false positive restarts
 static bool stable_state(int the_state)
 {
-	static double last_good_state_ts =  _apps_time_monotonic_ns();
+	static double last_good_state_ts = _apps_time_monotonic_ns();
 	static bool is_ready = false;
 
 	if (is_ready)
 		return is_ready;
 
-	double ts = (_apps_time_monotonic_ns() -last_good_state_ts)*1e-9;
-	
+	double ts = (_apps_time_monotonic_ns() - last_good_state_ts) * 1e-9;
+
 	// if quality is less than acceptable for more than 2 sec
 	if (the_state != VIO_STATE_OK)
 	{
-		last_good_state_ts =  _apps_time_monotonic_ns();
+		last_good_state_ts = _apps_time_monotonic_ns();
 	}
 	else if (ts > 3)
 	{
 		is_ready = true;
 	}
-	
+
 	return is_ready;
 }
 
@@ -1218,7 +1371,7 @@ static bool stable_state(int the_state)
 static bool stable_features(int cur_feats)
 {
 	static bool wait_for_features = true;
-	
+
 	if (wait_for_features)
 	{
 		if (cur_feats > 3)
@@ -1227,27 +1380,26 @@ static bool stable_features(int cur_feats)
 		}
 		return false;
 	}
-	
-	static double last_good_feat_ts =  _apps_time_monotonic_ns();
+
+	static double last_good_feat_ts = _apps_time_monotonic_ns();
 	bool is_bad = false;
 	// if quality is less than acceptable for more than 2 sec
-	
+
 	// TODO use auto_reset_min_features!!!	
 	if (cur_feats > 1)
-		last_good_feat_ts =  _apps_time_monotonic_ns();
-		
-	double ts = (_apps_time_monotonic_ns() -last_good_feat_ts)*1e-9;
+		last_good_feat_ts = _apps_time_monotonic_ns();
 
-	if ( ts > auto_reset_min_feature_timeout_s)
+	double ts = (_apps_time_monotonic_ns() - last_good_feat_ts) * 1e-9;
+
+	if (ts > auto_reset_min_feature_timeout_s)
 	{
 		printf("ERROR: features were 0 for a long time!\n");
 		is_bad = true;
 		wait_for_features = true;
 	}
-	
+
 	return is_bad;
 }
-
 
 #define OVERLAY_RES_W_X 320
 #define OVERLAY_RES_H_Y 240
@@ -1258,12 +1410,12 @@ static void _post_snapshot()
 	static int target_id = -1;
 	static float font_size = 1.0;
 	static float border_scale = 1;
-	static cv::Mat overlay_cp;		
+	static cv::Mat overlay_cp;
 	static char reinit_str[32];
 	static int reinit_time = 0;
 	static int reinit_disp_time = 0;
 
-	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) 	// if someone has subscribed to the overlay, draw it
+	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) // if someone has subscribed to the overlay, draw it
 	{
 		not_displaying = false;
 		{
@@ -1274,11 +1426,12 @@ static void _post_snapshot()
 			//double target_time = pose_timestamp*1e9;
 			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
 			//int ret = img_ringbuf->get_data_at_time((int64_t)display_snapshot.timestamp, curr_imgs);
-						
+
 			if (ret < 0)
 			{
 //				feat_ts_mutex.unlock();
-				fprintf(stderr, "FAILED TO FETCH IMG RINGBUF at time %ld %ld %ld %ld %ld %ld\n",
+				fprintf(stderr,
+						"FAILED TO FETCH IMG RINGBUF at time %ld %ld %ld %ld %ld %ld\n",
 						display_snapshot.timestamp,
 						img_ringbuf->get_timestamp_at_position(0),
 						img_ringbuf->get_timestamp_at_position(1),
@@ -1291,10 +1444,9 @@ static void _post_snapshot()
 //			{
 //				printf("Time Delta: %f\n", (display_snapshot.timestamp - img_ringbuf->get_timestamp_at_position(0))*1e-9);
 //			}
-			
-			// now, construct some cv::Mats with our images (we know them to be greyscale)
-			std::vector<cv::Mat> img_set;
 
+			// now, construct some cv::Mats with our images (we know them to be greyscale)
+			std::vector < cv::Mat > img_set;
 
 			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
 			{
@@ -1303,11 +1455,10 @@ static void _post_snapshot()
 				{
 
 					cv::Mat img(curr_imgs->metadata.height,
-							curr_imgs->metadata.width,
-							CV_8UC1, curr_imgs->image_pixels);
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels);
 					cv::Mat img2(curr_imgs->metadata.height,
-							curr_imgs->metadata.width,
-							CV_8UC1,
+							curr_imgs->metadata.width, CV_8UC1,
 							curr_imgs->image_pixels
 									+ (curr_imgs->metadata.width
 											* curr_imgs->metadata.height));
@@ -1316,8 +1467,12 @@ static void _post_snapshot()
 				}
 				else
 				{
-					cv::Mat img(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
-					cv::Mat img2(cv::Mat::zeros(curr_imgs->metadata.height, curr_imgs->metadata.width, CV_8UC1));
+					cv::Mat img(
+							cv::Mat::zeros(curr_imgs->metadata.height,
+									curr_imgs->metadata.width, CV_8UC1));
+					cv::Mat img2(
+							cv::Mat::zeros(curr_imgs->metadata.height,
+									curr_imgs->metadata.width, CV_8UC1));
 					img_set.push_back(img);
 					img_set.push_back(img2);
 				}
@@ -1329,15 +1484,14 @@ static void _post_snapshot()
 				border_scale = 2;
 
 				cv::Mat img(curr_imgs->metadata.height,
-						curr_imgs->metadata.width,
-						CV_8UC1, curr_imgs->image_pixels);
+						curr_imgs->metadata.width, CV_8UC1,
+						curr_imgs->image_pixels);
 				img_set.push_back(img);
 			}
 
 //			feat_ts_mutex.unlock();
 
-
-			static int16_t  trk_id = -1;
+			static int16_t trk_id = -1;
 			static std::vector<float> trk_history_x;
 			static std::vector<float> trk_history_y;
 
@@ -1350,7 +1504,8 @@ static void _post_snapshot()
 			if (trk_id < 0 && display_snapshot.d.n_total_features > 0)
 			{
 				trk_id = display_snapshot.d.features[0].id;
-				printf("Monitoring id: %d\n", trk_id);
+				if (en_debug)
+					printf("Monitoring id: %d\n", trk_id);
 			}
 
 			{
@@ -1358,57 +1513,75 @@ static void _post_snapshot()
 				{
 					if (!en_debug_pos)
 					{
-						if (display_snapshot.d.features[i].point_quality == (int) OV_RE_HIGH)
+						if (display_snapshot.d.features[i].point_quality
+								== (int) OV_RE_HIGH)
 						{
-							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
-									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+							cv::drawMarker(
+									img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
 									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
 						}
 						// slam landmark
-						else if (display_snapshot.d.features[i].point_quality == (int) OV_HIGH)
+						else if (display_snapshot.d.features[i].point_quality
+								== (int) OV_HIGH)
 						{
-							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
-									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+							cv::drawMarker(
+									img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
 									cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
 						}
 						// tracked feature
-						else if (display_snapshot.d.features[i].point_quality == (int) OV_MEDIUM)
+						else if (display_snapshot.d.features[i].point_quality
+								== (int) OV_MEDIUM)
 						{
-							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
-									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+							cv::drawMarker(
+									img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
 									cv::Scalar(190), cv::MARKER_SQUARE, 8, 2);
 						}
 						else if (show_extra_points_on_overlay)
 						{
-							cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
-									cv::Point2f(display_snapshot.d.features[i].pix_loc[0],
+							cv::drawMarker(
+									img_set[display_snapshot.d.features[i].cam_id],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
 									cv::Scalar(100), cv::MARKER_SQUARE, 8, 2);
 						}
 					}
 					else
 					{
-						if (trk_id >= 0 && display_snapshot.d.features[i].id == (uint16_t) trk_id)
+						if (trk_id >= 0
+								&& display_snapshot.d.features[i].id
+										== (uint16_t) trk_id)
 						{
-							trk_history_x.push_back(display_snapshot.d.features[i].pix_loc[0]);
-							trk_history_y.push_back(display_snapshot.d.features[i].pix_loc[1]);
+							trk_history_x.push_back(
+									display_snapshot.d.features[i].pix_loc[0]);
+							trk_history_y.push_back(
+									display_snapshot.d.features[i].pix_loc[1]);
 
 							for (size_t z = 0; z < trk_history_x.size(); z++)
 							{
-								cv::drawMarker(img_set[display_snapshot.d.features[i].cam_id],
+								cv::drawMarker(
+										img_set[display_snapshot.d.features[i].cam_id],
 										cv::Point2f(trk_history_x[z],
 												trk_history_y[z]),
-										cv::Scalar(255), cv::MARKER_DIAMOND, 24, 2);
+										cv::Scalar(255), cv::MARKER_DIAMOND, 24,
+										2);
 							}
 						}
 					}
 				}
 			}
 
-			cv::resize(img_set[0], img_set[0], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+			cv::resize(img_set[0], img_set[0],
+					cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
 
 			if (img_set.size() == 1)
 			{
@@ -1416,7 +1589,8 @@ static void _post_snapshot()
 			}
 			else
 			{
-				cv::resize(img_set[1], img_set[1], cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+				cv::resize(img_set[1], img_set[1],
+						cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
 				cv::hconcat(img_set[0], img_set[1], overlay_cp);
 			}
 
@@ -1438,11 +1612,9 @@ static void _post_snapshot()
 
 			char str[256];
 			sprintf(str, "XYZ: %6.2lf %6.2lf %6.2lf  CEP: %3.3f  Rerr: %3.2f",
-						(double) s.T_imu_wrt_vio[0], 
-						(double) s.T_imu_wrt_vio[1],
-						(double) s.T_imu_wrt_vio[2],
-						display_snapshot.cep, 
-						display_snapshot.rerr * 180 / M_PI);
+					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
+					(double) s.T_imu_wrt_vio[2], display_snapshot.cep,
+					display_snapshot.rerr * 180 / M_PI);
 			int baseline = 0;
 			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
 					font_size, font_size, &baseline);
@@ -1457,19 +1629,17 @@ static void _post_snapshot()
 					font_size, cv::LINE_AA);
 
 			char oos_pts_string[96];
-			
+
 			if (show_extra_points_on_overlay)
-				sprintf(oos_pts_string, "#pts: %2d  (%2d)", display_snapshot.used_pts,
+				sprintf(oos_pts_string, "#pts: %2d  (%2d)",
+						display_snapshot.used_pts,
 						display_snapshot.not_used_pts);
 			else
 				oos_pts_string[0] = 0;
-			
-			sprintf(str, "Q: %3d %s  %s  ex(ms): %6.1f Gain: %5d",
-				s.quality,  
-				(s.state == VIO_STATE_OK ? "OK" : "INIT"), 
-				oos_pts_string,
-				draw_meta.exposure_ns / 1000000.0, 
-				draw_meta.gain);
+
+			sprintf(str, "Q: %3d %s  %s  ex(ms): %6.1f Gain: %5d", s.quality,
+					(s.state == VIO_STATE_OK ? "OK" : "INIT"), oos_pts_string,
+					draw_meta.exposure_ns / 1000000.0, draw_meta.gain);
 
 			cv::putText(
 					overlay_cp, //target image
@@ -1480,35 +1650,31 @@ static void _post_snapshot()
 					cv::Scalar(255, 255, 255), //font color
 					font_size, cv::LINE_AA);
 
-			
 			if (init_failure_detector_reset_flag && !is_init)
 			{
-							  reinit_disp_time++;
-                              sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
-                              cv::putText(
-                            		  	  	  overlay_cp, //target image
-                                              reinit_str, //text
-                                              cv::Point((overlay_cp.cols * 0.1),
-                                            		  overlay_cp.rows*0.5), //top-left position
-                                              cv::FONT_HERSHEY_COMPLEX, 1.0,
-                                              cv::Scalar(255, 255, 255), //font color
-                                              1.5, cv::LINE_AA);
+				reinit_disp_time++;
+				sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
+				cv::putText(
+						overlay_cp, //target image
+						reinit_str, //text
+						cv::Point((overlay_cp.cols * 0.1),
+								overlay_cp.rows * 0.5), //top-left position
+						cv::FONT_HERSHEY_COMPLEX, 1.0,
+						cv::Scalar(255, 255, 255), //font color
+						1.5, cv::LINE_AA);
 			}
 
-			
 			// draw out to pipe
 			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
 					(char*) overlay_cp.data);
 			delete curr_imgs;
 		}
-		
+
 		not_displaying = true;
 
 	}
 
 }
-
-
 
 // pose data is published from the same thread that does the camera processing
 // and pose estimation. That freezes, sometimes for over a second, during blowups
@@ -1532,27 +1698,30 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 			if (time_since_reset > INIT_FAILURE_TIMEOUT_NS)
 			{
 				init_failure_detector_reset_flag = 0;
+				if (en_debug)
+					fprintf(stderr, "[ERROR] Triggered RESET\n");
+				
 				_hard_reset_(!is_thermal);
 			}
 		}
 	}
-	
+
 	return NULL;
 }
 
 static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 {
-    sched_param sch_params;
-    sch_params.sched_priority = 19;
+	sched_param sch_params;
+	sch_params.sched_priority = 19;
 	pthread_setschedparam(pthread_self(), SCHED_OTHER, &sch_params);
 
 	while (main_running)
 	{
-		double u_freq = (1.0/publish_frequency) * 1e6;
+		double u_freq = (1.0 / publish_frequency) * 1e6;
 		usleep(u_freq);  // run about the same speed as the camera
-		_post_snapshot();		
+		_post_snapshot();
 	}
-	
+
 	return NULL;
 }
 
@@ -1581,7 +1750,6 @@ static void _publish_default(double pose_timestamp)
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
-	
 	// check if its initialized or not
 	if (!vio_manager->initialized())
 	{
@@ -1591,7 +1759,7 @@ static void _publish_default(double pose_timestamp)
 		// send to both pipes
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-		
+
 		return;
 	}
 	else
@@ -1600,14 +1768,14 @@ static void _publish_default(double pose_timestamp)
 		is_initialized = true;
 	}
 
-	std::shared_ptr<ov_msckf::State> current_state = vio_manager->get_state(); // contains a few extra pieces we need
+	std::shared_ptr < ov_msckf::State > current_state =
+			vio_manager->get_state(); // contains a few extra pieces we need
 
 	std::vector < std::shared_ptr < ov_type::Type >> statevars;
 	statevars.push_back(current_state->_imu->p());
 	statevars.push_back(current_state->_imu->q());
 	statevars.push_back(current_state->_imu->v());
-	
-	
+
 	Eigen::Matrix<double, 9, 9> covariance_posori =
 			ov_msckf::StateHelper::get_marginal_covariance(current_state,
 					statevars);
@@ -1636,7 +1804,7 @@ static void _publish_default(double pose_timestamp)
 	V_uncertainty += cov_varis(7, 7) * cov_varis(7, 7);
 	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
 	V_uncertainty = sqrt(V_uncertainty);
-	
+
 //	if (en_debug)
 //		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
 
@@ -1678,7 +1846,7 @@ static void _publish_default(double pose_timestamp)
 	flu_ned_correction_mat(2, 2) = -1;
 	// get features
 	// this function will give us back as much info as available for features in various stages of the overall state
-	std::vector<output_feature> curr_pixel_locs;
+	std::vector < output_feature > curr_pixel_locs;
 	int sz = vio_manager->get_pixel_loc_features(curr_pixel_locs);
 
 	for (size_t d = 0; d < curr_pixel_locs.size(); d++)
@@ -1697,9 +1865,7 @@ static void _publish_default(double pose_timestamp)
 			}
 		}
 	}
-		
 
-	
 	// sometimes qvio will report covariance as invalid but state is still OKAY
 	// this is NOT alright, in this case manually set the state to failed.
 	//
@@ -1742,7 +1908,7 @@ static void _publish_default(double pose_timestamp)
 	}
 
 	alt_z = imu_wrt_wio_holder(2);
-	
+
 	//    std::cout << "POS:\n" << imu_wrt_wio_holder << std::endl;
 
 	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) =
@@ -1833,52 +1999,77 @@ static void _publish_default(double pose_timestamp)
 	s.quality = map_double(T_uncertainty, 0.004375, max_allowable_cep, 100, 0);
 
 	if (s.quality < 1)
-		s.quality = -1;
-	
+		s.quality = 0;
+
 	// fill in simplified struct inside the extended packet
 	memcpy(&d.v, &s, sizeof(vio_data_t));
-	
+
 	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
-	if (en_auto_reset && !init_failure_detector_reset_flag && stable_state(s.state))
-	{		
-		if (current_state->error_flag == VIO_STATE_FAILED || s.quality <= 1 || stable_quality(s.quality)  || stable_features(n_good_points)   || imu_vel.norm() > auto_reset_max_velocity || V_uncertainty > auto_reset_max_v_cov_instant)
+	if (en_auto_reset && !init_failure_detector_reset_flag
+			&& stable_state(s.state))
+	{
+		
+		bool vio_manager_bad = current_state->error_flag == VIO_STATE_FAILED;
+		bool quality_bad = imu_moved && s.quality <= 1;
+		bool stable_quality_bad = imu_moved && stable_quality(s.quality);
+		bool stable_features_bad = imu_moved && stable_features(n_good_points);
+		bool too_fast = imu_vel.norm() > auto_reset_max_velocity;
+		bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
+		
+		if (	vio_manager_bad
+				|| quality_bad
+				|| stable_quality_bad 
+				|| stable_features_bad
+				|| too_fast
+				|| too_uncertain)
 		{
-			if (current_state->error_flag == VIO_STATE_FAILED)
+			if (vio_manager_bad)
 			{
-				printf("State flag was set to FAIL.\n");
+				fprintf(stderr,"[VIO_BAD_STATE] State flag was set to FAIL.\n");
 			}
-			else if (s.quality <= 1)
+			else if (quality_bad)
 			{
-				printf("Quality less than 1.\n");
+				fprintf(stderr,"[VIO_BAD_STATE] Quality less than 1.\n");
 			}
-			else if (stable_quality(s.quality))
+			else if (stable_quality_bad)
 			{
-				printf("Quality was not STABLE.\n");
+				fprintf(stderr,"[VIO_BAD_STATE] Quality was not STABLE.\n");
 			}
-			else if (stable_features(n_good_points))
+			else if (stable_features_bad)
 			{
-				printf("No Stable feature.\n");
+				fprintf(stderr,"[VIO_BAD_STATE] No Stable feature.\n");
 			}
-			else if (imu_vel.norm() > auto_reset_max_velocity)
+			else if (too_fast)
 			{
-				printf("Exceeded MAX IMU Velocity %f vs %f\n", imu_vel.norm(),  auto_reset_max_velocity);
+				fprintf(stderr,"[VIO_BAD_STATE] Exceeded MAX IMU Velocity %f vs %f\n", imu_vel.norm(),
+						auto_reset_max_velocity);
 			}
-			else if (V_uncertainty > auto_reset_max_v_cov_instant)
+			else if (too_uncertain)
 			{
-				printf("Exceeded V_uncertainty. %f vs %f\n", V_uncertainty, auto_reset_max_v_cov_instant);
+				fprintf(stderr,"[VIO_BAD_STATE] Exceeded V_uncertainty. %f vs %f\n", V_uncertainty,
+						auto_reset_max_v_cov_instant);
 			}
+			else
+				fprintf(stderr,"[CRITICAL] UNKNOWN RESET TRIGGERED\n");
 			
 			fprintf(stderr,
-					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f\n", (current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", s.quality, imu_vel.norm());
+					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f Uncert: %f State: %d(%d)\n",
+							(current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", 
+							s.quality, 
+							imu_vel.norm(),
+							V_uncertainty,
+							s.state,
+							stable_state(s.state));
 			s.state = VIO_STATE_FAILED;
-			init_failure_detector_reset_flag = 1;		
+			
+			init_failure_detector_reset_flag = 1;
 		}
-	}	
+	}
 	
 	if ((pipe_server_get_num_clients(OVSTATUS_CH) > 0) && en_ov_stats)
-	{		
+	{
 		ov_status.timestamp_ns = s.timestamp_ns;
 		ov_status.quality = s.quality;
 		ov_status.p_dop = T_uncertainty;
@@ -1887,11 +2078,11 @@ static void _publish_default(double pose_timestamp)
 
 		unsigned int max_sz = curr_pixel_locs.size();
 		if (max_sz >= VIO_MAX_REPORTED_FEATURES)
-			max_sz = VIO_MAX_REPORTED_FEATURES-1;
+			max_sz = VIO_MAX_REPORTED_FEATURES - 1;
 
-		for (size_t b=0; b<max_sz ; b++)
+		for (size_t b = 0; b < max_sz; b++)
 		{
-			ov_status.features[b].id  = curr_pixel_locs[b].id;
+			ov_status.features[b].id = curr_pixel_locs[b].id;
 			ov_status.features[b].cam_id = curr_pixel_locs[b].cam_id;
 			ov_status.features[b].pix_loc[0] = curr_pixel_locs[b].pix_loc[0];
 			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
@@ -1916,7 +2107,7 @@ static void _publish_default(double pose_timestamp)
 	display_snapshot.q = s.quality;
 	display_snapshot.cep = T_uncertainty;
 	display_snapshot.rerr = R_uncertainty;
-		
+
 	return;
 }
 
@@ -1950,7 +2141,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.init_options.init_dyn_num_pose = max_clone_size;
 	vio_manager_options.init_options.init_max_disparity = zupt_max_disparity;
 	vio_manager_options.init_options.init_dyn_use = false;
-
+	
 	/// IMU NOISE OPTIONS ///
 	vio_manager_options.imu_noises.sigma_w = imu_sigma_w;
 	vio_manager_options.imu_noises.sigma_wb = imu_sigma_wb;
@@ -2012,23 +2203,23 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 
 	vio_manager_options.grid_x = grid_x;
 	vio_manager_options.grid_y = grid_y;
-	vio_manager_options.pyramid_levels  = pyramid_levels;
-		
+	vio_manager_options.pyramid_levels = pyramid_levels;
+
 	vio_manager_options.downsample_cameras = false; // TBD
 	vio_manager_options.num_opencv_threads = num_opencv_threads;
 	vio_manager_options.num_pts = num_features_to_track;
 	vio_manager_options.fast_threshold = fast_threshold;
 	vio_manager_options.min_px_dist = min_pix_dist;
-	
+
 	vio_manager_options.histogram_method = histogram_method;
 	vio_manager_options.knn_ratio = knn_ratio;
 	vio_manager_options.track_frequency = track_frequency;
 
 	/// CAMERA INTRINSICS + EXTRINSICS ///
 
-	std::lock_guard<std::mutex> lg(vio_manager_mutex);
+	std::lock_guard < std::mutex > lg(vio_manager_mutex);
 
-	std::shared_ptr<ov_core::CamBase> cam_calib_intrinsic;
+	std::shared_ptr < ov_core::CamBase > cam_calib_intrinsic;
 	for (size_t i = 0; i < cam_info_vec.size(); i++)
 	{
 		// ov uses camequi model to represent fisheye cameras, and the radtan model for standard lenses
@@ -2036,25 +2227,27 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 		{
 			std::cout << "OpenVINS using fisheye camera" << std::endl;
 
-			cam_calib_intrinsic = std::make_shared<ov_core::CamEqui>(
-					cam_info_vec[i].cam_calib_intrinsic(8, 0),
-					cam_info_vec[i].cam_calib_intrinsic(9, 0));
+			cam_calib_intrinsic =
+					std::make_shared < ov_core::CamEqui
+							> (cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(
+									9, 0));
 		}
 		else
 		{
 			std::cout << "OpenVINS using plumb-bob camera" << std::endl;
 
-			cam_calib_intrinsic = std::make_shared<ov_core::CamRadtan>(
-					cam_info_vec[i].cam_calib_intrinsic(8, 0),
-					cam_info_vec[i].cam_calib_intrinsic(9, 0));
+			cam_calib_intrinsic =
+					std::make_shared < ov_core::CamRadtan
+							> (cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(
+									9, 0));
 		}
 		// The camera intrinsics
 		cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
 		vio_manager_options.camera_intrinsics[i] = cam_calib_intrinsic;
 		vio_manager_options.camera_extrinsics[i] = cam_info_vec[i].cam_wrt_imu;
 
-		std::cout << "OpenVINS FINAL Cam extrinsics to IMU for " << cam_info_vec[i].name
-				<< ": "
+		std::cout << "OpenVINS FINAL Cam extrinsics to IMU for "
+				<< cam_info_vec[i].name << ": "
 				<< cam_info_vec[i].cam_wrt_imu.size() << " \n "
 				<< cam_info_vec[i].cam_wrt_imu << std::endl;
 	}
@@ -2067,12 +2260,10 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.init_options.num_cameras = cam_info_vec.size();
 	vio_manager_options.state_options.num_cameras = cam_info_vec.size();
 
-	std::cout <<
-			" ++++++++++++++++++++++++++\n\n" <<
-			"OpenVINS reports number of cameras being used, regardless of delivery method (pipe, merge, etc...):  "  <<
-			vio_manager_options.init_options.num_cameras <<
-			"\n\n ++++++++++++++++++++++++++" <<
-			std::endl;
+	std::cout << " ++++++++++++++++++++++++++\n\n"
+			<< "OpenVINS reports number of cameras being used, regardless of delivery method (pipe, merge, etc...):  "
+			<< vio_manager_options.init_options.num_cameras
+			<< "\n\n ++++++++++++++++++++++++++" << std::endl;
 
 	return vio_manager_options;
 }
@@ -2096,113 +2287,143 @@ static void _feat_disconnect_cb(__attribute__((unused)) int ch,
 static void _imu_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
-	std::lock_guard<std::mutex> lg(imu_lock_mutex);
+	std::lock_guard < std::mutex > lg(imu_lock_mutex);
 	return;
 }
-
 
 static void _baro_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
-	std::lock_guard<std::mutex> baro_lg(baro_lock_mutex);
+	std::lock_guard < std::mutex > baro_lg(baro_lock_mutex);
 	return;
 }
 
+// TODO:: change naming from BARO to MAVLINK
 static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {
-		static double last_val = -99999;
-		static  bool base_init = false;
-		static int a_ctn = 0;
-		static double zero_alt = 0;
+	static double last_val = -99999;
+	static bool base_init = false;
+	static int a_ctn = 0;
+	static double zero_alt = 0;
 
-		std::lock_guard<std::mutex> baro_lg(baro_lock_mutex);
+	std::lock_guard < std::mutex > baro_lg(baro_lock_mutex);
 
-		mavlink_message_t* baro_msg = (mavlink_message_t*) data;
-		
-		if (baro_msg->msgid == MAVLINK_MSG_ID_SCALED_PRESSURE)
+	mavlink_message_t *baro_msg = (mavlink_message_t*) data;
+
+	
+ 	if (en_baro && (baro_msg->msgid == MAVLINK_MSG_ID_SCALED_PRESSURE))
+	{
+		// basic sanity checks
+		if (bytes < 0)
 		{
-			// basic sanity checks
-			if(bytes<0){
-				fprintf(stderr, "ERROR validating BARO data received through pipe: number of bytes = %d\n", bytes);
-				return;
-			}
-			if(data==NULL){
-				fprintf(stderr, "ERROR validating BARO data received through pipe: got NULL data pointer\n");
-				return;
-			}
+			fprintf(stderr,
+					"ERROR validating BARO data received through pipe: number of bytes = %d\n",
+					bytes);
+			return;
+		}
+		if (data == NULL)
+		{
+			fprintf(stderr,
+					"ERROR validating BARO data received through pipe: got NULL data pointer\n");
+			return;
+		}
 
-			uint32_t baro_time_ms = mavlink_msg_scaled_pressure_get_time_boot_ms(baro_msg);
-			float pressure = mavlink_msg_scaled_pressure_get_press_abs(baro_msg) * 100;
-			int16_t temp = mavlink_msg_scaled_pressure_get_temperature(baro_msg) / 100 - 10;
+		uint32_t baro_time_ms = mavlink_msg_scaled_pressure_get_time_boot_ms(
+				baro_msg);
+		float pressure = mavlink_msg_scaled_pressure_get_press_abs(baro_msg)
+				* 100;
+		int16_t temp = mavlink_msg_scaled_pressure_get_temperature(baro_msg)
+				/ 100 - 10;
 
-			//static auto rT0_begin = _apps_time_monotonic_ns();
-			//auto rT0_end = _apps_time_monotonic_ns();
-			static auto rT0_begin = baro_time_ms;
-			auto rT0_end = baro_time_ms;
+		//static auto rT0_begin = _apps_time_monotonic_ns();
+		//auto rT0_end = _apps_time_monotonic_ns();
+		static auto rT0_begin = baro_time_ms;
+		auto rT0_end = baro_time_ms;
 
-			double dist = (log(pressure/101325) * 8.31432 * (temp+273.15))/ (-9.80665 * 0.0289644);
+		double dist = (log(pressure / 101325) * 8.31432 * (temp + 273.15))
+				/ (-9.80665 * 0.0289644);
 //			printf("Pressure: %f temp: %d\n", pressure, temp);
 //			printf("Baro height: %f (%f)\n", dist, log(pressure/101325));
 
-			if (!base_init)
+		if (!base_init)
+		{
+			zero_alt += dist;
+			vio_manager->add_constraint_baro(0, 0);
+
+			if (++a_ctn > 20)
 			{
-				zero_alt += dist;
-				vio_manager->add_constraint_baro(0, 0);
+				zero_alt /= a_ctn;
 
-				if (++a_ctn > 20)
-				{
-					zero_alt /= a_ctn;
-
-					printf("ZERO ALT: %f\n", zero_alt);
-					base_init = true;
-				}
-
+				printf("ZERO ALT: %f\n", zero_alt);
+				base_init = true;
 			}
-			else
-			{
-				baro_alt = dist - zero_alt;
-				if (last_val != -99999)
-				{
-					baro_alt = (0.8 * baro_alt) + (0.2 * last_val);
 
-					//v = dx/dt
+		}
+		else
+		{
+			baro_alt = dist - zero_alt;
+			if (last_val != -99999)
+			{
+				baro_alt = (0.8 * baro_alt) + (0.2 * last_val);
+
+				//v = dx/dt
 //					double baro_vel_z = (baro_alt - last_val) / 0.1;   // 20Hz
 //					double time_total = (rT0_end - rT0_begin) * 1e-9;
-					
-					double time_total = (rT0_end - rT0_begin) * 1e-3;
-					double baro_vel_z = (baro_alt - last_val) / time_total;   // 20Hz
+
+				double time_total = (rT0_end - rT0_begin) * 1e-3;
+				double baro_vel_z = (baro_alt - last_val) / time_total;  // 20Hz
 
 //					printf("Baro Vel (%f) m/s ---  Alt: %f m\n", baro_vel_z, baro_alt);
 //					printf("Got Baro data %f %f (%f) meters at %f (m/s)\n", time_total, baro_alt, zero_alt, baro_vel_z);
-					vio_manager->add_constraint_baro(baro_alt, baro_vel_z);
-				}
-				last_val = baro_alt;
+				vio_manager->add_constraint_baro(baro_alt, baro_vel_z);
 			}
-
-			rT0_begin = rT0_end;
+			last_val = baro_alt;
 		}
-			
+
+		rT0_begin = rT0_end;
+	}
+
+ 	if (baro_msg->msgid == MAVLINK_MSG_ID_HEARTBEAT)
+ 	{
+ 		// get ARMED state
+ 		 is_armed = mavlink_msg_heartbeat_get_system_status(baro_msg) == MAV_STATE_ACTIVE;
+ 	}
 }
-static void _simple_cpu_cb(__attribute__((unused))int ch, char* raw_data, int bytes, __attribute__((unused)) void* context)
+
+static void _simple_cpu_cb(__attribute__((unused))int ch, char *raw_data,
+		int bytes, __attribute__((unused)) void *context)
 {
+
+	int n_packets;
+	cpu_stats_t *data_array = modal_cpu_validate_pipe_data(raw_data, bytes,
+			&n_packets);
+	if (data_array == NULL)
+		return;
+
+	// only use most recent packet
+	cpu_stats_t data = data_array[n_packets - 1];
+
+	bool is_standby  = data.flags & CPU_STATS_FLAG_STANDBY_ACTIVE;
+
+	if (is_standby && vio_manager_options.zupt_max_disparity == zupt_max_disparity)
+	{
+		vio_manager_options.init_options.init_max_disparity =  zupt_max_disparity + 2;
+		vio_manager_options.zupt_max_disparity = zupt_max_disparity + 2;
+	}
 	
-    int n_packets;
-    cpu_stats_t *data_array = modal_cpu_validate_pipe_data(raw_data, bytes, &n_packets);
-    if (data_array == NULL) return;
-
-    // only use most recent packet
-    cpu_stats_t data = data_array[n_packets-1];
-
-    if (data.cpu_t_max > 85.0  || data.flags&CPU_STATS_FLAG_STANDBY_ACTIVE)
-    {
-    	idler_limit  = 3; // 10Hz
-    }
-    else
-    {
-    	idler_limit = 0;
-    }
-    
+	if (data.cpu_t_max > 85.0 || is_standby)
+	{
+		if (!changed_motion_state)
+			idler_limit = 2; // 10Hz
+		else 
+			idler_limit = 0;
+	}
+	else
+	{
+		idler_limit = 0;
+	}
+	
 #ifdef DEV
     for(int i=0; i < data.num_cpu; i++){
             printf("cpu%d %12.1f %s%8.1f %s%8.2f%s\n",
@@ -2230,11 +2451,9 @@ static void _simple_cpu_cb(__attribute__((unused))int ch, char* raw_data, int by
             printf(COLOR_RED "CPU OVERHEAT WARNING" RESET_FONT "\n");
     }
 #endif
-    
+
 	return;
 }
-
-
 
 static void _disconnect_cpu_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
@@ -2242,21 +2461,21 @@ static void _disconnect_cpu_cb(__attribute__((unused)) int ch,
 	return;
 }
 
-
 static int create_server_pipes(void)
 {
 	int flags = SERVER_FLAG_EN_CONTROL_PIPE;
 
 	// init extended pipe
-	pipe_info_t info1 =
+	pipe_info_t
+	info1 =
 	{
-	OV_VIO_EXTENDED_NAME,       // name
-			OV_VIO_EXTENDED_LOCATION,   // location
-			"ext_vio_data_t",           // type
-			PROCESS_NAME,               // server_name
-			CAM_PIPE_SIZE,  // size_bytes
-			0                           // server_pid
-			};
+		OV_VIO_EXTENDED_NAME,       // name
+		OV_VIO_EXTENDED_LOCATION,// location
+		"ext_vio_data_t",// type
+		PROCESS_NAME,// server_name
+		CAM_PIPE_SIZE,// size_bytes
+		0			  // server_pid
+	};
 
 	if (pipe_server_create(EXTENDED_CH, info1, flags))
 	{
@@ -2273,15 +2492,16 @@ static int create_server_pipes(void)
 			OV_VIO_CONTROL_COMMANDS);
 
 	// init simple pipe
-	pipe_info_t info2 =
+	pipe_info_t
+	info2 =
 	{
-	OV_VIO_SIMPLE_NAME,         // name
-			OV_VIO_SIMPLE_LOCATION,     // location
-			"vio_data_t",               // type
-			PROCESS_NAME,               // server_name
-			VIO_RECOMMENDED_PIPE_SIZE*2,  // size_bytes
-			0                           // server_pid
-			};
+		OV_VIO_SIMPLE_NAME,         // name
+		OV_VIO_SIMPLE_LOCATION,// location
+		"vio_data_t",// type
+		PROCESS_NAME,// server_name
+		VIO_RECOMMENDED_PIPE_SIZE*2,// size_bytes
+		0// server_pid
+	};
 
 	if (pipe_server_create(SIMPLE_CH, info2, flags))
 	{
@@ -2298,15 +2518,16 @@ static int create_server_pipes(void)
 			OV_VIO_CONTROL_COMMANDS);
 
 	// init overlay pipe
-	pipe_info_t info3 =
+	pipe_info_t
+	info3 =
 	{
-	OV_VIO_OVERLAY_NAME,        // name
-			OV_VIO_OVERLAY_LOCATION,    // location
-			"camera_image_metadata_t",  // type
-			PROCESS_NAME,               // server_name
-			CAM_PIPE_SIZE,              // size_bytes
-			0                           // server_pid
-			};
+		OV_VIO_OVERLAY_NAME,        // name
+		OV_VIO_OVERLAY_LOCATION,// location
+		"camera_image_metadata_t",// type
+		PROCESS_NAME,// server_name
+		CAM_PIPE_SIZE,// size_bytes
+		0// server_pid
+	};
 
 	if (pipe_server_create(OVERLAY_CH, info3, flags))
 	{
@@ -2321,16 +2542,16 @@ static int create_server_pipes(void)
 	pipe_server_set_available_control_commands(OVERLAY_CH,
 			OV_VIO_CONTROL_COMMANDS);
 
-
 	// init simple pipe
-	pipe_info_t info4 =
+	pipe_info_t
+	info4 =
 	{
 		OV_STATUS_NAME,         // name
-		OV_STATUS_LOCATION,     // location
-		"ov_status_t",               // type
-		PROCESS_NAME,               // server_name
-		VIO_RECOMMENDED_PIPE_SIZE*2,  // size_bytes
-		0                           // server_pid
+		OV_STATUS_LOCATION,// location
+		"ov_status_t",// type
+		PROCESS_NAME,// server_name
+		VIO_RECOMMENDED_PIPE_SIZE*2,// size_bytes
+		0// server_pid
 	};
 
 	if (pipe_server_create(OVSTATUS_CH, info4, flags))
@@ -2345,7 +2566,8 @@ static int create_server_pipes(void)
 static int read_external_configs_from_file(void)
 {
 	fprintf(stderr,
-			"=====> Using internal KLT Feature Tracking and File base camera configuration: %s\n", imu_name);
+			"=====> Using internal KLT Feature Tracking and File base camera configuration: %s\n",
+			imu_name);
 
 	int ret = json_fetch_string(cam_json, "imu", imu_name, 128);
 
@@ -2416,7 +2638,7 @@ static int read_external_configs_from_file(void)
 		cam_info_vec.push_back(curr_info);
 	}
 
-	free(cam_json);
+	free (cam_json);
 
 	return 0;
 }
@@ -2539,7 +2761,7 @@ static int connect_client_pipes(void)
 	char t_cam_nam[256];
 
 	fprintf(stderr, "Number of Cameras active: %d\n", cameras_used);
-	std::vector<std::string> tmp_camera_pipe_names;
+	std::vector < std::string > tmp_camera_pipe_names;
 
 	for (int i = 0; i < cameras_used; i++)
 	{
@@ -2550,14 +2772,16 @@ static int connect_client_pipes(void)
 
 		sprintf(t_cam_nam, "%s", cam_info_vec[i].name);
 
-		if (std::find(tmp_camera_pipe_names.begin(), tmp_camera_pipe_names.end(), t_cam_nam) == tmp_camera_pipe_names.end())
+		if (std::find(tmp_camera_pipe_names.begin(),
+				tmp_camera_pipe_names.end(), t_cam_nam)
+				== tmp_camera_pipe_names.end())
 		{
 			// pipe_client_set_disconnect_cb(FEAT_OVERLAY_CH, _imu_disconnect_cb, NULL);
 			pipe_client_set_camera_helper_cb(ch, _cam_helper_cb,
 					&cam_info_vec[i].mode);
 			flags = CLIENT_FLAG_EN_CAMERA_HELPER;
-			int ret = pipe_client_open(ch, t_cam_nam, PROCESS_NAME,
-					flags, 1280 * 800 * 15);
+			int ret = pipe_client_open(ch, t_cam_nam, PROCESS_NAME, flags,
+					1280 * 800 * 15);
 			if (ret)
 			{
 				fprintf(stderr, "failed to open %s\n", cam_info_vec[i].name);
@@ -2565,29 +2789,29 @@ static int connect_client_pipes(void)
 			}
 			else
 			{
-				fprintf(stderr, "Opening camera pipe: %s\n", cam_info_vec[i].name);
+				fprintf(stderr, "Opening camera pipe: %s\n",
+						cam_info_vec[i].name);
 			}
 
-			fprintf(stderr, "tmp_camera_pipe_names.push_back(): %s\n", t_cam_nam);
+			fprintf(stderr, "tmp_camera_pipe_names.push_back(): %s\n",
+					t_cam_nam);
 
 			tmp_camera_pipe_names.push_back(t_cam_nam);
 		}
 		else
 		{
-			fprintf(stderr, "Note: found camera pipe callback already exists, likely a stereo camera setup\n");
+			fprintf(stderr,
+					"Note: found camera pipe callback already exists, likely a stereo camera setup\n");
 		}
-
 
 	}
 
 	fprintf(stderr, "imu pipe name: %s\n", imu_name);
 
-	if (en_baro)
-	{
 		// connect to baro
 		pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
-		pipe_client_set_simple_helper_cb(BARO_CH, _new_baro_data_default_handler,
-				NULL);
+		pipe_client_set_simple_helper_cb(BARO_CH,
+				_new_baro_data_default_handler, NULL);
 		flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
 		if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, flags,
 				IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
@@ -2595,11 +2819,9 @@ static int connect_client_pipes(void)
 			fprintf(stderr, "failed to open Baro\n");
 			return -1;
 		}
-	}
 
 	return 0;
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -2631,13 +2853,14 @@ int main(int argc, char *argv[])
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
 
-	 if ((world_correction.at<double>(0,0) * world_correction.at<double>(1,1)) > 0)
-		  gravity_vector_direction = 1;
-	 else
-		  gravity_vector_direction = -1;
+	if ((world_correction.at<double>(0, 0) * world_correction.at<double>(1, 1))
+			> 0)
+		gravity_vector_direction = 1;
+	else
+		gravity_vector_direction = -1;
 
-	vio_manager = std::unique_ptr<ov_msckf::VioManager>(
-			new ov_msckf::VioManager(vio_manager_options));
+	vio_manager = std::unique_ptr < ov_msckf::VioManager
+			> (new ov_msckf::VioManager(vio_manager_options));
 
 	/* make sure another instance isn't running
 	 * if return value is -3 then a background process is running with
@@ -2664,35 +2887,38 @@ int main(int argc, char *argv[])
 	// make our own safely.
 	make_pid_file(PROCESS_NAME);
 
-
 	////////////////////////////////////////////////////////////////////////////////
 	// set this critical process to use FIFO scheduler with high priority
 	////////////////////////////////////////////////////////////////////////////////
 
-		struct sched_param param;
-		memset(&param, 0, sizeof(sched_param));
-		param.sched_priority = 98;
-		// we go with _RR as I want equal time on IMU and camera threads.
-		fprintf(stderr, "setting scheduler\n");
-		int ret = sched_setscheduler(0, SCHED_RR, &param);
-		if(ret==-1){
-			fprintf(stderr, "WARNING Failed to set priority, errno = %d\n", errno);
-			fprintf(stderr, "This seems to be a problem with ADB, the scheduler\n");
-			fprintf(stderr, "should work properly when this is a background process\n");
-		}
-		// check
-		ret = sched_getscheduler(0);
-		if(ret!=SCHED_RR){
-			fprintf(stderr, "WARNING: failed to set scheduler\n");
-		}
-		else{
-			// even thought this is a success, print to stderr to that it shows up
-			// in the correct order. stdout logs in journalctl are usually out of
-			// sync with stderr
-			fprintf(stderr, "INFO: set FIFO priority successfully!\n");
-		}
-		// The threads created by libmodal_pipe after this should inherit this
-		// priority, TODO validate this
+	struct sched_param param;
+	memset(&param, 0, sizeof(sched_param));
+	param.sched_priority = 98;
+	// we go with _RR as I want equal time on IMU and camera threads.
+	fprintf(stderr, "setting scheduler\n");
+	int ret = sched_setscheduler(0, SCHED_RR, &param);
+	if (ret == -1)
+	{
+		fprintf(stderr, "WARNING Failed to set priority, errno = %d\n", errno);
+		fprintf(stderr, "This seems to be a problem with ADB, the scheduler\n");
+		fprintf(stderr,
+				"should work properly when this is a background process\n");
+	}
+	// check
+	ret = sched_getscheduler(0);
+	if (ret != SCHED_RR)
+	{
+		fprintf(stderr, "WARNING: failed to set scheduler\n");
+	}
+	else
+	{
+		// even thought this is a success, print to stderr to that it shows up
+		// in the correct order. stdout logs in journalctl are usually out of
+		// sync with stderr
+		fprintf(stderr, "INFO: set FIFO priority successfully!\n");
+	}
+	// The threads created by libmodal_pipe after this should inherit this
+	// priority, TODO validate this
 
 	// Create the server pipes
 	printf("create_server_pipes\n");
@@ -2706,12 +2932,11 @@ int main(int argc, char *argv[])
 	// comment the below thread creation if this behavior occurs
 	/////////////////////////////////////////////////////////////////////////////////////////////
 
-
 	// until they connect, inidcate that they are disconnected
 	global_error_codes |= ERROR_CODE_CAM_MISSING;
 	global_error_codes |= ERROR_CODE_IMU_MISSING;
 
-	perf_limit  = 1;
+	perf_limit = 1;
 
 	// Connect to the client pipes and start getting data
 	if (connect_client_pipes() < 0)
@@ -2721,7 +2946,7 @@ int main(int argc, char *argv[])
 	// Set the main running flag to 1 to indicate that we are running
 	main_running = 1;
 
-	zeroTimeOut = boost::posix_time::microsec_clock::local_time() ;
+	zeroTimeOut = boost::posix_time::microsec_clock::local_time();
 
 	// run until start/stop module catches a signal and changes main_running to 0
 	pthread_attr_t tattr;
@@ -2731,26 +2956,25 @@ int main(int argc, char *argv[])
 	pthread_attr_t tattr_overlay;
 	pthread_attr_init(&tattr_overlay);
 	pthread_create(&overlay_thread, &tattr_overlay, _overlay_thread_func, NULL);
-	
+
 	//////////////////////////
 	// connect to CPU monitor for throttling cpu to prevent thermal runaway
-    pipe_client_set_simple_helper_cb(CPU_CH, _simple_cpu_cb, NULL);
-    pipe_client_set_disconnect_cb(CPU_CH, _disconnect_cpu_cb, NULL);
-    // for this test we will use the simple helper
-    int flags = EN_PIPE_CLIENT_SIMPLE_HELPER;
-    // init connection to server. In auto-reconnect mode this will "succeed"
-    // even if the server is offline, but it will connect later on automatically
-    ret = pipe_client_open(CPU_CH, CPU_PIPE_DIR, PROCESS_NAME, flags, CPU_STATS_RECOMMENDED_READ_BUF_SIZE);
-    // check for success
-    if(ret){
-            fprintf(stderr, "ERROR opening CPU channel:\n");
-            pipe_print_error(ret);
-            return -1;
-    }
+	pipe_client_set_simple_helper_cb(CPU_CH, _simple_cpu_cb, NULL);
+	pipe_client_set_disconnect_cb(CPU_CH, _disconnect_cpu_cb, NULL);
+	// for this test we will use the simple helper
+	int flags = EN_PIPE_CLIENT_SIMPLE_HELPER;
+	// init connection to server. In auto-reconnect mode this will "succeed"
+	// even if the server is offline, but it will connect later on automatically
+	ret = pipe_client_open(CPU_CH, CPU_PIPE_DIR, PROCESS_NAME, flags, CPU_STATS_RECOMMENDED_READ_BUF_SIZE);
+	// check for success
+	if (ret)
+	{
+		fprintf(stderr, "ERROR opening CPU channel:\n");
+		pipe_print_error(ret);
+		return -1;
+	}
 	//////////////////////////
 
-	
-	
 	while (main_running)
 	{
 		usleep(1e6);
@@ -2766,207 +2990,210 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay,
+		float az, float *phi, float *theta, float *psi)
+{
+	float recipNorm;
+	float halfvx, halfvy, halfvz;
+	float halfex, halfey, halfez;
+	float qa, qb, qc;
 
+	// Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+	if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+	{
 
-void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay, float az, float *phi, float *theta, float *psi) {
-        float recipNorm;
-        float halfvx, halfvy, halfvz;
-        float halfex, halfey, halfez;
-        float qa, qb, qc;
+		// Normalise accelerometer measurement
+		recipNorm = invSqrt(ax * ax + ay * ay + az * az);
+		ax *= recipNorm;
+		ay *= recipNorm;
+		az *= recipNorm;
 
-        // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-        if(!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f))) {
+		// Estimated direction of gravity and vector perpendicular to magnetic flux
+		halfvx = q1 * q3 - q0 * q2;
+		halfvy = q0 * q1 + q2 * q3;
+		halfvz = q0 * q0 - 0.5f + q3 * q3;
 
-                // Normalise accelerometer measurement
-                recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-                ax *= recipNorm;
-                ay *= recipNorm;
-                az *= recipNorm;
+		// Error is sum of cross product between estimated and measured direction of gravity
+		halfex = (ay * halfvz - az * halfvy);
+		halfey = (az * halfvx - ax * halfvz);
+		halfez = (ax * halfvy - ay * halfvx);
 
-                // Estimated direction of gravity and vector perpendicular to magnetic flux
-                halfvx = q1 * q3 - q0 * q2;
-                halfvy = q0 * q1 + q2 * q3;
-                halfvz = q0 * q0 - 0.5f + q3 * q3;
+		// Compute and apply integral feedback if enabled
+		if (twoKi > 0.0f)
+		{
+			integralFBx += twoKi * halfex * (1.0f / sampleFreq); // integral error scaled by Ki
+			integralFBy += twoKi * halfey * (1.0f / sampleFreq);
+			integralFBz += twoKi * halfez * (1.0f / sampleFreq);
+			gx += integralFBx;      // apply integral feedback
+			gy += integralFBy;
+			gz += integralFBz;
+		}
+		else
+		{
+			integralFBx = 0.0f;     // prevent integral windup
+			integralFBy = 0.0f;
+			integralFBz = 0.0f;
+		}
 
-                // Error is sum of cross product between estimated and measured direction of gravity
-                halfex = (ay * halfvz - az * halfvy);
-                halfey = (az * halfvx - ax * halfvz);
-                halfez = (ax * halfvy - ay * halfvx);
+		// Apply proportional feedback
+		gx += twoKp * halfex;
+		gy += twoKp * halfey;
+		gz += twoKp * halfez;
+	}
 
-                // Compute and apply integral feedback if enabled
-                if(twoKi > 0.0f) {
-                        integralFBx += twoKi * halfex * (1.0f / sampleFreq);    // integral error scaled by Ki
-                        integralFBy += twoKi * halfey * (1.0f / sampleFreq);
-                        integralFBz += twoKi * halfez * (1.0f / sampleFreq);
-                        gx += integralFBx;      // apply integral feedback
-                        gy += integralFBy;
-                        gz += integralFBz;
-                }
-                else {
-                        integralFBx = 0.0f;     // prevent integral windup
-                        integralFBy = 0.0f;
-                        integralFBz = 0.0f;
-                }
+	// Integrate rate of change of quaternion
+	gx *= (0.5f * (1.0f / sampleFreq));           // pre-multiply common factors
+	gy *= (0.5f * (1.0f / sampleFreq));
+	gz *= (0.5f * (1.0f / sampleFreq));
+	qa = q0;
+	qb = q1;
+	qc = q2;
+	q0 += (-qb * gx - qc * gy - q3 * gz);
+	q1 += (qa * gx + qc * gz - q3 * gy);
+	q2 += (qa * gy - qb * gz + q3 * gx);
+	q3 += (qa * gz + qb * gy - qc * gx);
 
-                // Apply proportional feedback
-                gx += twoKp * halfex;
-                gy += twoKp * halfey;
-                gz += twoKp * halfez;
-        }
+	// Normalise quaternion
+	recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
+	q0 *= recipNorm;
+	q1 *= recipNorm;
+	q2 *= recipNorm;
+	q3 *= recipNorm;
 
-        // Integrate rate of change of quaternion
-        gx *= (0.5f * (1.0f / sampleFreq));             // pre-multiply common factors
-        gy *= (0.5f * (1.0f / sampleFreq));
-        gz *= (0.5f * (1.0f / sampleFreq));
-        qa = q0;
-        qb = q1;
-        qc = q2;
-        q0 += (-qb * gx - qc * gy - q3 * gz);
-        q1 += (qa * gx + qc * gz - q3 * gy);
-        q2 += (qa * gy - qb * gz + q3 * gx);
-        q3 += (qa * gz + qb * gy - qc * gx);
+	*theta = asin(-2 * q1 * q3 + 2 * q0 * q2);       // pitch
+	*phi = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1)
+			+ M_PI; // roll
+	*psi = atan2(2 * (q1 * q2 + q0 * q3),
+			q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3);      //yaw
 
-        // Normalise quaternion
-        recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-        q0 *= recipNorm;
-        q1 *= recipNorm;
-        q2 *= recipNorm;
-        q3 *= recipNorm;
-
-        *theta = asin(-2 * q1 * q3 + 2 * q0* q2);       // pitch
-        *phi  = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2* q2 + 1) + M_PI; // roll
-        *psi   = atan2(2*(q1*q2 + q0*q3),q0*q0+q1*q1-q2*q2-q3*q3);      //yaw
-
-        //      fprintf(stderr, "r: %6.2f p: %6.2f y: %6.2f\n",
-        //                      *phi*180.0/M_PI, *theta*180.0/M_PI,*psi*180.0/M_PI);
+			//      fprintf(stderr, "r: %6.2f p: %6.2f y: %6.2f\n",
+			//                      *phi*180.0/M_PI, *theta*180.0/M_PI,*psi*180.0/M_PI);
 }
 
 //---------------------------------------------------------------------------------------------------
 // Fast inverse square-root
 // See: http://en.wikipedia.org/wiki/Fast_inverse_square_root
 
-float invSqrt(float x) {
-        float halfx = 0.5f * x;
-        float y = x;
-        long i = *(long*)&y;
-        i = 0x5f3759df - (i>>1);
-        y = *(float*)&i;
-        y = y * (1.5f - (halfx * y * y));
-        return y;
+float invSqrt(float x)
+{
+	float halfx = 0.5f * x;
+	float y = x;
+	long i = *(long*) &y;
+	i = 0x5f3759df - (i >> 1);
+	y = *(float*) &i;
+	y = y * (1.5f - (halfx * y * y));
+	return y;
 }
 
-static void dead_reckon_position(double dt,
-                float ax,
-                float ay,
-                float az,
-                float gx,
-                float gy,
-                float gz)
+static void dead_reckon_position(double dt, float ax, float ay, float az,
+		float gx, float gy, float gz)
 {
 
-        float phi, theta, psi;
+	float phi, theta, psi;
 
-        static bool started = false;
+	static bool started = false;
 
-        MahonyAHRSupdateIMU(gx, gy, gz, ax, ay, az, &phi, &theta, &psi);
+	MahonyAHRSupdateIMU(gx, gy, gz, ax, ay, az, &phi, &theta, &psi);
 
-        if (!started)
-        {
-                float dt_gx = abs(phi - _last_gyro[0]);
-                float dt_gy = abs(theta - _last_gyro[1]);
-                float dt_gz = abs(psi - _last_gyro[2]);
+	if (!started)
+	{
+		float dt_gx = abs(phi - _last_gyro[0]);
+		float dt_gy = abs(theta - _last_gyro[1]);
+		float dt_gz = abs(psi - _last_gyro[2]);
 
-                _last_gyro[0] = phi;
-                _last_gyro[1] = theta;
-                _last_gyro[2] = psi;
+		_last_gyro[0] = phi;
+		_last_gyro[1] = theta;
+		_last_gyro[2] = psi;
 //              printf("%f %f %f\n", dt_gx, dt_gy, dt_gz);
 
-				if (dt_gx <= 0.00001 && dt_gy <= 0.00001 && dt_gz <= 0.00001)
-				{
-						printf("IMU settled and ready\n");
-						started = true;
-						_accel_bias[0] = ax;
-						_accel_bias[1] = ay;
-						_accel_bias[2] = az;
-						_gyro_bias[0] = phi;
-						_gyro_bias[1] = theta;
-						_gyro_bias[2] = psi;
-				}
+		if (dt_gx <= 0.00001 && dt_gy <= 0.00001 && dt_gz <= 0.00001)
+		{
+			printf("IMU settled and ready\n");
+			started = true;
+			_accel_bias[0] = ax;
+			_accel_bias[1] = ay;
+			_accel_bias[2] = az;
+			_gyro_bias[0] = phi;
+			_gyro_bias[1] = theta;
+			_gyro_bias[2] = psi;
+		}
+	}
+	else
+	{
+		phi -= _gyro_bias[0];
+		theta -= _gyro_bias[1];
+		psi -= _gyro_bias[2];
+
+		float cosPhi = (double) cos(phi);
+		float sinPhi = (double) sin(phi);
+		float cosThe = (double) cos(theta);
+		float sinThe = (double) sin(theta);
+		float cosPsi = (double) cos(psi);
+		float sinPsi = (double) sin(psi);
+
+		float dcm[3][3];
+		dcm[0][0] = cosThe * cosPsi;
+		dcm[0][1] = -cosPhi * sinPsi + sinPhi * sinThe * cosPsi;
+		dcm[0][2] = sinPhi * sinPsi + cosPhi * sinThe * cosPsi;
+
+		dcm[1][0] = cosThe * sinPsi;
+		dcm[1][1] = cosPhi * cosPsi + sinPhi * sinThe * sinPsi;
+		dcm[1][2] = -sinPhi * cosPsi + cosPhi * sinThe * sinPsi;
+
+		dcm[2][0] = -sinThe;
+		dcm[2][1] = sinPhi * cosThe;
+		dcm[2][2] = cosPhi * cosThe;
+
+		float accel_vec[3] =
+		{ ax - _accel_bias[0], ay - _accel_bias[1], (az - _accel_bias[2])
+				+ 9.80665f };
+		float acc_mag = sqrt(
+				accel_vec[0] * accel_vec[0] + accel_vec[1] * accel_vec[1]
+						+ accel_vec[2] * accel_vec[2]);
+
+		//printf("Staionary: %f %f %f - %f\n", accel_vec[0], accel_vec[1], accel_vec[2], acc_mag);
+//            bool stationary = acc_mag < 0.25;
+		bool stationary = 0;
+
+		float local_frame_accel[3] =
+		{ 0, 0, 0 };
+
+		for (int i = 0; i < 3; i++)
+		{
+			for (int j = 0; j < 3; j++)
+			{
+				local_frame_accel[j] += dcm[j][i] * accel_vec[i];
+			}
+		}
+
+		if (stationary)
+		{
+			_vel_imu[0] = 0.;
+			_vel_imu[1] = 0.;
+			_vel_imu[2] = 0.;
 		}
 		else
 		{
-            phi -= _gyro_bias[0];
-            theta-= _gyro_bias[1];
-            psi -= _gyro_bias[2];
+			_vel_imu[0] = _last_vel[0] + local_frame_accel[0] * dt;
+			_vel_imu[1] = _last_vel[1] + local_frame_accel[1] * dt;
+			_vel_imu[2] = _last_vel[2] + local_frame_accel[2] * dt;
+		}
 
-            float cosPhi = (double)cos(phi);
-            float sinPhi = (double)sin(phi);
-            float cosThe = (double)cos(theta);
-            float sinThe = (double)sin(theta);
-            float cosPsi = (double)cos(psi);
-            float sinPsi = (double)sin(psi);
+		_last_vel[0] = _vel_imu[0];
+		_last_vel[1] = _vel_imu[1];
+		_last_vel[2] = _vel_imu[2];
 
-            float dcm[3][3];
-            dcm[0][0] = cosThe * cosPsi;
-            dcm[0][1] = -cosPhi * sinPsi + sinPhi * sinThe * cosPsi;
-            dcm[0][2] = sinPhi * sinPsi + cosPhi * sinThe * cosPsi;
+		_odometry_imu[0] = _last_odometry_imu[0] + _vel_imu[0] * dt;
+		_odometry_imu[1] = _last_odometry_imu[1] + _vel_imu[1] * dt;
+		_odometry_imu[2] = _last_odometry_imu[2] + _vel_imu[2] * dt;
+		_last_odometry_imu[0] = _odometry_imu[0];
+		_last_odometry_imu[1] = _odometry_imu[1];
+		_last_odometry_imu[2] = _odometry_imu[2];
 
-            dcm[1][0] = cosThe * sinPsi;
-            dcm[1][1] = cosPhi * cosPsi + sinPhi * sinThe * sinPsi;
-            dcm[1][2] = -sinPhi * cosPsi + cosPhi * sinThe * sinPsi;
-
-            dcm[2][0] = -sinThe;
-            dcm[2][1] = sinPhi * cosThe;
-            dcm[2][2] = cosPhi * cosThe;
-
-            float accel_vec[3] = { ax - _accel_bias[0], ay - _accel_bias[1], (az - _accel_bias[2]) + 9.80665f};
-            float acc_mag = sqrt(accel_vec[0]*accel_vec[0] + accel_vec[1]*accel_vec[1] + accel_vec[2]*accel_vec[2]);
-
-            //printf("Staionary: %f %f %f - %f\n", accel_vec[0], accel_vec[1], accel_vec[2], acc_mag);
-//            bool stationary = acc_mag < 0.25;
-            bool stationary = 0;
-
-            float local_frame_accel[3] = {0,0,0};
-
-            for (int i = 0; i<3; i++)
-            {
-                    for (int j = 0; j<3; j++)
-                    {
-                            local_frame_accel[j] += dcm[j][i] * accel_vec[i];
-                    }
-            }
-
-            if (stationary)
-            {
-                    _vel_imu[0] = 0.;
-                    _vel_imu[1] = 0.;
-                    _vel_imu[2] = 0.;
-            }
-            else
-            {
-                    _vel_imu[0] = _last_vel[0] + local_frame_accel[0] * dt;
-                    _vel_imu[1] = _last_vel[1] + local_frame_accel[1] * dt;
-                    _vel_imu[2] = _last_vel[2] + local_frame_accel[2] * dt;
-            }
-
-            _last_vel[0] = _vel_imu[0];
-            _last_vel[1] = _vel_imu[1];
-            _last_vel[2] = _vel_imu[2];
-
-
-            _odometry_imu[0] = _last_odometry_imu[0] + _vel_imu[0] * dt;
-            _odometry_imu[1] = _last_odometry_imu[1] + _vel_imu[1] * dt;
-            _odometry_imu[2] = _last_odometry_imu[2] + _vel_imu[2] * dt;
-            _last_odometry_imu[0] = _odometry_imu[0];
-            _last_odometry_imu[1] = _odometry_imu[1];
-            _last_odometry_imu[2] = _odometry_imu[2];
-
-          static int ctn = 0;
-          if (ctn ++ % 10 == 0)
-              fprintf(stderr, "*, %6.2f\t%6.2f\t%6.2f\n",
-            		  _vel_imu[0],
-					  _vel_imu[1],
-					  _vel_imu[2]);
+		static int ctn = 0;
+		if (ctn++ % 10 == 0)
+			fprintf(stderr, "*, %6.2f\t%6.2f\t%6.2f\n", _vel_imu[0],
+					_vel_imu[1], _vel_imu[2]);
 
 //              fprintf(stderr, "*, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f\n",
 //                                                                      _vel_imu[0],
@@ -2977,5 +3204,5 @@ static void dead_reckon_position(double dt,
 //                                                                              (double)phi*180/M_PI,
 //                                                                              (double)theta*180/M_PI,
 //                                                                              (double)psi*180/M_PI);
-		}
+	}
 }

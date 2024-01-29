@@ -318,14 +318,14 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 40.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 2.0);
 
-    json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 0.0);
+    json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 1);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.04);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3.0);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 4);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
