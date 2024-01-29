@@ -651,7 +651,7 @@ static int _hard_reset_(bool fast_reset)
 	{
 		printf("FAST RESET requested!\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.init_options.init_max_disparity = 6.0;
+		vio_manager_options.init_options.init_max_disparity = 5.0;
 		vio_manager_options.zupt_max_disparity = 1;
 		vio_manager_options.zupt_max_velocity = 5.0;
 	}
@@ -1249,6 +1249,10 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						prev_accel = d_accel; 		
 						if (d_accel > 0.7)
 						{
+							if (ramp < 258)
+								printf("[INFO] IMU has moved, JERK detected\n");
+							
+							
 							imu_moved = true;
 							vio_manager->force_moving();
 						}
@@ -1751,23 +1755,45 @@ static void _publish_default(double pose_timestamp)
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
 	// check if its initialized or not
-	if (!vio_manager->initialized())
+	if (!en_force_init)
 	{
-		s.state = VIO_STATE_INITIALIZING;
-		memcpy(&d.v, &s, sizeof(vio_data_t));
-		is_initialized = false;
-		// send to both pipes
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-
-		return;
+		if (!vio_manager->initialized())
+		{
+			s.state = VIO_STATE_INITIALIZING;
+			memcpy(&d.v, &s, sizeof(vio_data_t));
+			is_initialized = false;
+			// send to both pipes
+			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+	
+			return;
+		}
+		else
+		{
+			vio_manager_options.init_options.init_dyn_use = true;
+			s.state = VIO_STATE_OK;
+			is_initialized = true;
+		}
 	}
-	else
+	else  // FORCE INITIALIZATION -- only for non-mission, non-autonomy use, for pilot use
 	{
-		s.state = VIO_STATE_OK;
-		is_initialized = true;
+		 if (imu_moved)
+		 {
+			s.state = VIO_STATE_OK;
+			is_initialized = true;
+		 }
+		 else
+		 {
+				s.state = VIO_STATE_OK;
+				memcpy(&d.v, &s, sizeof(vio_data_t));
+				is_initialized = false;
+				// send to both pipes
+				pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+				pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+				return;
+		 } 
 	}
-
+	
 	std::shared_ptr < ov_msckf::State > current_state =
 			vio_manager->get_state(); // contains a few extra pieces we need
 
@@ -2140,7 +2166,7 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.init_options.init_imu_thresh = init_imu_thresh;
 	vio_manager_options.init_options.init_dyn_num_pose = max_clone_size;
 	vio_manager_options.init_options.init_max_disparity = zupt_max_disparity;
-	vio_manager_options.init_options.init_dyn_use = false;
+	vio_manager_options.init_options.init_dyn_use = init_dyn_use;
 	
 	/// IMU NOISE OPTIONS ///
 	vio_manager_options.imu_noises.sigma_w = imu_sigma_w;

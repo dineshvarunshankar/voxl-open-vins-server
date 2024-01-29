@@ -108,6 +108,8 @@ bool zupt_only_at_beginning;
 double zupt_noise_multiplier;
 double zupt_max_disparity;
 
+bool init_dyn_use;
+
 /// FEATURE INITIALIZER OPTIONS ///
 bool triangulate_1d;
 bool refine_features;
@@ -136,6 +138,7 @@ bool en_baro;
 int takeoff_cam;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
+bool en_force_init = false;
 
 //std::string log_path;
 
@@ -209,6 +212,7 @@ int config_file_print(void) {
     printf("gravity mag:                      %6.5f\n", gravity_mag);
     printf("init window time:                 %6.5f\n", init_window_time);
     printf("init imu thresh:                  %6.5f\n", init_imu_thresh);
+    printf("init dyn use:                         %s\n", init_dyn_use ? "true" : "false");
     printf("=================================================================\n");
     printf("==========================IMU NOISE==============================\n");
     printf("imu sigma w:                      %6.5f\n", imu_sigma_w);
@@ -252,6 +256,7 @@ int config_file_print(void) {
     printf("knn_ratio:                  %6.5f\n", knn_ratio);
     printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("publish_frequency:                  %d\n", publish_frequency);
+    printf("force init on takeoff:                  %s\n", en_force_init ? "true" : "false");
     printf("use baro:                  %s\n", en_baro ? "true" : "false");
     printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
@@ -326,6 +331,7 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
+    json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
@@ -359,6 +365,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 0.1524);
+    json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
 
     
     if (takeoff_cam >= 0)

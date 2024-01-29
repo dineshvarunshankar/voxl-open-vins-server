@@ -150,6 +150,7 @@ extern double slam_delay;
 extern double gravity_mag;
 extern double init_window_time;
 extern double init_imu_thresh;
+extern bool init_dyn_use;
 
 /// IMU NOISE OPTIONS ///
 extern double imu_sigma_w;
@@ -203,6 +204,7 @@ extern int takeoff_cam;
 extern double takeoff_threshold;
 extern double max_allowable_cep;
 
+extern bool en_force_init;
 
 // read only our own config file without printing the contents
 int config_file_read(void);
