@@ -330,7 +330,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.04);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 2);
     json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);

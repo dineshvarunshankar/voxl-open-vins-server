@@ -157,6 +157,7 @@ if [ -d "services" ]; then
 fi
 
 if [ -d "scripts" ]; then
+	echo "copying scipts"
 	sudo mkdir -p $DATA_DIR/usr/bin/
 	sudo chmod +x scripts/*
 	sudo cp -r scripts/* $DATA_DIR/usr/bin/
@@ -168,6 +169,7 @@ if [ -d "bash_completions" ]; then
 fi
 
 if [ -d "misc_files" ]; then
+	echo "copying misc files"
 	sudo cp -R misc_files/* $DATA_DIR/
 fi
 

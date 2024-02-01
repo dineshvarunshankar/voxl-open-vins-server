@@ -334,7 +334,7 @@ static float _gyro_bias[3] =
 static float _last_gyro[3] =
 { 0 };
 static float _last_vel[3] =
-{ 0 };
+{ 0 }; 
 static float _last_odometry_imu[3] =
 { 0 };
 /////////////////////////
@@ -611,7 +611,7 @@ void reset_states()
 
 static int _hard_reset_(bool fast_reset)
 {
-
+	
 	// Lock all external data handlers not related to VINS core instance
 	imu_lock_mutex.lock();
 	cam_lock_mutex.lock();
@@ -639,21 +639,29 @@ static int _hard_reset_(bool fast_reset)
 	pipe_client_flush(BARO_CH);
 	camera_queue.clear();
 
-
 	// now start again
 	double oe_init_window_time =
 			vio_manager_options.init_options.init_window_time;
+	double oe_init_imu_thresh =
+			vio_manager_options.init_options.init_imu_thresh;
 	double oe_zupt_max_vel = vio_manager_options.zupt_max_velocity;
 	double oe_init_max_disparity= vio_manager_options.init_options.init_max_disparity;
 	double oe_zupt_max_disparity= vio_manager_options.zupt_max_disparity;
+	bool oe_init_dyn_use = vio_manager_options.init_options.init_dyn_use;
+
+	if (is_armed)
+	{
+		vio_manager_options.init_options.init_imu_thresh = 2.5;
+	}
 	
 	if (fast_reset)
 	{
-		printf("FAST RESET requested!\n");
+		printf("FAST RESET requested at Alt.\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.init_options.init_max_disparity = 5.0;
-		vio_manager_options.zupt_max_disparity = 1;
-		vio_manager_options.zupt_max_velocity = 5.0;
+//		vio_manager_options.init_options.init_max_disparity += 1;
+//		vio_manager_options.zupt_max_disparity += 1;
+//		vio_manager_options.zupt_max_velocity = 1.0;
+//		vio_manager_options.init_options.init_dyn_use = true;
 	}
 	
 	reset_states();
@@ -666,8 +674,10 @@ static int _hard_reset_(bool fast_reset)
 	}
 	vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
 	vio_manager_options.init_options.init_window_time = oe_init_window_time;
+	vio_manager_options.init_options.init_imu_thresh = oe_init_imu_thresh;
 	vio_manager_options.init_options.init_max_disparity = oe_init_max_disparity;
 	vio_manager_options.zupt_max_disparity = oe_zupt_max_disparity;
+	vio_manager_options.init_options.init_dyn_use = oe_init_dyn_use;
 
 	printf("[INFO] unlocking managers\n");
 
@@ -816,12 +826,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	if (idler_limit > 0 && idler_ctn++ < idler_limit)
 	{
-		if (en_debug)
-		{
-			printf("load balance: %d\n", idler_ctn);
-		}
-
-
 		last_cam_time = _apps_time_monotonic_ns();
 		return;
 	}
@@ -1005,7 +1009,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 //				cv::rectangle(idle_mask2, cv::Rect(rectX2, rectY2, 640, 180), cv::Scalar(255), -1);  	
 				cv::rectangle(idle_mask2, cv::Rect(426, 266, internal_img_2.cols-426, internal_img_2.rows-266), cv::Scalar(255), -1);  	
 #endif
-				
+				//TODO handling exception!
+				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+
 				static cv::Mat ignore_mask1(internal_img_1.rows,
 						internal_img_1.cols, CV_8UC1, cv::Scalar(255));
 				static cv::Mat ignore_mask2(internal_img_2.rows,
@@ -1016,25 +1022,31 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				static cv::Mat use_mask2(internal_img_2.rows,
 						internal_img_2.cols, CV_8UC1, cv::Scalar(0));
 
-				if (vio_manager->initialized() && !imu_moved)
+				if (!vio_manager->initialized())
 				{
 					if (en_debug)
-						printf("Idling\n");
+						printf("Initializing\n");
 					
-					if (!has_idle_images)
-					{
-						if (en_debug)
-							printf("Capture new idle images\n");								
-						idle_image1 = internal_img_1.clone();
-						idle_image2 = internal_img_2.clone();
-						has_idle_images = true;
-					}
-					
-					message.images.push_back(idle_image1);
-					message.images.push_back(idle_image2);
+					message.images.push_back(zero_image);
+					message.images.push_back(zero_image);
 				}
 				else
 				{
+					if (!imu_moved)
+					{
+						if (en_debug)
+							printf("Idling\n");
+
+						if (!has_idle_images)
+						{
+							if (en_debug)
+								printf("Capture new idle images\n");								
+							idle_image1 = internal_img_1.clone();
+							idle_image2 = internal_img_2.clone();													
+							has_idle_images = true;
+						}
+					}
+					
 					message.images.push_back(internal_img_1.clone());
 					message.images.push_back(internal_img_2.clone());
 				}
@@ -1053,6 +1065,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 						if (en_debug)
 							printf("in takeoff %f\n", (double)alt_z);
 						message.masks.push_back(ignore_mask2);
+						message.masks.push_back(use_mask2);
+					}
+					else
+					{
+						message.masks.push_back(use_mask1);
 						message.masks.push_back(use_mask2);
 					}
 
@@ -2430,18 +2447,20 @@ static void _simple_cpu_cb(__attribute__((unused))int ch, char *raw_data,
 	// only use most recent packet
 	cpu_stats_t data = data_array[n_packets - 1];
 
+#ifdef USE_ACTIVE_CPU_MANAGEMENT
 	bool is_standby  = data.flags & CPU_STATS_FLAG_STANDBY_ACTIVE;
-
 	if (is_standby && vio_manager_options.zupt_max_disparity == zupt_max_disparity)
 	{
 		vio_manager_options.init_options.init_max_disparity =  zupt_max_disparity + 2;
 		vio_manager_options.zupt_max_disparity = zupt_max_disparity + 2;
 	}
-	
 	if (data.cpu_t_max > 85.0 || is_standby)
+#endif
+		
+	if (data.cpu_t_max > 85.0 || !is_armed)
 	{
 		if (!changed_motion_state)
-			idler_limit = 2; // 10Hz
+			idler_limit = 3; // 12Hz
 		else 
 			idler_limit = 0;
 	}
