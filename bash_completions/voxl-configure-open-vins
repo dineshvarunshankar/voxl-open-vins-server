@@ -1,0 +1,12 @@
+_voxl-configure-open-vins(){
+
+    local OPTS=('disable help factory_enable factory_enable_imu0 factory_enable_imu1 factory_enable_imu_apps factory_enable_imu_px4 factory_enable_imu_apps_stereo_lower enable')
+
+    COMPREPLY=()
+	if [ "$COMP_CWORD" -eq 1 ]; then
+		COMPREPLY=( $(compgen -W '${OPTS}' -- ${COMP_WORDS[COMP_CWORD]}) )
+		return 0
+	fi
+}
+
+complete -F _voxl-configure-open-vins voxl-configure-open-vins
