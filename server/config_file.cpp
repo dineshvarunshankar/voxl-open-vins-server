@@ -298,9 +298,9 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 30);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 15);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 15);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 20);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 20);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
@@ -330,7 +330,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.04);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 2);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
     json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
