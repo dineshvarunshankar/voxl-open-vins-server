@@ -631,12 +631,12 @@ static int _hard_reset_(bool fast_reset)
 	}
 
 	// clear MPA pipe buffers
-	for (int i = 0; i < cameras_used; i++)
-	{
-		pipe_client_flush(camera_pipe_channels[i]);
-	}
-	pipe_client_flush(IMU_CH);
-	pipe_client_flush(BARO_CH);
+//	for (int i = 0; i < cameras_used; i++)
+//	{
+//		pipe_client_flush(camera_pipe_channels[i]);
+//	}
+//	pipe_client_flush(IMU_CH);
+//	pipe_client_flush(BARO_CH);
 	camera_queue.clear();
 
 	// now start again
@@ -1040,15 +1040,20 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 						if (!has_idle_images)
 						{
 							if (en_debug)
-								printf("Capture new idle images\n");								
+								printf("Capture new idle images\n");											
 							idle_image1 = internal_img_1.clone();
 							idle_image2 = internal_img_2.clone();													
 							has_idle_images = true;
 						}
+						
+						message.images.push_back(idle_image1);
+						message.images.push_back(idle_image2);	
 					}
-					
-					message.images.push_back(internal_img_1.clone());
-					message.images.push_back(internal_img_2.clone());
+					else
+					{
+						message.images.push_back(internal_img_1.clone());
+						message.images.push_back(internal_img_2.clone());
+					}
 				}
 				
 				if (use_takeoff_cam)
