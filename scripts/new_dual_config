@@ -149,7 +149,7 @@ else
     voxl-open-vins-server --config 0
 fi
 
-sed_key="s/stereo/$camera_key_name/g"
+sed_key="s/stereo/tracking/g"
 sed -i $sed_key "/etc/modalai/voxl-camera-server.conf"
 sed -i 's/GPS=AUTO/GPS=NONE/g' "/etc/modalai/voxl-px4.conf"
 sed -i 's/auto/performance/g' "/etc/modalai/voxl-cpu-monitor.conf"
