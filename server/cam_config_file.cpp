@@ -59,7 +59,7 @@
 
 void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion);
 void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R);
-void make_default_groups(cJSON* groups_json, int* n_groups) ;
+void make_default_groups(cJSON* groups_json, int* n_groups, int is_color_cam) ;
 
 //DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
@@ -1191,7 +1191,8 @@ static void _remove_old_fields(
 //
 void make_default_groups(
     cJSON* groups_json,
-    int* n_groups
+    int* n_groups,
+	int is_color_cam
 ) {
     // tmp vars for holding
     int int_holder;
@@ -1311,11 +1312,12 @@ void make_default_groups(
         group_counter += 1;
     }
 
-    // TRACKING FD  VINS_DUAL_COLOR
+	if (is_color_cam)  // TRACKING FD  VINS_DUAL_COLOR
     {
+		printf("Using COLOR cam config default!\n");
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 0);
+        json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
         json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
         json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
@@ -1347,13 +1349,15 @@ void make_default_groups(
         // add tracking to groups
         cJSON_AddItemToArray(groups_json, tracking_FD_vins);
         group_counter += 1;
-    }
-    
+    }    
+	else 
     // TRACKING FD  VINS_DUAL_MONOCHROME
     {
+		printf("Using MONO  cam config default!\n");
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
         json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
+
         json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
         json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
@@ -1429,7 +1433,7 @@ void make_default_groups(
 ///
 // TODO Following is a duopliate of what is in VFT, refactor to the camera config library
 //
-int cam_config_file_read(void)
+int cam_config_file_read(int is_color_cam)
 {
 
     // if config file does not exist, make one and initialize it with a header
@@ -1461,7 +1465,7 @@ int cam_config_file_read(void)
 	cJSON* groups_json = json_fetch_array_and_add_if_missing(parent, "groups", &n_groups);
 
     // if no camera groups, lets create some
-    if(n_groups == 0) make_default_groups(groups_json, &n_groups);
+    if(n_groups == 0) make_default_groups(groups_json, &n_groups, is_color_cam);
 
     // parse groups in JSON
     for(int group_i = 0; group_i < n_groups; group_i++) {
@@ -1606,7 +1610,7 @@ int cam_config_file_read(void)
 
 #pragma message "USING VERSION 1 format that is compliant with OPTIFLOW THERM"
 
-int cam_config_file_read(void)
+int cam_config_file_read()
 {
 	int ret = json_make_empty_file_with_header_if_missing(CAM_CONFIG_FILE,
 			CAM_CONFIG_FILE_HEADER);

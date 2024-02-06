@@ -109,6 +109,9 @@
 // auto restart if the system fails to init after 10 seconds
 #define INIT_FAILURE_TIMEOUT_NS 10000000000
 
+// force a timeout if I'm in init for a long time, like 45 seconds
+#define INIT_TOO_LONG_TIMEOUT_NS 60000000000
+
 // do not check for blowups until 1 second after VIO claims to have initialized
 #define BLOWUP_DETECT_TIMEOUT_NS 1000000000
 
@@ -145,20 +148,22 @@ static int64_t last_cam_time;
 static int64_t time_avg;
 static int avg = 0;
 static uint8_t thresh_level = 127;
-static int perf_limit = 1;
+static volatile int perf_limit = 1;
 static int start_idx = 0;
 static int cameras_used = 0;
 static int camera_pipe_channels[10];
-static int every_other = 0;
-static double T_uncertainty = 0;
-static double R_uncertainty = 0;
 static int gravity_vector_direction = -1;
-static float alt_z = 0.0;
-static bool changed_motion_state = false;
-static bool imu_moved = false;
-static bool is_armed = false;
-static bool use_takeoff_cam  = true;
-static bool has_idle_images  = false;
+
+static volatile int every_other = 0;
+static volatile double T_uncertainty = 0;
+static volatile double R_uncertainty = 0;
+static volatile float alt_z = 0.0;
+static volatile bool changed_motion_state = false;
+static volatile bool imu_moved = false;
+static volatile bool is_armed = false;
+static volatile bool is_resetting = false;
+static volatile bool use_takeoff_cam  = true;
+static volatile bool has_idle_images  = false;
 
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
@@ -184,7 +189,6 @@ static volatile int hard_reset_blowup_flag = 1;
 // detection how long VIO has been trying to init
 static volatile int init_failure_detector_reset_flag = 0;
 static volatile int64_t time_of_last_reset = 0;
-static volatile int last_state = VIO_STATE_FAILED;
 static volatile int blowup_detector_flag = 0;
 static volatile int64_t time_of_first_okay = 0;
 
@@ -198,10 +202,10 @@ std::mutex publish_lock_mutex;
 std::mutex imu_lock_mutex;
 std::mutex baro_lock_mutex;
 
-static int is_initialized = 0;
+static volatile int is_initialized = 0;
+static volatile int idler_limit = -1;
 static int blank_counter = 0;
 static int fade_counter = 0;
-static int idler_limit = -1;
 static int64_t last_time_alignment_ns = 0;
 static int32_t last_frame_frame_id = 0;
 static int64_t last_frame_timestamp_ns = 0;
@@ -256,6 +260,9 @@ static int _hard_reset(bool is_locked);
 static int connect_client_pipes(void);
 void reset_states();
 
+/// State initializer
+std::shared_ptr<ov_init::InertialInitializer> vins_initializer;
+
 static int8_t verbosity_level
 { 
 	static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT) 
@@ -299,6 +306,7 @@ typedef struct _ov_status_t
 static ov_status_t ov_status;
 
 std::string log_path = "";
+int is_color = 0;
 
 static RingBuffer *img_ringbuf = new RingBuffer(5);
 
@@ -374,9 +382,10 @@ run manually with the following debug options\n\
 
 static bool _parse_opts(int argc, char *argv[])
 {
+	
 	static struct option long_options[] =
 	{
-	{ "config", no_argument, 0, 'c' },
+	{ "config", required_argument, 0, 'c' },
 	{ "debug", no_argument, 0, 'd' },
 	{ "help", no_argument, 0, 'h' },
 	{ "timing-imu", no_argument, 0, 'i' },
@@ -386,6 +395,8 @@ static bool _parse_opts(int argc, char *argv[])
 	{ "timing-cam", no_argument, 0, 't' },
 	{ "verbosity", required_argument, 0, 'v' },
 	{ 0, 0, 0, 0 } };
+
+	std::string tmp_str = "";
 
 	// set default before we do anything else
 //	ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::ALL);
@@ -412,7 +423,9 @@ static bool _parse_opts(int argc, char *argv[])
 			break;
 
 		case 'c':
+			is_color = static_cast<uint8_t>(std::atoi(optarg));
 			en_config_only = 1;
+			printf("color camera? %s\n", is_color ? "true" : "false");
 			break;
 
 		case 'd':
@@ -612,6 +625,9 @@ void reset_states()
 static int _hard_reset_(bool fast_reset)
 {
 	
+	if (is_resetting)
+		return 0;
+	
 	// Lock all external data handlers not related to VINS core instance
 	imu_lock_mutex.lock();
 	cam_lock_mutex.lock();
@@ -619,7 +635,7 @@ static int _hard_reset_(bool fast_reset)
 	publish_lock_mutex.lock();
 	
 	// update my state
-	last_state = VIO_STATE_FAILED;
+	is_resetting = true;
 
 	printf("[INFO] restarting managers\n");
 	
@@ -658,7 +674,7 @@ static int _hard_reset_(bool fast_reset)
 	{
 		printf("FAST RESET requested at Alt.\n");
 		vio_manager_options.init_options.init_window_time = 0.25;
-//		vio_manager_options.init_options.init_max_disparity += 1;
+		vio_manager_options.init_options.init_max_disparity = 0;
 //		vio_manager_options.zupt_max_disparity += 1;
 //		vio_manager_options.zupt_max_velocity = 1.0;
 //		vio_manager_options.init_options.init_dyn_use = true;
@@ -686,9 +702,9 @@ static int _hard_reset_(bool fast_reset)
 	baro_lock_mutex.unlock();
 	publish_lock_mutex.unlock();
 
-	time_of_last_reset = _apps_time_monotonic_ns();
-
-	return 0;
+	is_resetting = false;
+	
+	return 1;
 }
 
 #ifdef BUILD_QRB5165
@@ -742,14 +758,14 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 	{
 		resume_processing = 0;
 		fprintf(stderr, "[ERROR] Client requested hard reset\n");
-		_hard_reset_(true);  // close and restart the object
+		init_failure_detector_reset_flag = 3;  // close and restart the object
 		return;
 	}
 	else if (strncmp(string, RESET_VIO_SOFT, strlen(RESET_VIO_SOFT)) == 0)
 	{
 		resume_processing = 0;
 		fprintf(stderr,"[ERROR] Client requested reset\n");
-		_hard_reset_(false);  // close and restart the object
+		init_failure_detector_reset_flag = 2;  // close and restart the object
 		return;
 	}
 
@@ -1711,25 +1727,52 @@ static void _post_snapshot()
 // camera thread freezes.
 static void* _health_thread_func(__attribute__((unused)) void *ctx)
 {
+	int64_t last_was_running_time = _apps_time_monotonic_ns();
+
+	
 	while (main_running)
 	{
 		// 66Hz
-		usleep(33333);  // run about the same speed as the camera
+		usleep(33333);  
 		int64_t current_time = _apps_time_monotonic_ns();
-		int64_t delay_ns = current_time - last_real_pose_timestamp_ns;
 
 		if (init_failure_detector_reset_flag)
 		{
 			uint64_t time_since_reset = current_time - time_of_last_reset;
 			if (time_since_reset > INIT_FAILURE_TIMEOUT_NS)
 			{
-				init_failure_detector_reset_flag = 0;
 				if (en_debug)
-					fprintf(stderr, "[ERROR] Triggered RESET\n");
+					fprintf(stderr, "[ERROR] Triggered RESET type: %d\n", init_failure_detector_reset_flag);
 				
-				_hard_reset_(!is_thermal);
+				if (init_failure_detector_reset_flag == 1)
+					_hard_reset_(!is_thermal);
+				else if (init_failure_detector_reset_flag == 2)
+					_hard_reset_(false);
+				else if (init_failure_detector_reset_flag == 3)
+					_hard_reset_(true);
+										
+				time_of_last_reset = _apps_time_monotonic_ns();
+
+				init_failure_detector_reset_flag = 0;
 			}
 		}
+		
+		if (!vio_manager->initialized())
+		{
+			uint64_t time_in_init = current_time - last_was_running_time;
+			
+			if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS)
+			{
+				if (en_debug)
+					fprintf(stderr, "[ERROR] In init too long, timeout, triggering  RESET\n");
+				init_failure_detector_reset_flag = 1;
+			}
+		}
+		else
+		{
+			last_was_running_time = current_time;
+		}
+		
 	}
 
 	return NULL;
@@ -2888,7 +2931,7 @@ int main(int argc, char *argv[])
 	config_file_print();
 
 	// read camera multicam setup and configs
-	if (cam_config_file_read() < 0)
+	if (cam_config_file_read(is_color) < 0)
 	{
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
@@ -2900,6 +2943,11 @@ int main(int argc, char *argv[])
 	if (read_external_configs_from_file() < 0)
 		_quit(-1);
 
+	
+	if (en_config_only)
+		_quit(-1);
+
+	
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
 

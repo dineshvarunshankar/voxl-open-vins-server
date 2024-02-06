@@ -40,26 +40,16 @@ USER=$(whoami)
 
 print_usage () {
 	echo ""
-	echo "Start wizard with prompts:"
-	echo "voxl-configure-open-vins"
-	echo ""
-	echo "Shortcut configuration arguments for scripted setup."
-	echo "factory_enable will reset the config file to factory defaults"
-	echo "before enabling the service."
-	echo ""
-	echo "imu0     for VOXL Flight all-in-one board."
-	echo "imu1     for VOXL1 and VOXL-CAM"
-	echo "imu_px4  for RB5 Flight 5G"
-	echo "imu_apps for VOXL2"
-	echo ""
 	echo "voxl-configure-open-vins disable"
 	echo "voxl-configure-open-vins factory_enable"
-	echo "voxl-configure-open-vins factory_enable_imu0"
-	echo "voxl-configure-open-vins factory_enable_imu1"
-	echo "voxl-configure-open-vins factory_enable_imu_apps"
-	echo "voxl-configure-open-vins factory_enable_imu_px4"
-	echo "voxl-configure-open-vins factory_enable_imu_apps_stereo_lower"
 	echo "voxl-configure-open-vins enable"
+        echo "voxl-configure-open-vins config_starling_v2 (ov72)" 
+        echo "voxl-configure-open-vins config_starling_v2.5 (ov97 mono)"
+        echo "voxl-configure-open-vins config_starling_v2.7 (ov97 color)"
+	echo "voxl-configure-open-vins config_px4 (ar144)"
+        echo "voxl-configure-open-vins config_fpv (ov97 color)"
+	echo "voxl-configure-open-vins config_manual (uses existing extrinsics & intrinsics)"
+        echo "voxl-configure-open-vins prep (cleans data area for reconfig)"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -140,10 +130,7 @@ arg=$(echo "$1" | tr '[:upper:]' '[:lower:]')
 
 ## parse arguments
 case ${arg} in
-	"")
-		echo "Starting Wizard"
-		;;
-	"h"|"-h"|"help"|"--help")
+	""|"h"|"-h"|"help"|"--help")
 		print_usage
 		exit 0
 		;;
@@ -154,38 +141,79 @@ case ${arg} in
 		reset_config_file_to_default
 		enable_service_and_exit
 		;;
-	"factory_enable_imu0")
-		reset_config_file_to_default
-		set_param_string imu_name imu0
-		enable_service_and_exit
-		;;
-	"factory_enable_imu1")
-		reset_config_file_to_default
-		set_param_string imu_name imu1
-		enable_service_and_exit
-		;;
-	"factory_enable_imu_px4")
-		reset_config_file_to_default
-		set_param_string imu_name imu_px4
-		enable_service_and_exit
-		;;
-	"factory_enable_imu_apps")
-		reset_config_file_to_default
-		set_param_string imu_name imu_apps
-		enable_service_and_exit
-		;;
-	"factory_enable_imu_apps_stereo_lower")
-		reset_config_file_to_default
-		set_param_string imu_name imu_apps
-		set_param cam0_enable true
-		set_param_string cam0_name stereo_front
-		set_param_string cam0_mode STEREO_LEFT_ONLY
-		set_param_string cam0_extrinsics_extension_first _lower
-		enable_service_and_exit
-		;;
 	"enable")
 		enable_service_and_exit
 		;;
+	"config_starling_v2.5")
+		`/usr/bin/new_dual_config`
+		`cp "/data/modalai/ov/ext/extrinsics.conf_ov97_mono_up_down" "/etc/modalai/extrinsics.conf"`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		enable_service_and_exit
+		;;		
+	"config_starling_v2.7")
+		`/usr/bin/new_dual_config`
+		`cp "/data/modalai/ov/ext/extrinsics.conf_ov97_up_down" "/etc/modalai/extrinsics.conf"`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		enable_service_and_exit
+		;;
+	"config_starling_v2")
+		`/usr/bin/new_dual_config`
+		`cp "/usr/share/modalai/extrinsic_configs/starling_v2_voxl2.conf" "/etc/modalai/extrinsics.conf"`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		`sed -i 's/tracking/tracking_front/g' "/etc/modalai/extrinsics.conf"`
+		enable_service_and_exit
+		;;
+	"config_px4")
+		`/usr/bin/new_dual_config`
+		`cp "/usr/share/modalai/extrinsic_configs/d0011_starling_px4_edition.conf" "/etc/modalai/extrinsics.conf"`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		enable_service_and_exit
+		;;
+	"config_fpv")
+		`/usr/bin/new_dual_config`
+		`cp "/usr/share/modalai/extrinsic_configs/fpv_revB.conf" "/etc/modalai/extrinsics.conf"`
+		`sed -i 's/trackingL/tracking_grey_front/g' "/etc/modalai/extrinsics.conf"`
+		`sed -i 's/trackingR/tracking_grey_down/g' "/etc/modalai/extrinsics.conf"`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		enable_service_and_exit
+		;;
+	"config_manual")
+		`/usr/bin/new_dual_config`
+		`systemctl disable voxl-qvio-server`
+		`systemctl disable voxl-feature-tracker`
+		`systemctl disable voxl-lepton-server`
+		`systemctl disable voxl-flow-server`
+		`systemctl restart voxl-cpu-monitor`
+		enable_service_and_exit
+		exit 0
+		;;
+	"prep")
+		mv /data/modalai/opencv_tracking_grey_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
+#		mv /data/modalai/opencv_tracking_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
+		exit 0
+		;;
+		
+		
 	*)
 		echo "invalid option"
 		print_usage
@@ -227,42 +255,6 @@ yes )
 	break;;
 no )
 	disable_service_and_exit
-	break;;
-*)
-	echo "invalid option"
-	esac
-done
-
-
-echo " "
-echo "Which config voxl-open-vins-server use?"
-echo ""
-echo "imu0_tracking          for VOXL Flight all-in-one board, M500"
-echo "imu1_tracking          for VOXL1 and VOXL-CAM, Seeker V1"
-echo "imu_px4_tracking       for RB5 Flight 5G"
-echo "imu_apps_tracking      for VOXL2, Sentinel"
-echo "imu_apps_stereo_lower  for Starling V2 stereo version"
-echo ""
-select opt in "imu0_tracking" "imu1_tracking" "imu_px4_tracking" "imu_apps_tracking" "imu_apps_stereo_lower"; do
-case $opt in
-imu0_tracking )
-	set_param_string imu_name imu0
-	break;;
-imu1_tracking )
-	set_param_string imu_name imu1
-	break;;
-imu_px4_tracking )
-	set_param_string imu_name imu_px4
-	break;;
-imu_apps_tracking )
-	set_param_string imu_name imu_apps
-	break;;
-imu_apps_stereo_lower )
-    set_param_string imu_name imu_apps
-    set_param cam0_enable true
-    set_param_string cam0_name stereo_front
-    set_param_string cam0_mode STEREO_LEFT_ONLY
-    set_param_string cam0_extrinsics_extension_first _lower
 	break;;
 *)
 	echo "invalid option"
