@@ -76,6 +76,7 @@ int pyramid_levels;
 int window_size;
 int width;
 int height;
+int single_cam_in_use = -1;
 bool en_gyro;
 bool en_descriptors;
 
@@ -482,7 +483,9 @@ int cam_load_extrinsics_file()
 #endif
 	        
             if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
-                fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] Unable to find (%s) to (%s) in extrinsics conf\n", tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] as configured in voxl-open-vins-standalone.conf  expected to see this hardware\n");
+                exit(-1);
             }
 			Eigen::Matrix<double, 3, 3> rotation_temp_1;
 			for (j = 0; j < 3; j++)
@@ -542,7 +545,9 @@ int cam_load_extrinsics_file()
 #endif           
             
             if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name, t, n_extrinsics, &extrins_holder)){
-                fprintf(stderr, "ERROR: Unable to find %s to %s in extrinsics conf\n", tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] Unable to find (%s) to (%s) in extrinsics conf\n", tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] as configured in voxl-open-vins-standalone.conf  expected to see this hardware\n");
+                exit(-1);
             }
 			Eigen::Matrix<double, 3, 3> rotation_temp_2;
 			for (j = 0; j < 3; j++)
@@ -592,25 +597,37 @@ int cam_load_extrinsics_file()
 		}
 		else
 		{
-
-			if (vcc_find_extrinsic_in_array(cam_info_set_vec[i].name, tmp_imu_name,
-					t, n_extrinsics, &extrins_holder))
-			{
-				fprintf(stderr, "vcc_find_extrinsic_in_array failed for %s %s\n", cam_info_set_vec[i].name, tmp_imu_name);
-				return -1;
-			}
-
 			// single cam
-			rc_tf_t imu_to_cam;
 			int j, k;
 
+	        memset(ext_name, '\0', CM_CHAR_BUF_SIZE);
+
+	        if  (single_cam_in_use == -1)
+	        {
+		        strcpy(ext_name, cam_info_set_vec[i].name);
+	        }
+	        else if  (single_cam_in_use == 0)
+	        {
+	            strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_first);
+	        }
+	        else if  (single_cam_in_use == 1)
+	        {
+	            strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_first);
+	        }
+	        else if  (single_cam_in_use == 2)
+	        {
+	            strcpy(ext_name, cam_info_set_vec[i].extrinsics_extension_third);
+	        }
+
+	        printf("Using extrinsics under camera ID: %s\n", ext_name);
+
 			// grab the imu -> camera extrinsics relation
-			if (vcc_find_extrinsic_in_array(tmp_imu_name, cam_info_set_vec[i].name,
+			if (vcc_find_extrinsic_in_array(tmp_imu_name, ext_name,
 					t, n_extrinsics, &extrins_holder))
 			{
-				fprintf(stderr,
-						"ERROR: Unable to find %s to %s in extrinsics conf\n",
-						tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] Unable to find (%s) to (%s) in extrinsics conf\n", tmp_imu_name, ext_name);
+                fprintf(stderr, "[ERROR] as configured in voxl-open-vins-standalone.conf  expected to see this hardware\n");
+				exit(-1);
 			}
 
 			Eigen::Matrix<double, 3, 3> rotation_temp;
@@ -693,7 +710,7 @@ int cam_load_intrinsics_file()
 		if (strstr(camera_mode_as_string(cam_info_set_vec[i].cam_mode).c_str(), "STEREO") != NULL)
 		{
 			// here we go
-			printf("Found STEREO config\n");
+			printf("Found SYNC-STEREO config\n");
 			stereo_setup = true;
 		}
 
@@ -961,7 +978,7 @@ int cam_load_intrinsics_file()
 		if (strstr(camera_mode_as_string(cam_info_set_vec[i].cam_mode).c_str(), "STEREO") != NULL)
 		{
 			// here we go
-			printf("Found STEREO config\n");
+			printf("Found SYNC-STEREO config\n");
 			stereo_setup = true;
 		}
 
@@ -1652,7 +1669,7 @@ void make_default_groups(
 
 // ========================================================================
 #if VERSION_FORMAT == 2   
-#pragma message "USING VERSION 2 format that is compliant with VFT" 
+#pragma message "USING VERSION 2 format supporting STANDALONE operation" 
 // ========================================================================
 
 ///
@@ -1720,7 +1737,8 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
        // if n_group_cameras > 1 then this is a stereo aka SYNCED camera setup
        //
        //
-       
+   	   int camera_count = 0;
+
        for(int camera_i = 0; camera_i < n_group_cameras; camera_i++) {
             
             cJSON* camera_item = cJSON_GetArrayItem(group_cameras_json, camera_i);
@@ -1732,6 +1750,8 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
             if(!camera_item_enabled) 
             	continue;
 
+            single_cam_in_use =  camera_i;
+            
             tracker_input_t camera_item_input;
 
             json_fetch_string_with_default(camera_item, "tracker_type", string_holder, 64, "cvp");
@@ -1740,30 +1760,15 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
             } else if(!strcmp(string_holder, "ocv")) {
                 camera_item_input.tracker_type = TRACKER_OCV;
             } else if(!strcmp(string_holder, "vins")) {
-            	static int camera_count = 0;
-            	
             	
             	// tracking group name
                 json_fetch_string_with_default(group_item, "pipe", string_holder, 
                     MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
-                
                 if (camera_count == 0)
                 {
         			camera_info_set curr_info;
         			strncpy(curr_info.name, string_holder, CM_CHAR_BUF_SIZE);
         			cam_info_set_vec.push_back(curr_info);
-        			camera_mode curr_mode;
-        			if (n_group_cameras > 1 && !is_single_cam)
-        			{
-        				printf("Multiple camera will need STEREO mode\n");
-        				curr_mode = string_camera_mode_to_enum("STEREO");
-        			}
-        			else
-        			{
-        				printf("MONO mode\n");
-        				curr_mode = string_camera_mode_to_enum("MONO");
-        			}
-        			cam_info_set_vec.back().cam_mode = curr_mode;
         		}
     			
                 // OVINS ONLY SUPPORT 3 cameras MAX
@@ -1798,6 +1803,22 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
                 return -1;
             }
         }
+       
+       camera_mode curr_mode;
+		if (camera_count > 1)
+		{
+			printf("Multiple cameras will need SYNC-STEREO mode\n");
+			curr_mode = string_camera_mode_to_enum("STEREO");
+			single_cam_in_use = -1; //clear it
+		}
+		else
+		{
+			printf("MONO mode (using cam idx: %d)\n", single_cam_in_use);
+			curr_mode = string_camera_mode_to_enum("MONO");
+			
+		}
+		cam_info_set_vec.back().cam_mode = curr_mode;
+
     }
     // remove fields from config file v1
     _remove_old_fields(parent);

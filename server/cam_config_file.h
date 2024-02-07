@@ -44,28 +44,6 @@
 /**\n\
  * This file contains configuration that's specific to voxl-open-vins-server. It is a duplicate of that used by voxl-feature-tracker.\n\
  * \n\
- * Per camera, need:\n\
- * cami_enable: en or disable cam\n\
- * cami_name: pipe name\n\
- * cami_mode: MONO, STEREO, STEREO_LEFT_ONLY, STEREO_RIGHT_ONLY\n\
- * cami_extrinsics_extension_first: if extrinsics file uses a suffix, add here\n\
- * cami_extrinsics_extension_second: same as above but only applies to stereo pairs\n\
- * \n\
- * For the tracker, need:\n\
- * num_features_to_track: n per cam\n\
- * en_gyro: enable gyro based predictions\n\
- * imu_name: only needed if en_gyro\n\
- * en_descriptors: enable descriptor calcs\n\
- * grid_x: grid dimensions in x direction\n\
- * grid_y: grid dimensions in y direction\n\
- * min_pix_dist: minimum pixel distance between feature points\n\
- * pyramid_levels: levels for img pyramid (how many layers to track across)\n\
- * window_size: will be the same for x and y, search window for flow calcs\n\
- * en_database: whether or not to store keyframes in a db for mid term lookups\n\
- * database_size: number of frames our db can store\n\
- * max_angular_rate_before_blur: max allowed angular rate around exposure period\n\
- * of frame for it to be used, otherwise discarded. Set negative to disable/ignore\n\
- * \n\
  */\n"
 
 extern std::vector<camera_info_set> cam_info_set_vec;
@@ -80,6 +58,7 @@ extern int grid_y;
 extern int min_pix_dist;
 extern int pyramid_levels;
 extern int window_size;
+extern int single_cam_in_use;
 
 
 extern bool en_database;

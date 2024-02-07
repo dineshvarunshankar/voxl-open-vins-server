@@ -357,7 +357,7 @@ static void _print_usage(void)
 This is meant to run in the background as a systemd service, but can be\n\
 run manually with the following debug options\n\
 \n\
--c, --config   [0|1|2|3] only parse/create the config file and exit, don't run, 0=dual mono, 1=dual color, 2=single mono, 3=single color\n\
+-c, --config   [0|1|2|3]  only parse/create the config file and exit, don't run. Options are: \n\t\t\t0=dual mono, 1=dual color,\n\t\t\t2=single mono, 3=single color, 4=qvio replacement\n\
 -d, --debug                 enable debug prints\n\
 -h, --help                  print this help message\n\
 -i, --timing-imu            show timing prints for imu processing\n\
@@ -1148,7 +1148,35 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 			}
 			else
-				printf("Individual STEREO camera option has been disabled\n");
+			{
+				memcpy(curr_message->image_pixels, (uint8_t*) frame,
+						meta.size_bytes);
+
+				img_ringbuf->insert_data(curr_message);
+
+				int offset = 0;
+				if (single_cam_in_use == 1)
+				{
+					offset = meta.size_bytes / 2;
+				}				
+				cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
+						(uint8_t*) curr_message->image_pixels + offset);
+				ov_core::CameraData message;
+				message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+				message.sensor_ids.push_back(0);
+
+				message.images.push_back(internal_img.clone());
+				message.masks.push_back(
+						cv::Mat::zeros(internal_img.rows, internal_img.cols,
+								CV_8UC1));
+				std::lock_guard < std::mutex > lck(camera_queue_mtx);
+				camera_queue.push_back(message);
+
+				std::sort(camera_queue.begin(), camera_queue.end());
+
+				is_thermal = false;
+
+			}
 		}
 
 		last_cam_time = _apps_time_monotonic_ns();
@@ -1583,13 +1611,19 @@ static void _post_snapshot()
 			{
 				for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
 				{
+					int cam_idx = display_snapshot.d.features[i].cam_id;
+					
+					// OVERRIDE
+					if (single_cam_in_use > 0)
+						cam_idx = single_cam_in_use;
+					
 					if (!en_debug_pos)
 					{
 						if (display_snapshot.d.features[i].point_quality
 								== (int) OV_RE_HIGH)
 						{
 							cv::drawMarker(
-									img_set[display_snapshot.d.features[i].cam_id],
+									img_set[cam_idx],
 									cv::Point2f(
 											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
@@ -1600,7 +1634,7 @@ static void _post_snapshot()
 								== (int) OV_HIGH)
 						{
 							cv::drawMarker(
-									img_set[display_snapshot.d.features[i].cam_id],
+									img_set[cam_idx],
 									cv::Point2f(
 											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
@@ -1611,7 +1645,7 @@ static void _post_snapshot()
 								== (int) OV_MEDIUM)
 						{
 							cv::drawMarker(
-									img_set[display_snapshot.d.features[i].cam_id],
+									img_set[cam_idx],
 									cv::Point2f(
 											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
@@ -1620,7 +1654,7 @@ static void _post_snapshot()
 						else if (show_extra_points_on_overlay)
 						{
 							cv::drawMarker(
-									img_set[display_snapshot.d.features[i].cam_id],
+									img_set[cam_idx],
 									cv::Point2f(
 											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
@@ -1641,7 +1675,7 @@ static void _post_snapshot()
 							for (size_t z = 0; z < trk_history_x.size(); z++)
 							{
 								cv::drawMarker(
-										img_set[display_snapshot.d.features[i].cam_id],
+										img_set[cam_idx],
 										cv::Point2f(trk_history_x[z],
 												trk_history_y[z]),
 										cv::Scalar(255), cv::MARKER_DIAMOND, 24,
