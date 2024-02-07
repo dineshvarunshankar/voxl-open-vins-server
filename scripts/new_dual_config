@@ -7,14 +7,6 @@ echo "What is generated is a combined file for OVINS use"
 echo "See doc.modalai.com for further details"
 echo ""
 
-# unit test
-# Prompt user to select a directory
-#echo "Please enter the directory path:"
-#read -r directory_path
-
-# unit test
-#directory_path="."
-
 directory_path="/data/modalai"
 
 # Check if the directory exists
@@ -29,12 +21,7 @@ cd "$directory_path" || exit 1
 make_intrinsics=1
 camera_key_name="tracking"
     
-#if [ -f "$directory_path/opencv_stereo_front_intrinsics.yml" ]; then
-#    make_intrinsics=0
-#    camera_key_name="tracking_grey"
-#    is_color=1
-#fi     
-    
+ 
 if [ -f "$directory_path/opencv_tracking_intrinsics.yml" ]; then
     make_intrinsics=0
     camera_key_name="tracking"
@@ -105,13 +92,6 @@ if [ $make_intrinsics -eq 1 ]; then
 
     read enter
 
-    # unit test
-    ## Check if the correct number of arguments is provided
-    #if [ "$#" -ne 3 ]; then
-    #    echo "Usage: $0 source_file1 source_file2 destination_file"
-    #    exit 1
-    #fi
-    
     # Set source and destination files
     source_file1=$file1
     source_file2=$file2
@@ -135,8 +115,6 @@ if [ $make_intrinsics -eq 1 ]; then
     rm "$source_file1"_tmp "$source_file2"_tmp
 fi
 
-rm -f /etc/modalai/voxl-feature-tracker.conf
-
 if [ "$camera_key_name" == "tracking_grey" ]; then
     echo ""
     echo "COLOR"
@@ -151,7 +129,5 @@ fi
 
 sed_key="s/stereo/tracking/g"
 sed -i $sed_key "/etc/modalai/voxl-camera-server.conf"
-sed -i 's/GPS=AUTO/GPS=NONE/g' "/etc/modalai/voxl-px4.conf"
-sed -i 's/auto/performance/g' "/etc/modalai/voxl-cpu-monitor.conf"
 
 echo "Done."

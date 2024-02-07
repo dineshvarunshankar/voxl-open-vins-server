@@ -1,6 +1,6 @@
 _voxl-configure-open-vins(){
 
-    local OPTS=('disable help factory_enable factory_enable_imu0 factory_enable_imu1 factory_enable_imu_apps factory_enable_imu_px4 factory_enable_imu_apps_stereo_lower enable')
+    local OPTS=('disable help factory_enable enable starling_v2 starling_v2.5 starling_v2.7 px4 fpv manual prep')
 
     COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then
