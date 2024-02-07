@@ -59,7 +59,7 @@
 
 void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion);
 void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R);
-void make_default_groups(cJSON* groups_json, int* n_groups, int is_color_cam) ;
+void make_default_groups(cJSON* groups_json, int* n_groups, int is_color_cam, int is_single_cam) ;
 
 //DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
@@ -668,6 +668,8 @@ int cam_load_extrinsics_file()
 	return 0;
 }
 
+#if VERSION_FORMAT == 1
+
 int cam_load_intrinsics_file()
 {
 	char intrinsics_path[CM_CHAR_BUF_SIZE * 2];
@@ -941,6 +943,335 @@ int cam_load_intrinsics_file()
 	return 0;
 }
 
+#else 
+
+int cam_load_intrinsics_file()
+{
+	char intrinsics_path[CM_CHAR_BUF_SIZE * 2];
+
+	// this is here again, since opencv will define different matrices per stereo / mono
+	// and because we need to pack the intrinsic vals up in two packets for ov if stereo
+	bool stereo_setup = false;
+
+	for (int i = 0; i < (int) cam_info_set_vec.size(); i++)
+	{
+		memset(intrinsics_path, '\0', CM_CHAR_BUF_SIZE);
+
+		// if it contains stereo, we gotta look for different matrix names
+		if (strstr(camera_mode_as_string(cam_info_set_vec[i].cam_mode).c_str(), "STEREO") != NULL)
+		{
+			// here we go
+			printf("Found STEREO config\n");
+			stereo_setup = true;
+		}
+
+		cv::FileNode n;
+		cv::Mat camMatrix;
+		cv::Mat distCoeffs;
+		cv::Mat camMatrix2;
+		cv::Mat distCoeffs2;
+		int is_fisheye = 0;
+		int w, h;
+		int has_m1 = 0;
+		int has_d1 = 0;
+		int has_m2 = 0;
+		int has_d2 = 0;
+		int has_w = 0;
+		int has_h = 0;
+
+		if (stereo_setup)
+		{
+			memset(intrinsics_path,0,strlen(intrinsics_path));
+			strcat(intrinsics_path, cam_info_set_vec[i].intrinsics_extension_first);
+			printf("Loading OpenCV intrinsics cal file from: %s\n",
+					intrinsics_path);
+			cv::FileStorage fs(intrinsics_path, cv::FileStorage::READ);
+			if (!fs.isOpened())
+			{
+				fprintf(stderr, "Failed to load intrinsics file %s\n",
+						intrinsics_path);
+				return -1;
+			}
+
+			// cam1
+			n = fs["M"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> camMatrix;
+				has_m1 = 1;
+			}
+			n = fs["D"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> distCoeffs;
+				has_d1 = 1;
+			}
+
+			memset(intrinsics_path,0,strlen(intrinsics_path));
+			strcat(intrinsics_path, cam_info_set_vec[i].intrinsics_extension_second);
+			printf("Loading OpenCV intrinsics cal file from: %s\n",
+					intrinsics_path);
+			cv::FileStorage fs2(intrinsics_path, cv::FileStorage::READ);
+			if (!fs2.isOpened())
+			{
+				fprintf(stderr, "Failed to load intrinsics file %s\n",
+						intrinsics_path);
+				return -1;
+			}
+
+
+			// cam2
+			n = fs2["M"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> camMatrix2;
+				has_m2 = 1;
+			}
+			n = fs2["D"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> distCoeffs2;
+				has_d2 = 1;
+			}
+			
+			// check for fisheye model
+			n = fs["distortion_model"];
+			if (n.isString())
+			{
+				std::string mdl_name = n;
+				if (mdl_name.compare("fisheye") == 0)
+				{
+					is_fisheye = 1;
+				}
+			}
+
+			// check height and width
+			n = fs["width"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> w;
+				has_w = 1;
+			}
+			n = fs["height"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> h;
+				has_h = 1;
+			}
+			// done with file now
+			fs.release();
+			fs2.release();
+
+
+		}
+		else
+		{
+			memset(intrinsics_path,0,strlen(intrinsics_path));
+			strcat(intrinsics_path, cam_info_set_vec[i].intrinsics_extension_first);
+			printf("Loading OpenCV intrinsics cal file from: %s\n",
+					intrinsics_path);
+			cv::FileStorage fs(intrinsics_path, cv::FileStorage::READ);
+			if (!fs.isOpened())
+			{
+				fprintf(stderr, "Failed to load intrinsics file %s\n",
+						intrinsics_path);
+				return -1;
+			}
+
+			// mono camera
+			n = fs["M"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> camMatrix;
+				has_m1 = 1;
+			}
+			n = fs["D"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> distCoeffs;
+				has_d1 = 1;
+			}
+
+			// stereo left
+			n = fs["M1"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> camMatrix;
+				has_m1 = 1;
+			}
+			n = fs["D1"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> distCoeffs;
+				has_d1 = 1;
+			}
+
+			// aruco example
+			n = fs["camera_matrix"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> camMatrix;
+				has_m1 = 1;
+			}
+			n = fs["distortion_coefficients"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> distCoeffs;
+				has_d1 = 1;
+			}
+			
+			// check for fisheye model
+			n = fs["distortion_model"];
+			if (n.isString())
+			{
+				std::string mdl_name = n;
+				if (mdl_name.compare("fisheye") == 0)
+				{
+					is_fisheye = 1;
+				}
+			}
+
+			// check height and width
+			n = fs["width"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> w;
+				has_w = 1;
+			}
+			n = fs["height"];
+			if (n.type() != cv::FileNode::NONE)
+			{
+				n >> h;
+				has_h = 1;
+			}
+			// done with file now
+			fs.release();
+
+
+		}
+		
+		// make sure we loaded the matrices in
+		if (!has_m1 || (stereo_setup && !has_m2))
+		{
+			fprintf(stderr, "failed to find camera matrix in %s\n",
+					intrinsics_path);
+		}
+		if (!has_d1 || (stereo_setup && !has_d2))
+		{
+			fprintf(stderr, "failed to find distortion coefficients in %s\n",
+					intrinsics_path);
+		}
+		if (!has_w)
+		{
+			fprintf(stderr, "failed to find width in %s\n", intrinsics_path);
+		}
+		if (!has_h)
+		{
+			fprintf(stderr, "failed to find height in %s\n", intrinsics_path);
+		}
+		if (!has_m1 || !has_d1 || !has_w || !has_h
+				|| (stereo_setup && (!has_m2 || !has_d2)))
+		{
+			return -1;
+		}
+
+		// logic here: if we are using a stereo pair, make sure we select the proper one if specified
+		if (cam_info_set_vec[i].cam_mode != STEREO_RIGHT_ONLY)
+		{
+			cam_info_set_vec[i].cam_mat.push_back(cv::Matx33d(camMatrix));
+			cam_info_set_vec[i].dist_coeffs.push_back(
+					cv::Vec4d((double*) distCoeffs.ptr()));
+
+			Eigen::Matrix<double, 10, 1> cam_intrins;
+
+			cam_info_set_vec[i].cam_calib_intrinsic.push_back(cam_intrins);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](0, 0) = camMatrix.at<
+					double>(0, 0);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](1, 0) = camMatrix.at<
+					double>(1, 1);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](2, 0) = camMatrix.at<
+					double>(0, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](3, 0) = camMatrix.at<
+					double>(1, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](4, 0) = distCoeffs.at<
+					double>(0);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](5, 0) = distCoeffs.at<
+					double>(1);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](6, 0) = distCoeffs.at<
+					double>(2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](7, 0) = distCoeffs.at<
+					double>(3);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](8, 0) = w;
+			cam_info_set_vec[i].cam_calib_intrinsic[0](9, 0) = h;
+			cam_info_set_vec[i].is_fisheye = is_fisheye;
+		}
+		else
+		{
+			Eigen::Matrix<double, 10, 1> cam_intrins_2;
+			cam_info_set_vec[i].cam_calib_intrinsic.push_back(cam_intrins_2);
+
+			cam_info_set_vec[i].cam_mat.push_back(cv::Matx33d(camMatrix2));
+			cam_info_set_vec[i].dist_coeffs.push_back(
+					cv::Vec4d((double*) distCoeffs2.ptr()));
+
+			cam_info_set_vec[i].cam_calib_intrinsic[0](0, 0) = camMatrix2.at<
+					double>(0, 0);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](1, 0) = camMatrix2.at<
+					double>(1, 1);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](2, 0) = camMatrix2.at<
+					double>(0, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](3, 0) = camMatrix2.at<
+					double>(1, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](4, 0) = distCoeffs2.at<
+					double>(0);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](5, 0) = distCoeffs2.at<
+					double>(1);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](6, 0) = distCoeffs2.at<
+					double>(2);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](7, 0) = distCoeffs2.at<
+					double>(3);
+			cam_info_set_vec[i].cam_calib_intrinsic[0](8, 0) = w;
+			cam_info_set_vec[i].cam_calib_intrinsic[0](9, 0) = h;
+			cam_info_set_vec[i].is_fisheye = is_fisheye;
+		}
+
+		if (cam_info_set_vec[i].cam_mode == STEREO)
+		{
+			Eigen::Matrix<double, 10, 1> cam_intrins_2;
+			cam_info_set_vec[i].cam_calib_intrinsic.push_back(cam_intrins_2);
+
+			cam_info_set_vec[i].cam_mat.push_back(cv::Matx33d(camMatrix2));
+			cam_info_set_vec[i].dist_coeffs.push_back(
+					cv::Vec4d((double*) distCoeffs2.ptr()));
+
+			cam_info_set_vec[i].cam_calib_intrinsic[1](0, 0) = camMatrix2.at<
+					double>(0, 0);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](1, 0) = camMatrix2.at<
+					double>(1, 1);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](2, 0) = camMatrix2.at<
+					double>(0, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](3, 0) = camMatrix2.at<
+					double>(1, 2);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](4, 0) = distCoeffs2.at<
+					double>(0);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](5, 0) = distCoeffs2.at<
+					double>(1);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](6, 0) = distCoeffs2.at<
+					double>(2);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](7, 0) = distCoeffs2.at<
+					double>(3);
+			cam_info_set_vec[i].cam_calib_intrinsic[1](8, 0) = w;
+			cam_info_set_vec[i].cam_calib_intrinsic[1](9, 0) = h;
+			cam_info_set_vec[i].is_fisheye = is_fisheye;
+		}
+		width = std::max(w, width);
+		height = std::max(h, height);
+		cam_info_set_vec[i].is_fisheye = is_fisheye;
+	}
+	return 0;
+}
+#endif
+
 int get_config_as_json()
 {
 	// add in optional fields to the info JSON file
@@ -1192,154 +1523,77 @@ static void _remove_old_fields(
 void make_default_groups(
     cJSON* groups_json,
     int* n_groups,
-	int is_color_cam
+	int is_color_cam,
+	int is_single_cam
 ) {
     // tmp vars for holding
     int int_holder;
     char string_holder[CM_CHAR_BUF_SIZE];
     int group_counter = 0;
 
-    // TRACKING SINGLE
+    if (is_color_cam == -1 && is_single_cam ==-1) // qvio mode
     {
-        // default group info
-        cJSON* tracking_single = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_single, "enable", &int_holder, 0);
-        json_fetch_string_with_default(tracking_single, "group_name", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_single");
-        json_fetch_string_with_default(tracking_single, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
-        json_fetch_string_with_default(tracking_single, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
-        cJSON* tracking_single_cams = json_fetch_array_and_add_if_missing(tracking_single, "group_cams", &int_holder);
-        cJSON* tracking_cam = cJSON_CreateObject();
+        // TRACKING FD  VINS_DUAL_MONOCHROME
+        {
+    		printf("Using MONO  cam config default!\n");
+            // default group info
+            cJSON* tracking_FD_vins = cJSON_CreateObject();
+            json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
 
-        // default tracking info
-        json_fetch_bool_with_default(tracking_cam, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_cam, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
-        json_fetch_string_with_default(tracking_cam, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_int_with_default(tracking_cam, "num_features", &int_holder, 50);
+            json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+            cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
+            cJSON* tracking_F = cJSON_CreateObject();
+            cJSON* tracking_D = cJSON_CreateObject();
 
-        // add tracking_cameras to group_cams
-        cJSON_AddItemToArray(tracking_single_cams, tracking_cam);
+            // default tracking info
+            json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
+            json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+            json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_intrinsics.yml");
+            json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+            json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
 
-        // add tracking to groups
-        cJSON_AddItemToArray(groups_json, tracking_single);
-        group_counter += 1;
+            // add cameras to group_cams
+            cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
+
+            // add tracking to groups
+            cJSON_AddItemToArray(groups_json, tracking_FD_vins);
+            group_counter += 1;
+        }
     }
-
-    // TRACKING LR 
-    {
-        // default group info
-        cJSON* tracking_LR = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_LR, "enable", &int_holder, 0);
-        json_fetch_string_with_default(tracking_LR, "group_name", string_holder, MODAL_PIPE_MAX_PATH_LEN-1, "tracking_LR");
-        json_fetch_string_with_default(tracking_LR, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
-        json_fetch_string_with_default(tracking_LR, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
-        cJSON* tracking_LR_cams = json_fetch_array_and_add_if_missing(tracking_LR, "group_cams", &int_holder);
-        cJSON* tracking_L = cJSON_CreateObject();
-        cJSON* tracking_R = cJSON_CreateObject();
-
-        // default tracking info
-        json_fetch_bool_with_default(tracking_L, "enable", &int_holder, 0);
-        json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_L, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "trackingL");
-        json_fetch_string_with_default(tracking_R, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "trackingR");
-        json_fetch_string_with_default(tracking_L, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_string_with_default(tracking_R, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_int_with_default(tracking_L, "num_features", &int_holder, 50);
-        json_fetch_int_with_default(tracking_R, "num_features", &int_holder, 50);
-
-        // add cameras to group_cams
-        cJSON_AddItemToArray(tracking_LR_cams, tracking_L);
-        cJSON_AddItemToArray(tracking_LR_cams, tracking_R);
-
-        // add tracking to groups
-        cJSON_AddItemToArray(groups_json, tracking_LR);
-        group_counter += 1;
-    }
-
-    // TRACKING FDR
-    {
-        // default group info
-        cJSON* tracking_FDR = cJSON_CreateObject();
-        json_fetch_bool_with_default(tracking_FDR, "enable", &int_holder, 0);
-        json_fetch_string_with_default(tracking_FDR, "group_name", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_FDR");
-        json_fetch_string_with_default(tracking_FDR, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feats");
-        json_fetch_string_with_default(tracking_FDR, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_feat_overlay");
-        cJSON* tracking_FDR_cams = json_fetch_array_and_add_if_missing(tracking_FDR, "group_cams", &int_holder);
-        cJSON* tracking_F = cJSON_CreateObject();
-        cJSON* tracking_D = cJSON_CreateObject();
-        cJSON* tracking_R = cJSON_CreateObject();
-
-        // default tracking info
-        json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
-        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
-        json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
-        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
-        json_fetch_string_with_default(tracking_R, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_rear");
-        json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_string_with_default(tracking_R, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
-        json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
-        json_fetch_int_with_default(tracking_R, "num_features", &int_holder, 50);
-
-        // add cameras to group_cams
-        cJSON_AddItemToArray(tracking_FDR_cams, tracking_F);
-        cJSON_AddItemToArray(tracking_FDR_cams, tracking_D);
-        cJSON_AddItemToArray(tracking_FDR_cams, tracking_R);
-
-        // add tracking to groups
-        cJSON_AddItemToArray(groups_json, tracking_FDR);
-        group_counter += 1;
-    }
-
-	if (is_color_cam)  // TRACKING FD  VINS_DUAL_COLOR
+    
+    else if (is_color_cam)  // TRACKING FD  VINS_DUAL_COLOR
     {
 		printf("Using COLOR cam config default!\n");
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
         json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
+        json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
-        json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "");
-        json_fetch_string_with_default(tracking_FD_vins, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "");
         cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
         cJSON* tracking_F = cJSON_CreateObject();
         cJSON* tracking_D = cJSON_CreateObject();
 
         // default tracking info
         json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
-        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
+        json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_front");
-        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_down");
+        json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_intrinsics.yml");
         json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+
+        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, !is_single_cam);
+        json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_down");
+        json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_intrinsics.yml");
         json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
         json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
 
         // add cameras to group_cams
@@ -1358,28 +1612,29 @@ void make_default_groups(
         cJSON* tracking_FD_vins = cJSON_CreateObject();
         json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
 
-        json_fetch_string_with_default(tracking_FD_vins, "group_name", string_holder, 
+        json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
-        json_fetch_string_with_default(tracking_FD_vins, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "");
-        json_fetch_string_with_default(tracking_FD_vins, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "");
         cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
         cJSON* tracking_F = cJSON_CreateObject();
         cJSON* tracking_D = cJSON_CreateObject();
 
         // default tracking info
         json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
-        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_F, "input_pipe", string_holder, 
+        json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
-        json_fetch_string_with_default(tracking_D, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
+        json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_intrinsics.yml");
         json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+
+        json_fetch_bool_with_default(tracking_D, "enable", &int_holder, !is_single_cam);
+        json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
+        json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_intrinsics.yml");
         json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-        json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
         json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
 
         // add cameras to group_cams
@@ -1390,37 +1645,6 @@ void make_default_groups(
         cJSON_AddItemToArray(groups_json, tracking_FD_vins);
         group_counter += 1;
     }
-
-    // LEPTON
-    {
-        // default group info
-        cJSON* lepton = cJSON_CreateObject();
-        json_fetch_bool_with_default(lepton, "enable", &int_holder, 0);
-        json_fetch_string_with_default(lepton, "group_name", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "lepton");
-        json_fetch_string_with_default(lepton, "output_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "lepton_feats");
-        json_fetch_string_with_default(lepton, "overlay_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "lepton_feat_overlay");
-        cJSON* lepton_cams = json_fetch_array_and_add_if_missing(lepton, "group_cams", &int_holder);
-        cJSON* lepton_cam = cJSON_CreateObject();
-
-        // default lepton info
-        json_fetch_bool_with_default(lepton_cam, "enable", &int_holder, 1);
-        json_fetch_string_with_default(lepton_cam, "input_pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "lepton0_raw");
-        json_fetch_string_with_default(lepton_cam, "tracker_type", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "ocv");    // opencv for now until we can verify cvp
-        json_fetch_int_with_default(lepton_cam, "num_features", &int_holder, 50);
-
-        // add tracking_cameras to group_cams
-        cJSON_AddItemToArray(lepton_cams, lepton_cam);
-
-        // add tracking to groups
-        cJSON_AddItemToArray(groups_json, lepton);
-        group_counter += 1;
-    }
-
     // pass out the number of groups added for iter purposes
     *n_groups = group_counter;
 }
@@ -1429,11 +1653,12 @@ void make_default_groups(
 // ========================================================================
 #if VERSION_FORMAT == 2   
 #pragma message "USING VERSION 2 format that is compliant with VFT" 
+// ========================================================================
 
 ///
 // TODO Following is a duopliate of what is in VFT, refactor to the camera config library
 //
-int cam_config_file_read(int is_color_cam)
+int cam_config_file_read(int is_color_cam, int is_single_cam)
 {
 
     // if config file does not exist, make one and initialize it with a header
@@ -1465,7 +1690,12 @@ int cam_config_file_read(int is_color_cam)
 	cJSON* groups_json = json_fetch_array_and_add_if_missing(parent, "groups", &n_groups);
 
     // if no camera groups, lets create some
-    if(n_groups == 0) make_default_groups(groups_json, &n_groups, is_color_cam);
+    if(n_groups == 0) 
+    	make_default_groups(groups_json, &n_groups, is_color_cam, is_single_cam);
+
+   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+   // START PROCESSING CAM CONFIG
+   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // parse groups in JSON
     for(int group_i = 0; group_i < n_groups; group_i++) {
@@ -1482,24 +1712,27 @@ int cam_config_file_read(int is_color_cam)
         // now iter through cameras to populate data
         int n_group_cameras;
         cJSON* group_cameras_json = json_fetch_array(group_item, "group_cams", &n_group_cameras);
-        for(int camera_i = 0; camera_i < n_group_cameras; camera_i++) {
+        
+       printf("Number of cameras found for this config: %d\n", n_group_cameras);
+       
+       //
+       //
+       // if n_group_cameras > 1 then this is a stereo aka SYNCED camera setup
+       //
+       //
+       
+       for(int camera_i = 0; camera_i < n_group_cameras; camera_i++) {
             
             cJSON* camera_item = cJSON_GetArrayItem(group_cameras_json, camera_i);
 
             // check if specific cam is enabled
             int camera_item_enabled;
-            json_fetch_bool_with_default(camera_item, "enable", &camera_item_enabled, 0); if(!camera_item_enabled) continue;
+            json_fetch_bool_with_default(camera_item, "enable", &camera_item_enabled, 0); 
+            
+            if(!camera_item_enabled) 
+            	continue;
 
             tracker_input_t camera_item_input;
-
-            // if enabled, fetch 
-            json_fetch_string_with_default(camera_item, "input_pipe", camera_item_input.input_pipe, 
-                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
-            json_fetch_string_with_default(group_item, "output_pipe", camera_item_input.output_pipe, 
-                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
-            json_fetch_string_with_default(group_item, "overlay_pipe", camera_item_input.overlay_pipe, 
-                MODAL_PIPE_MAX_PATH_LEN-1, "PUT_YOUR_input_pipe_HERE");
-            json_fetch_int_with_default(camera_item, "num_features", &camera_item_input.num_features, 50);
 
             json_fetch_string_with_default(camera_item, "tracker_type", string_holder, 64, "cvp");
             if(!strcmp(string_holder, "cvp")) {
@@ -1511,7 +1744,7 @@ int cam_config_file_read(int is_color_cam)
             	
             	
             	// tracking group name
-                json_fetch_string_with_default(group_item, "group_name", string_holder, 
+                json_fetch_string_with_default(group_item, "pipe", string_holder, 
                     MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
                 
                 if (camera_count == 0)
@@ -1520,7 +1753,7 @@ int cam_config_file_read(int is_color_cam)
         			strncpy(curr_info.name, string_holder, CM_CHAR_BUF_SIZE);
         			cam_info_set_vec.push_back(curr_info);
         			camera_mode curr_mode;
-        			if (n_group_cameras > 1)
+        			if (n_group_cameras > 1 && !is_single_cam)
         			{
         				printf("Multiple camera will need STEREO mode\n");
         				curr_mode = string_camera_mode_to_enum("STEREO");
@@ -1533,14 +1766,27 @@ int cam_config_file_read(int is_color_cam)
         			cam_info_set_vec.back().cam_mode = curr_mode;
         		}
     			
-                json_fetch_string_with_default(camera_item, "input_pipe", string_holder, 
+                // OVINS ONLY SUPPORT 3 cameras MAX
+                json_fetch_string_with_default(camera_item, "intrinsic", string_holder, 
+                    MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+                if (camera_count == 0)
+                	strncpy(cam_info_set_vec.back().intrinsics_extension_first, string_holder, CM_CHAR_BUF_SIZE);
+                else if (camera_count == 1)
+                	strncpy(cam_info_set_vec.back().intrinsics_extension_second, string_holder, CM_CHAR_BUF_SIZE);
+                else if (camera_count == 2) 
+                	strncpy(cam_info_set_vec.back().intrinsics_extension_third, string_holder, CM_CHAR_BUF_SIZE);
+                //TODO else (camera_count == more)
+                		
+                
+                json_fetch_string_with_default(camera_item, "extrinsic", string_holder, 
                     MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
                 if (camera_count == 0)
                 	strncpy(cam_info_set_vec.back().extrinsics_extension_first, string_holder, CM_CHAR_BUF_SIZE);
                 else if (camera_count == 1)
                 	strncpy(cam_info_set_vec.back().extrinsics_extension_second, string_holder, CM_CHAR_BUF_SIZE);
-                //TODO else (camera_count == 2)
-                		
+                else if (camera_count == 2) 
+                	strncpy(cam_info_set_vec.back().extrinsics_extension_third, string_holder, CM_CHAR_BUF_SIZE);
+
                 camera_count++;
                 
                 printf("camera count: %d\n",camera_count );
@@ -1607,10 +1853,10 @@ int cam_config_file_read(int is_color_cam)
 
 // ========================================================================
 #else    
-
 #pragma message "USING VERSION 1 format that is compliant with OPTIFLOW THERM"
+// ========================================================================
 
-int cam_config_file_read()
+int cam_config_file_read(int is_color_cam, int is_single_cam)
 {
 	int ret = json_make_empty_file_with_header_if_missing(CAM_CONFIG_FILE,
 			CAM_CONFIG_FILE_HEADER);

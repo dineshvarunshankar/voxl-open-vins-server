@@ -38,7 +38,7 @@
 
 #define MAX_CAMERAS 4
 
-#define CAM_CONFIG_FILE "/etc/modalai/voxl-feature-tracker.conf"
+#define CAM_CONFIG_FILE "/etc/modalai/voxl-open-vins-standalone.conf"
 #define CAM_CONFIG_FILE_HEADER \
     "\
 /**\n\
@@ -91,7 +91,7 @@ extern cv::Matx33d tmp_world_correction;
 extern cJSON *cam_json;
 
 // read only our own config file without printing the contents
-int cam_config_file_read(int is_color_cam);
+int cam_config_file_read(int is_color_cam, int is_single_cam);
 
 // prints the current configuration values to the screen.
 int cam_config_file_print(void);

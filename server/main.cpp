@@ -306,7 +306,8 @@ typedef struct _ov_status_t
 static ov_status_t ov_status;
 
 std::string log_path = "";
-int is_color = 0;
+int is_color = 0; // assume mono
+int is_single = 0;  // assume alway dual
 
 static RingBuffer *img_ringbuf = new RingBuffer(5);
 
@@ -356,7 +357,7 @@ static void _print_usage(void)
 This is meant to run in the background as a systemd service, but can be\n\
 run manually with the following debug options\n\
 \n\
--c, --config                only parse the config file and exit, don't run\n\
+-c, --config   [0|1|2|3] only parse/create the config file and exit, don't run, 0=dual mono, 1=dual color, 2=single mono, 3=single color\n\
 -d, --debug                 enable debug prints\n\
 -h, --help                  print this help message\n\
 -i, --timing-imu            show timing prints for imu processing\n\
@@ -413,7 +414,7 @@ static bool _parse_opts(int argc, char *argv[])
 		{
 			break;
 		}
-
+		int camera_setup = 0;
 		switch (c)
 		{
 		case 0:
@@ -423,9 +424,38 @@ static bool _parse_opts(int argc, char *argv[])
 			break;
 
 		case 'c':
-			is_color = static_cast<uint8_t>(std::atoi(optarg));
+			camera_setup = static_cast<uint8_t>(std::atoi(optarg));
 			en_config_only = 1;
-			printf("color camera? %s\n", is_color ? "true" : "false");
+			
+			if (camera_setup == 0)
+			{
+				is_color = 0;
+				is_single = 0;
+			}
+			else if (camera_setup == 1)
+			{
+				is_color = 1;
+				is_single = 0;
+			}
+			else if (camera_setup == 2)
+			{
+				is_color = 0;
+				is_single = 1;
+			}
+			else if (camera_setup == 3)
+			{
+				is_color = 1;
+				is_single = 1;
+			}
+			else if (camera_setup == 4)   // QVIO replacement
+			{
+				is_color = -1;
+				is_single = -1;
+			}
+
+						
+			printf("[INFO] color camera? %s\n", is_color ? "true" : "false");
+			printf("[INFO] single camera? %s\n", is_single ? "true" : "false");
 			break;
 
 		case 'd':
@@ -2931,7 +2961,7 @@ int main(int argc, char *argv[])
 	config_file_print();
 
 	// read camera multicam setup and configs
-	if (cam_config_file_read(is_color) < 0)
+	if (cam_config_file_read(is_color, is_single) < 0)
 	{
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
