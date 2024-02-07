@@ -143,6 +143,10 @@ typedef struct camera_info_set {
     std::vector<cv::Mat> cam_wrt_imu_rot;
     char extrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
     char extrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
+    char extrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
+    char intrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
+    char intrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
+    char intrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
     size_t cam_id;
 } camera_info_set;
 
