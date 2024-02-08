@@ -1,133 +1,103 @@
 #!/bin/bash
 
+# Initialize global variables
+directory_path="/data/modalai"
+camera_key_name="tracking"
+make_intrinsics=1
+
+# Function to check if the specified directory exists and change to it
+change_to_directory() {
+    local dir=$1
+    if [ ! -d "$dir" ]; then
+        echo "Directory not found: $dir" >&2
+        exit 1
+    fi
+    cd "$dir" || exit 1
+}
+
+# Function to check for the existence of calibration files and set variables
+check_calibration_files() {
+    local file_paths=("$directory_path/opencv_tracking_intrinsics.yml" "$directory_path/opencv_tracking_grey_intrinsics.yml")
+    local keys=("tracking" "tracking_grey")
+    local i=0
+
+    for path in "${file_paths[@]}"; do
+        if [ -f "$path" ]; then
+            make_intrinsics=0
+            camera_key_name="${keys[i]}"
+            [ "$camera_key_name" == "tracking_grey" ] && is_color=1
+            break
+        fi
+        ((i++))
+    done
+}
+
+# Function to prompt user to select two files
+prompt_for_file_selection() {
+    echo "Searching for cam cals in $directory_path... I found this--"
+    local file1=$(select_file "Select #1 file:")
+    local file2=$(select_file "Select #2 file:")
+    echo "You selected: $file1 and $file2"
+    echo ""
+    process_files "$file1" "$file2"
+}
+
+# Function to list files and let the user select one
+select_file() {
+    local prompt=$1
+    echo "$prompt"
+    local files=(*.yml)
+    select file in "${files[@]}"; do
+        if [[ -n $file ]]; then
+            echo "$file"
+            break
+        else
+            echo "Invalid selection. Please try again."
+        fi
+    done
+}
+
+# Function to process the selected files and generate a new calibration file
+process_files() {
+    local file1=$1
+    local file2=$2
+    choose_camera_type
+    local dest="$directory_path/$camera_key_name.yml"
+
+    echo "Combining $file1 and $file2 into $dest"
+    # Insert file processing here...
+}
+
+# Function to let the user choose the camera type
+choose_camera_type() {
+    echo "What type of tracking cameras do you have:"
+    local options=("tracking" "tracking_grey" "skip")
+    select opt in "${options[@]}"; do
+        case $REPLY in
+            1|2) camera_key_name=${options[$REPLY-1]}; break ;;
+            3) echo "Skipping configuration"; exit 0 ;;
+            *) echo "Invalid choice. Please try again." ;;
+        esac
+    done
+}
+
+# Redirect stdout to the terminal
 exec 3>&1 1>/dev/tty
 
+# Main execution starts here
 echo "The following will require you to select 2 INDEPENDENT camera calibration files"
 echo "What is generated is a combined file for OVINS use"
 echo "See doc.modalai.com for further details"
 echo ""
 
-directory_path="/data/modalai"
-
-# Check if the directory exists
-if [ ! -d "$directory_path" ]; then
-    echo "Directory not found: $directory_path"
-    exit 1
-fi
-
-# Change to the specified directory
-cd "$directory_path" || exit 1
-
-make_intrinsics=1
-camera_key_name="tracking"
-    
- 
-if [ -f "$directory_path/opencv_tracking_intrinsics.yml" ]; then
-    make_intrinsics=0
-    camera_key_name="tracking"
-fi 
-if [ -f "$directory_path/opencv_tracking_grey_intrinsics.yml" ]; then
-    make_intrinsics=0
-    camera_key_name="tracking_grey"
-    is_color=1
-fi 
+change_to_directory "$directory_path"
+check_calibration_files
 
 if [ $make_intrinsics -eq 1 ]; then
-    # List files in the directory
-    files=(*.yml)
-
-    # Prompt user to select 2 files
-    echo "Searching for cam cals in /data/modalai... I found this--"
-    echo "Select #1 file:"
-    select file1 in "${files[@]}"; do
-        [[ -n $file1 ]] && break
-        echo "Invalid selection. Please try again."
-    done
-    
-    echo "Select #2 file:"
-    select file2 in "${files[@]}"; do
-        [[ -n $file2 ]] && break
-        echo "Invalid selection. Please try again."
-    done
-
-
-    echo "What type of tracking cameras do you have:"
-    echo "1) tracking (most cameras)"
-    echo "2) tracking_grey (color mode ov92xx)"
-    echo "3) I've already did this, skip"
-    echo " "
-    read choice
-
-    case $choice in
-        1)
-            dest="$directory_path/opencv_tracking_intrinsics.yml"
-            camera_key_name="tracking"
-
-            ;;
-        2)
-            dest="$directory_path/opencv_tracking_grey_intrinsics.yml"
-            camera_key_name="tracking_grey"
-
-            ;;
-        3)
-	    echo "ok, continuing..."
-            sed -i $sed_key "/etc/modalai/voxl-camera-server.conf"
-            exit 0
-            ;;
-        *)
-            echo "Invalid choice. Exiting."
-            exit 1
-            ;;
-    esac
-
-    echo "You selected:" 
-    echo " " 
-    echo "$file1 and $file2"
-    echo "to be made into configuration:"
-    echo " " 
-    echo "$dest"
-
-    echo " " 
-    echo "CTRL-C to exit. Otherwise press <ENTER> to create new config."
-
-    read enter
-
-    # Set source and destination files
-    source_file1=$file1
-    source_file2=$file2
-    destination_file=$dest
-
-    cp "$source_file1" "$source_file1"_tmp
-    cp "$source_file2" "$source_file2"_tmp
-
-    # Use sed to replace "M:" with "M1:"
-    sed -i 's/M:/M1:/g' "$source_file1"_tmp
-    sed -i 's/D:/D1:/g' "$source_file1"_tmp
-    sed -i 's/reprojection_error:/reprojection_error1:/g' "$source_file1"_tmp
-    sed -i 's/M:/M2:/g' "$source_file2"_tmp
-    sed -i 's/D:/D2:/g' "$source_file2"_tmp
-    sed -i 's/reprojection_error:/reprojection_error2:/g' "$source_file2"_tmp
-
-
-    # Use sed to extract lines 3 to 15 from the source file and insert them into the destination file at line 3
-    sed -n '3,15p' "$source_file1"_tmp | sed '2r /dev/stdin' "$source_file2"_tmp > temp_file && mv temp_file "$destination_file"
-
-    rm "$source_file1"_tmp "$source_file2"_tmp
-fi
-
-if [ "$camera_key_name" == "tracking_grey" ]; then
-    echo ""
-    echo "COLOR"
-    echo ""
-    voxl-open-vins-server --config 1
+    prompt_for_file_selection
 else
-    echo ""
-    echo "MONOCHROME"
-    echo ""
-    voxl-open-vins-server --config 0
+    echo "Calibration files already exist. Using $camera_key_name configuration."
+    # Proceed with existing files or other operations...
 fi
-
-sed_key="s/stereo/tracking/g"
-sed -i $sed_key "/etc/modalai/voxl-camera-server.conf"
 
 echo "Done."

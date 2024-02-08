@@ -112,6 +112,12 @@ reset_config_file_to_default () {
 	${NAME} -c
 }
 
+delete_config_file () {
+	echo "wiping old config file"
+	rm -rf ${CONFIG_FILE}
+}
+
+
 
 ################################################################################
 ## actual start of execution, handle optional arguments first
@@ -136,14 +142,14 @@ case ${arg} in
 		disable_service_and_exit
 		;;
 	"factory_enable")
-		reset_config_file_to_default
+		delete_config_file
 		enable_service_and_exit
 		;;
 	"enable")
 		enable_service_and_exit
 		;;
 	"starling_v2.5")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_mono_up_down" "/etc/modalai/extrinsics.conf"
@@ -151,7 +157,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;		
 	"starling_v2.7")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_up_down" "/etc/modalai/extrinsics.conf"
@@ -159,7 +165,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;
 	"starling_v2")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/usr/share/modalai/extrinsic_configs/starling_v2_voxl2.conf" "/etc/modalai/extrinsics.conf"
@@ -168,7 +174,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;
 	"px4")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/usr/share/modalai/extrinsic_configs/d0011_starling_px4_edition.conf" "/etc/modalai/extrinsics.conf"
@@ -176,7 +182,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;
 	"fpv")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/usr/share/modalai/extrinsic_configs/fpv_revB.conf" "/etc/modalai/extrinsics.conf"
@@ -185,7 +191,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;
 	"manual")
-		reset_config_file_to_default
+		delete_config_file
 		new_dual_config
 		enable_service_and_exit
 		exit 0
