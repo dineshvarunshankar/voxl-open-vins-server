@@ -150,7 +150,6 @@ case ${arg} in
 		;;
 	"starling_v2.5")
 		delete_config_file
-		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_mono_up_down" "/etc/modalai/extrinsics.conf"
 		
@@ -158,7 +157,6 @@ case ${arg} in
 		;;		
 	"starling_v2.7")
 		delete_config_file
-		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_up_down" "/etc/modalai/extrinsics.conf"
 		
@@ -166,7 +164,6 @@ case ${arg} in
 		;;
 	"starling_v2")
 		delete_config_file
-		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/usr/share/modalai/extrinsic_configs/starling_v2_voxl2.conf" "/etc/modalai/extrinsics.conf"
 		
@@ -175,7 +172,6 @@ case ${arg} in
 		;;
 	"px4")
 		delete_config_file
-		new_dual_config
 		#voxl-open-vins-server --config 0
 		cp "/usr/share/modalai/extrinsic_configs/d0011_starling_px4_edition.conf" "/etc/modalai/extrinsics.conf"
 		
@@ -183,18 +179,11 @@ case ${arg} in
 		;;
 	"fpv")
 		delete_config_file
-		new_dual_config
-		#voxl-open-vins-server --config 0
+		voxl-open-vins-server --config 1
 		cp "/usr/share/modalai/extrinsic_configs/fpv_revB.conf" "/etc/modalai/extrinsics.conf"
 		sed -i 's/trackingL/tracking_grey_front/g' "/etc/modalai/extrinsics.conf"
 		
 		enable_service_and_exit
-		;;
-	"manual")
-		delete_config_file
-		new_dual_config
-		enable_service_and_exit
-		exit 0
 		;;
 	"prep")
 		mv /data/modalai/opencv_tracking_grey_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
