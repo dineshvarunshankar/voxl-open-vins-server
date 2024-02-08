@@ -364,7 +364,7 @@ int config_file_read(void) {
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
-    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 0.1524);
+    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 10.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
 
     

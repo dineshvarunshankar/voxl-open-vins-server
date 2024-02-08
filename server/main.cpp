@@ -138,6 +138,7 @@ static int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
 static bool bypass_reset_checks = false;
 static bool is_thermal = false;
+static bool pause_qmin = false;
 static uint16_t resume_processing = 0;
 static pthread_t health_thread;
 static pthread_t overlay_thread;
@@ -796,6 +797,18 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 		resume_processing = 0;
 		fprintf(stderr,"[ERROR] Client requested reset\n");
 		init_failure_detector_reset_flag = 2;  // close and restart the object
+		return;
+	}
+	else if (strncmp(string, "forceq", strlen("forceq")) == 0)
+	{
+		pause_qmin = true;
+		fprintf(stderr,"[WARN] Pausing VIO data (QMIN = 0)\n");
+		return;
+	}
+	else if (strncmp(string, "normq", strlen("normq")) == 0)
+	{
+		pause_qmin = false;
+		fprintf(stderr,"[WARN] Playing VIO data (QMIN = 0)\n");
 		return;
 	}
 
@@ -2155,7 +2168,10 @@ static void _publish_default(double pose_timestamp)
 
 	if (s.quality < 1)
 		s.quality = 0;
-
+	
+	if (pause_qmin)
+		s.quality = 1;
+			
 	// fill in simplified struct inside the extended packet
 	memcpy(&d.v, &s, sizeof(vio_data_t));
 
@@ -2167,7 +2183,7 @@ static void _publish_default(double pose_timestamp)
 	{
 		
 		bool vio_manager_bad = current_state->error_flag == VIO_STATE_FAILED;
-		bool quality_bad = imu_moved && s.quality <= 1;
+		bool quality_bad = imu_moved && s.quality < 1;
 		bool stable_quality_bad = imu_moved && stable_quality(s.quality);
 		bool stable_features_bad = imu_moved && stable_features(n_good_points);
 		bool too_fast = imu_vel.norm() > auto_reset_max_velocity;
