@@ -36,7 +36,7 @@ NAME="voxl-open-vins-server"
 SERVICE_FILE="${NAME}.service"
 CONFIG_FILE="/etc/modalai/${NAME}.conf"
 USER=$(whoami)
-
+STANDALONE_CONFIG_FILE="/etc/modalai/voxl-open-vins-standalone.conf"
 
 print_usage () {
 	echo ""
@@ -87,7 +87,6 @@ set_param_string () {
 	var="${var#\"}"
 	sed -E -i "/\"$var\":/c\	\"$var\":	\"$2\"," ${CONFIG_FILE}
 }
-
 
 disable_service_and_exit () {
 	echo "disabling ${NAME} systemd service"
@@ -148,50 +147,24 @@ case ${arg} in
 	"enable")
 		enable_service_and_exit
 		;;
-	"starling_v2.5")
+	"tracking_45") #starling v2
 		delete_config_file
-		#voxl-open-vins-server --config 0
-		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_mono_up_down" "/etc/modalai/extrinsics.conf"
-		
-		enable_service_and_exit
-		;;		
-	"starling_v2.7")
-		delete_config_file
-		#voxl-open-vins-server --config 0
-		cp "/data/modalai/ov/ext/extrinsics.conf_ov97_up_down" "/etc/modalai/extrinsics.conf"
+		voxl-open-vins-server --config 4
 		
 		enable_service_and_exit
 		;;
-	"starling_v2")
+	"tracking_fd")
 		delete_config_file
-		#voxl-open-vins-server --config 0
-		cp "/usr/share/modalai/extrinsic_configs/starling_v2_voxl2.conf" "/etc/modalai/extrinsics.conf"
-		
-		sed -i 's/tracking/tracking_front/g' "/etc/modalai/extrinsics.conf"
-		enable_service_and_exit
-		;;
-	"px4")
-		delete_config_file
-		#voxl-open-vins-server --config 0
-		cp "/usr/share/modalai/extrinsic_configs/d0011_starling_px4_edition.conf" "/etc/modalai/extrinsics.conf"
+		voxl-open-vins-server --config 0
 		
 		enable_service_and_exit
 		;;
-	"fpv")
+	"tracking_lr") # fpv etc.
 		delete_config_file
-		voxl-open-vins-server --config 1
-		cp "/usr/share/modalai/extrinsic_configs/fpv_revB.conf" "/etc/modalai/extrinsics.conf"
-		sed -i 's/trackingL/tracking_grey_front/g' "/etc/modalai/extrinsics.conf"
-		
+		voxl-open-vins-server --config 3
+
 		enable_service_and_exit
 		;;
-	"prep")
-		mv /data/modalai/opencv_tracking_grey_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
-#		mv /data/modalai/opencv_tracking_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
-		exit 0
-		;;
-		
-		
 	*)
 		echo "invalid option"
 		print_usage

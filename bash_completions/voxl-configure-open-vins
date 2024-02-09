@@ -1,6 +1,6 @@
 _voxl-configure-open-vins(){
 
-    local OPTS=('disable help factory_enable enable starling_v2 starling_v2.5 starling_v2.7 px4 fpv manual prep')
+    local OPTS=('disable help factory_enable enable tracking_45 tracking_fd tracking_lr')
 
     COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then
