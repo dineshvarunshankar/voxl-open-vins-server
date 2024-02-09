@@ -1548,6 +1548,7 @@ void make_default_groups(
     char string_holder[CM_CHAR_BUF_SIZE];
     int group_counter = 0;
 
+    // option 5, QVIO replacement
     if (is_color_cam == -1 && is_single_cam ==-1) // qvio mode
     {
         // TRACKING FD  VINS_DUAL_MONOCHROME
@@ -1582,6 +1583,8 @@ void make_default_groups(
         }
     }
     
+    // option 1, DUAL COLOR, OV97xx FPV RevB
+
     else if (is_color_cam)  // TRACKING FD  VINS_DUAL_COLOR
     {
 		printf("Using COLOR cam config default!\n");
@@ -1597,18 +1600,18 @@ void make_default_groups(
         // default tracking info
         json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
         json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_front");
+            MODAL_PIPE_MAX_PATH_LEN-1, "trackingL");
         json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_intrinsics.yml");
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_grey_intrinsics.yml");
         json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
         json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
 
         json_fetch_bool_with_default(tracking_D, "enable", &int_holder, !is_single_cam);
         json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey_down");
+            MODAL_PIPE_MAX_PATH_LEN-1, "trackingR");
         json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_intrinsics.yml");
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_grey_intrinsics.yml");
         json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
         json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
@@ -1640,7 +1643,7 @@ void make_default_groups(
         json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
         json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_intrinsics.yml");
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_front_intrinsics.yml");
         json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
         json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
@@ -1649,7 +1652,7 @@ void make_default_groups(
         json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
         json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_intrinsics.yml");
+            MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_down_intrinsics.yml");
         json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
             MODAL_PIPE_MAX_PATH_LEN-1, "vins");
         json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
