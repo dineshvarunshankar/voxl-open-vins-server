@@ -36,20 +36,20 @@ NAME="voxl-open-vins-server"
 SERVICE_FILE="${NAME}.service"
 CONFIG_FILE="/etc/modalai/${NAME}.conf"
 USER=$(whoami)
-
+STANDALONE_CONFIG_FILE="/etc/modalai/voxl-open-vins-standalone.conf"
 
 print_usage () {
 	echo ""
 	echo "voxl-configure-open-vins disable"
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
-        echo "voxl-configure-open-vins config_starling_v2 (ov72)" 
-        echo "voxl-configure-open-vins config_starling_v2.5 (ov97 mono)"
-        echo "voxl-configure-open-vins config_starling_v2.7 (ov97 color)"
-	echo "voxl-configure-open-vins config_px4 (ar144)"
-        echo "voxl-configure-open-vins config_fpv (ov97 color)"
-	echo "voxl-configure-open-vins config_manual (uses existing extrinsics & intrinsics)"
-        echo "voxl-configure-open-vins prep (cleans data area for reconfig)"
+	echo "voxl-configure-open-vins starling_v2 (ov72)" 
+	echo "voxl-configure-open-vins starling_v2.5 (ov97 mono)"
+	echo "voxl-configure-open-vins starling_v2.7 (ov97 color)"
+	echo "voxl-configure-open-vins px4 (ar144)"
+	echo "voxl-configure-open-vins fpv (ov97 color)"
+	echo "voxl-configure-open-vins manual (uses existing extrinsics & intrinsics)"
+	echo "voxl-configure-open-vins prep (cleans data area for reconfig)"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -88,7 +88,6 @@ set_param_string () {
 	sed -E -i "/\"$var\":/c\	\"$var\":	\"$2\"," ${CONFIG_FILE}
 }
 
-
 disable_service_and_exit () {
 	echo "disabling ${NAME} systemd service"
 	systemctl disable ${SERVICE_FILE}
@@ -102,8 +101,6 @@ enable_service_and_exit () {
 	echo "enabling  ${NAME} systemd service"
 	systemctl enable  ${SERVICE_FILE}
 	echo "Please recycle power to reflect changes"
-	#echo "starting  ${NAME} systemd service"
-	#systemctl restart  ${SERVICE_FILE}
 	echo "Done configuring ${NAME}"
 	exit 0
 }
@@ -113,6 +110,12 @@ reset_config_file_to_default () {
 	rm -rf ${CONFIG_FILE}
 	${NAME} -c
 }
+
+delete_config_file () {
+	echo "wiping old config file"
+	rm -rf ${CONFIG_FILE}
+}
+
 
 
 ################################################################################
@@ -138,82 +141,30 @@ case ${arg} in
 		disable_service_and_exit
 		;;
 	"factory_enable")
-		reset_config_file_to_default
+		delete_config_file
 		enable_service_and_exit
 		;;
 	"enable")
 		enable_service_and_exit
 		;;
-	"config_starling_v2.5")
-		`/usr/bin/new_dual_config`
-		`cp "/data/modalai/ov/ext/extrinsics.conf_ov97_mono_up_down" "/etc/modalai/extrinsics.conf"`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		enable_service_and_exit
-		;;		
-	"config_starling_v2.7")
-		`/usr/bin/new_dual_config`
-		`cp "/data/modalai/ov/ext/extrinsics.conf_ov97_up_down" "/etc/modalai/extrinsics.conf"`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		enable_service_and_exit
-		;;
-	"config_starling_v2")
-		`/usr/bin/new_dual_config`
-		`cp "/usr/share/modalai/extrinsic_configs/starling_v2_voxl2.conf" "/etc/modalai/extrinsics.conf"`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		`sed -i 's/tracking/tracking_front/g' "/etc/modalai/extrinsics.conf"`
-		enable_service_and_exit
-		;;
-	"config_px4")
-		`/usr/bin/new_dual_config`
-		`cp "/usr/share/modalai/extrinsic_configs/d0011_starling_px4_edition.conf" "/etc/modalai/extrinsics.conf"`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		enable_service_and_exit
-		;;
-	"config_fpv")
-		`/usr/bin/new_dual_config`
-		`cp "/usr/share/modalai/extrinsic_configs/fpv_revB.conf" "/etc/modalai/extrinsics.conf"`
-		`sed -i 's/trackingL/tracking_grey_front/g' "/etc/modalai/extrinsics.conf"`
-		`sed -i 's/trackingR/tracking_grey_down/g' "/etc/modalai/extrinsics.conf"`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		enable_service_and_exit
-		;;
-	"config_manual")
-		`/usr/bin/new_dual_config`
-		`systemctl disable voxl-qvio-server`
-		`systemctl disable voxl-feature-tracker`
-		`systemctl disable voxl-lepton-server`
-		`systemctl disable voxl-flow-server`
-		`systemctl restart voxl-cpu-monitor`
-		enable_service_and_exit
-		exit 0
-		;;
-	"prep")
-		mv /data/modalai/opencv_tracking_grey_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
-#		mv /data/modalai/opencv_tracking_intrinsics.yml /data/modalai/opencv_tracking_grey_intrinsics.yml.1
-		exit 0
-		;;
+	"tracking_45") #starling v2
+		delete_config_file
+		voxl-open-vins-server --config 4
 		
+		enable_service_and_exit
+		;;
+	"tracking_fd")
+		delete_config_file
+		voxl-open-vins-server --config 0
 		
+		enable_service_and_exit
+		;;
+	"tracking_lr") # fpv etc.
+		delete_config_file
+		voxl-open-vins-server --config 3
+
+		enable_service_and_exit
+		;;
 	*)
 		echo "invalid option"
 		print_usage
