@@ -1559,7 +1559,7 @@ void make_default_groups(
             json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
 
             json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
-                MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+            			MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
             cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
             cJSON* tracking_F = cJSON_CreateObject();
             cJSON* tracking_D = cJSON_CreateObject();
@@ -1591,8 +1591,15 @@ void make_default_groups(
         // default group info
         cJSON* tracking_FD_vins = cJSON_CreateObject();
         json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
-        json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
+        
+
+        if (is_single_cam)
+            json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "trackingL_grey");
+        else
+        	json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+        			MODAL_PIPE_MAX_PATH_LEN-1, "tracking_grey");
+        
         cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
         cJSON* tracking_F = cJSON_CreateObject();
         cJSON* tracking_D = cJSON_CreateObject();
@@ -1632,8 +1639,13 @@ void make_default_groups(
         cJSON* tracking_FD_vins = cJSON_CreateObject();
         json_fetch_bool_with_default(tracking_FD_vins, "enable", &int_holder, 1);
 
-        json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
-            MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+        if (is_single_cam)
+            json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+                MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
+        else
+        	json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+        			MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
+        	
         cJSON* tracking_FD_cams = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
         cJSON* tracking_F = cJSON_CreateObject();
         cJSON* tracking_D = cJSON_CreateObject();
