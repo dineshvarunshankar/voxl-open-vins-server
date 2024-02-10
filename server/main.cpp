@@ -670,61 +670,64 @@ static int _hard_reset_(bool fast_reset)
 
 	printf("[INFO] restarting managers\n");
 	
-	// stop it if it's running
-	if (is_initialized)
-	{
-		is_initialized = 0;
-		vio_manager.reset();  // delete VINS core instance!
-	}
-
-	// clear MPA pipe buffers
-//	for (int i = 0; i < cameras_used; i++)
-//	{
-//		pipe_client_flush(camera_pipe_channels[i]);
-//	}
-//	pipe_client_flush(IMU_CH);
-//	pipe_client_flush(BARO_CH);
 	camera_queue.clear();
 
-	// now start again
-	double oe_init_window_time =
-			vio_manager_options.init_options.init_window_time;
-	double oe_init_imu_thresh =
-			vio_manager_options.init_options.init_imu_thresh;
-	double oe_zupt_max_vel = vio_manager_options.zupt_max_velocity;
-	double oe_init_max_disparity= vio_manager_options.init_options.init_max_disparity;
-	double oe_zupt_max_disparity= vio_manager_options.zupt_max_disparity;
-	bool oe_init_dyn_use = vio_manager_options.init_options.init_dyn_use;
+	if (!en_force_init && is_armed && imu_moved)
+	{
+		vio_manager->zero_state();
+		reset_states();
+	}
+	else
+	{
+		// stop it if it's running
+		if (is_initialized)
+		{
+			is_initialized = 0;
+			vio_manager.reset();  // delete VINS core instance!
+		}
 
-	if (is_armed)
-	{
-		vio_manager_options.init_options.init_imu_thresh = 2.5;
+		camera_queue.clear();
+
+		// now start again
+		double oe_init_window_time =
+				vio_manager_options.init_options.init_window_time;
+		double oe_init_imu_thresh =
+				vio_manager_options.init_options.init_imu_thresh;
+		double oe_zupt_max_vel = vio_manager_options.zupt_max_velocity;
+		double oe_init_max_disparity= vio_manager_options.init_options.init_max_disparity;
+		double oe_zupt_max_disparity= vio_manager_options.zupt_max_disparity;
+		bool oe_init_dyn_use = vio_manager_options.init_options.init_dyn_use;
+
+		if (is_armed)
+		{
+			vio_manager_options.init_options.init_imu_thresh = 2.5;
+		}
+		
+		if (fast_reset)
+		{
+			printf("FAST RESET requested at Alt.\n");
+			vio_manager_options.init_options.init_window_time = 0.25;
+	//		vio_manager_options.init_options.init_max_disparity += 1;
+	//		vio_manager_options.zupt_max_disparity += 1;
+	//		vio_manager_options.zupt_max_velocity = 1.0;
+	//		vio_manager_options.init_options.init_dyn_use = true;
+		}
+		
+		reset_states();
+		
+		vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
+		if (vio_manager == NULL)
+		{
+			fprintf(stderr, "Error creating vio_manager object\n");
+			_quit(-1);
+		}
+		vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
+		vio_manager_options.init_options.init_window_time = oe_init_window_time;
+		vio_manager_options.init_options.init_imu_thresh = oe_init_imu_thresh;
+		vio_manager_options.init_options.init_max_disparity = oe_init_max_disparity;
+		vio_manager_options.zupt_max_disparity = oe_zupt_max_disparity;
+		vio_manager_options.init_options.init_dyn_use = oe_init_dyn_use;
 	}
-	
-	if (fast_reset)
-	{
-		printf("FAST RESET requested at Alt.\n");
-		vio_manager_options.init_options.init_window_time = 0.25;
-		vio_manager_options.init_options.init_max_disparity = 0;
-//		vio_manager_options.zupt_max_disparity += 1;
-//		vio_manager_options.zupt_max_velocity = 1.0;
-//		vio_manager_options.init_options.init_dyn_use = true;
-	}
-	
-	reset_states();
-	
-	vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
-	if (vio_manager == NULL)
-	{
-		fprintf(stderr, "Error creating vio_manager object\n");
-		_quit(-1);
-	}
-	vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
-	vio_manager_options.init_options.init_window_time = oe_init_window_time;
-	vio_manager_options.init_options.init_imu_thresh = oe_init_imu_thresh;
-	vio_manager_options.init_options.init_max_disparity = oe_init_max_disparity;
-	vio_manager_options.zupt_max_disparity = oe_zupt_max_disparity;
-	vio_manager_options.init_options.init_dyn_use = oe_init_dyn_use;
 
 	printf("[INFO] unlocking managers\n");
 
@@ -1896,6 +1899,22 @@ static void _publish_default(double pose_timestamp)
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
 
+	if (!vio_manager->initialized())
+	{
+		s.state = VIO_STATE_INITIALIZING;
+		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
+		// send to both pipes
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		return;
+	}
+	else
+	{
+		s.state = VIO_STATE_OK;
+		is_initialized = true;
+	}
+#ifdef EXPERIMENTAL // replaces above
 	// check if its initialized or not
 	if (!en_force_init)
 	{
@@ -1935,6 +1954,7 @@ static void _publish_default(double pose_timestamp)
 				return;
 		 } 
 	}
+#endif
 	
 	std::shared_ptr < ov_msckf::State > current_state =
 			vio_manager->get_state(); // contains a few extra pieces we need
@@ -2166,6 +2186,9 @@ static void _publish_default(double pose_timestamp)
 
 	s.quality = map_double(T_uncertainty, 0.004375, max_allowable_cep, 100, 0);
 
+	if (s.quality > 100)
+		s.quality = 100;
+	
 	if (s.quality < 1)
 		s.quality = 0;
 	
