@@ -161,7 +161,7 @@ case ${arg} in
 		;;
 	"tracking_lr") # fpv etc.
 		delete_config_file
-		voxl-open-vins-server --config 3
+		voxl-open-vins-server --config 1
 
 		enable_service_and_exit
 		;;
