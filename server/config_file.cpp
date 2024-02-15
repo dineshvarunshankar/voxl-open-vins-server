@@ -134,7 +134,7 @@ double track_frequency; //ROS only
 int publish_frequency; //VOXL only
 
 bool en_ov_stats;
-bool en_baro;
+bool use_baro;
 int takeoff_cam;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
@@ -237,6 +237,7 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("use mask:                         %s\n", use_mask ? "true" : "false");
     printf("use stereo:                       %s\n", use_stereo ? "true" : "false");
+    printf("use baro:                       %s\n", use_baro ? "true" : "false");
     printf("=================================================================\n");
     printf("========================FEATURE INITIALIZER======================\n");
     printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
@@ -257,7 +258,6 @@ int config_file_print(void) {
     printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("publish_frequency:                  %d\n", publish_frequency);
     printf("force init on takeoff:                  %s\n", en_force_init ? "true" : "false");
-    printf("use baro:                  %s\n", en_baro ? "true" : "false");
     printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
@@ -327,7 +327,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
-    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.04);
+    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.05);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
@@ -348,7 +348,8 @@ int config_file_read(void) {
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
-
+    
+    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);    
     json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 7);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
@@ -357,15 +358,15 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
-    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
 
-    json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 0);
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 10.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
+
+    json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
 
     
     if (takeoff_cam >= 0)

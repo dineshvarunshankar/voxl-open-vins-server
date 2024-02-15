@@ -318,6 +318,7 @@ std::atomic<bool> overlay_update_running;
 boost::posix_time::ptime pT1, pT2, cT1, cT2, zeroTimeOut;
 static double ref_zero_alt = -9999.0;
 static double baro_alt = 0.;
+static double d_baro = 0.;
 
 /////////////////////////
 /////////////////////////
@@ -938,10 +939,12 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		{
 			memcpy(curr_message->image_pixels, (uint8_t*) frame,
 					meta.size_bytes);
+
 			img_ringbuf->insert_data(curr_message);
 
 			cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
 					(uint8_t*) curr_message->image_pixels);
+
 			ov_core::CameraData message;
 			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
 			if (ch == 2)
@@ -949,17 +952,80 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			else
 				message.sensor_ids.push_back(0);
 
-			message.images.push_back(internal_img.clone());
-			message.masks.push_back(
-					cv::Mat::zeros(internal_img.rows, internal_img.cols,
-							CV_8UC1));
+			//TODO handling exception!
+			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+
+			static cv::Mat ignore_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(255));
+			
+			static cv::Mat use_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+			if (!vio_manager->initialized())
+			{
+				if (en_debug)
+					printf("Initializing\n");
+				
+				message.images.push_back(zero_image);
+			}
+			else
+			{
+				if (!imu_moved)
+				{
+					if (en_debug)
+						printf("Idling\n");
+
+					if (!has_idle_images)
+					{
+						if (en_debug)
+							printf("Capture new idle images\n");											
+						idle_image1 = internal_img.clone();
+						has_idle_images = true;
+					}
+					
+					message.images.push_back(idle_image1);
+				}
+				else
+				{
+					message.images.push_back(internal_img.clone());
+				}
+			}
+			
+			if (use_takeoff_cam)
+			{
+				if (takeoff_cam == 0)
+				{
+					if (en_debug)
+						printf("in takeoff %f\n", (double)alt_z);
+					message.masks.push_back(use_mask);
+					message.masks.push_back(ignore_mask);
+				}
+				else
+				{
+					message.masks.push_back(use_mask);
+				}
+
+				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+				{
+					printf(
+							"Detected Takeoff, going to multicamera VINS normal operations\n");
+					use_takeoff_cam = false;
+
+					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+					idler_limit = -1;
+				}
+			}
+			else
+			{
+				message.masks.push_back(use_mask);
+			}
+
 			std::lock_guard < std::mutex > lck(camera_queue_mtx);
 			camera_queue.push_back(message);
-
 			std::sort(camera_queue.begin(), camera_queue.end());
 
 			is_thermal = false;
-
+			
 		}
 		else if (meta.format == IMAGE_FORMAT_RAW16)
 		{
@@ -1177,21 +1243,85 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				}				
 				cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
 						(uint8_t*) curr_message->image_pixels + offset);
+				
 				ov_core::CameraData message;
 				message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
 				message.sensor_ids.push_back(0);
 
-				message.images.push_back(internal_img.clone());
-				message.masks.push_back(
-						cv::Mat::zeros(internal_img.rows, internal_img.cols,
-								CV_8UC1));
+				//TODO handling exception!
+				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+
+				static cv::Mat ignore_mask(internal_img.rows,
+						internal_img.cols, CV_8UC1, cv::Scalar(255));
+				
+				static cv::Mat use_mask(internal_img.rows,
+						internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+				if (!vio_manager->initialized())
+				{
+					if (en_debug)
+						printf("Initializing\n");
+					
+					message.images.push_back(zero_image);
+				}
+				else
+				{
+					if (!imu_moved)
+					{
+						if (en_debug)
+							printf("Idling\n");
+
+						if (!has_idle_images)
+						{
+							if (en_debug)
+								printf("Capture new idle images\n");											
+							idle_image1 = internal_img.clone();
+							has_idle_images = true;
+						}
+						
+						message.images.push_back(idle_image1);
+					}
+					else
+					{
+						message.images.push_back(internal_img.clone());
+					}
+				}
+				
+				if (use_takeoff_cam)
+				{
+					if (takeoff_cam == 0)
+					{
+						if (en_debug)
+							printf("in takeoff %f\n", (double)alt_z);
+						message.masks.push_back(use_mask);
+						message.masks.push_back(ignore_mask);
+					}
+					else
+					{
+						message.masks.push_back(use_mask);
+					}
+
+					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+					{
+						printf(
+								"Detected Takeoff, going to multicamera VINS normal operations\n");
+						use_takeoff_cam = false;
+
+						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+						idler_limit = -1;
+					}
+				}
+				else
+				{
+					message.masks.push_back(use_mask);
+				}
+
 				std::lock_guard < std::mutex > lck(camera_queue_mtx);
 				camera_queue.push_back(message);
-
 				std::sort(camera_queue.begin(), camera_queue.end());
 
 				is_thermal = false;
-
+				
 			}
 		}
 
@@ -2204,6 +2334,9 @@ static void _publish_default(double pose_timestamp)
 	if (en_auto_reset && !init_failure_detector_reset_flag
 			&& stable_state(s.state))
 	{
+	
+		if (fabs(baro_alt) < 1.0 && fabs(d_baro) < 1.0 && fabs(s.T_imu_wrt_vio[2]) > 5.0)
+			printf("ON GROUND, BUT NO LOCKED POSITION ON VIO--INVOKE ESTOP!\n");
 		
 		bool vio_manager_bad = current_state->error_flag == VIO_STATE_FAILED;
 		bool quality_bad = imu_moved && s.quality < 1;
@@ -2505,8 +2638,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 
 	mavlink_message_t *baro_msg = (mavlink_message_t*) data;
 
-	
- 	if (en_baro && (baro_msg->msgid == MAVLINK_MSG_ID_SCALED_PRESSURE))
+ 	if (use_baro && (baro_msg->msgid == MAVLINK_MSG_ID_SCALED_PRESSURE))
 	{
 		// basic sanity checks
 		if (bytes < 0)
@@ -2538,14 +2670,14 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 		double dist = (log(pressure / 101325) * 8.31432 * (temp + 273.15))
 				/ (-9.80665 * 0.0289644);
 //			printf("Pressure: %f temp: %d\n", pressure, temp);
-//			printf("Baro height: %f (%f)\n", dist, log(pressure/101325));
+//		printf("Baro height: %f (%f)\n", dist, log(pressure/101325));
 
 		if (!base_init)
 		{
 			zero_alt += dist;
 			vio_manager->add_constraint_baro(0, 0);
 
-			if (++a_ctn > 20)
+			if (++a_ctn > 10)
 			{
 				zero_alt /= a_ctn;
 
@@ -2559,19 +2691,23 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 			baro_alt = dist - zero_alt;
 			if (last_val != -99999)
 			{
-				baro_alt = (0.8 * baro_alt) + (0.2 * last_val);
+				baro_alt = (0.7 * baro_alt) + (0.3 * last_val);
 
 				//v = dx/dt
 //					double baro_vel_z = (baro_alt - last_val) / 0.1;   // 20Hz
 //					double time_total = (rT0_end - rT0_begin) * 1e-9;
 
-				double time_total = (rT0_end - rT0_begin) * 1e-3;
-				double baro_vel_z = (baro_alt - last_val) / time_total;  // 20Hz
+//				double time_total = (rT0_end - rT0_begin) * 1e-3;
+				double baro_vel_z = (baro_alt - last_val) / 0.1;  // 10Hz
 
 //					printf("Baro Vel (%f) m/s ---  Alt: %f m\n", baro_vel_z, baro_alt);
 //					printf("Got Baro data %f %f (%f) meters at %f (m/s)\n", time_total, baro_alt, zero_alt, baro_vel_z);
-				vio_manager->add_constraint_baro(baro_alt, baro_vel_z);
+
+				// TODO FIX, recently broken
+				// vio_manager->add_constraint_baro(baro_alt, baro_vel_z);
 			}
+			
+			d_baro = baro_alt - last_val;
 			last_val = baro_alt;
 		}
 
