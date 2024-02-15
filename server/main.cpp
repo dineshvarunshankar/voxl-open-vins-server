@@ -1489,8 +1489,9 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						double d_accel = accel_mag-base_accel;
 						d_accel  = (0.6 * d_accel) - (0.4 * prev_accel);
 						prev_accel = d_accel; 		
-						if (d_accel > 0.7)
+						if (d_accel > init_imu_thresh_accel)
 						{
+
 							if (ramp < 258)
 								printf("[INFO] IMU has moved, JERK detected\n");
 							

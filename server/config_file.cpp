@@ -84,6 +84,7 @@ double slam_delay;
 double gravity_mag;
 double init_window_time;
 double init_imu_thresh;
+double init_imu_thresh_accel;
 
 /// IMU NOISE OPTIONS ///
 double imu_sigma_w;
@@ -257,6 +258,7 @@ int config_file_print(void) {
     printf("knn_ratio:                  %6.5f\n", knn_ratio);
     printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("publish_frequency:                  %d\n", publish_frequency);
+    printf("imu takeoff accel thresh:                  %6.5f\n", init_imu_thresh_accel);
     printf("force init on takeoff:                  %s\n", en_force_init ? "true" : "false");
     printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
@@ -358,6 +360,7 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.7);
 
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);

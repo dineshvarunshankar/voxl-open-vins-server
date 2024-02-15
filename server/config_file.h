@@ -150,6 +150,8 @@ extern double slam_delay;
 extern double gravity_mag;
 extern double init_window_time;
 extern double init_imu_thresh;
+extern double init_imu_thresh_accel;
+
 extern bool init_dyn_use;
 
 /// IMU NOISE OPTIONS ///
