@@ -360,7 +360,7 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.7);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.6);
 
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);

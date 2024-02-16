@@ -709,7 +709,7 @@ static int _hard_reset_(bool fast_reset)
 			printf("FAST RESET requested at Alt.\n");
 			vio_manager_options.init_options.init_window_time = 0.25;
 	//		vio_manager_options.init_options.init_max_disparity += 1;
-	//		vio_manager_options.zupt_max_disparity += 1;
+			vio_manager_options.zupt_max_disparity += 0.6;
 	//		vio_manager_options.zupt_max_velocity = 1.0;
 	//		vio_manager_options.init_options.init_dyn_use = true;
 		}
@@ -934,7 +934,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	try
 	{
-
 		if (meta.format == IMAGE_FORMAT_RAW8)
 		{
 			memcpy(curr_message->image_pixels, (uint8_t*) frame,
@@ -954,12 +953,13 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 			//TODO handling exception!
 			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
-
 			static cv::Mat ignore_mask(internal_img.rows,
 					internal_img.cols, CV_8UC1, cv::Scalar(255));
-			
 			static cv::Mat use_mask(internal_img.rows,
 					internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+			if (zero_image.rows != internal_img.rows)
+				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_LINEAR);
 
 			if (!vio_manager->initialized())
 			{
@@ -993,22 +993,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			
 			if (use_takeoff_cam)
 			{
-				if (takeoff_cam == 0)
-				{
-					if (en_debug)
-						printf("in takeoff %f\n", (double)alt_z);
-					message.masks.push_back(use_mask);
-					message.masks.push_back(ignore_mask);
-				}
-				else
-				{
-					message.masks.push_back(use_mask);
-				}
-
+				message.masks.push_back(use_mask);
 				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 				{
 					printf(
-							"Detected Takeoff, going to multicamera VINS normal operations\n");
+							"Detected Takeoff, going to VINS normal operations\n");
 					use_takeoff_cam = false;
 
 					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -1139,6 +1128,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 #endif
 				//TODO handling exception!
 				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+				if (zero_image.rows != internal_img_1.rows)
+					resize(zero_image, zero_image, cv::Size(internal_img_1.cols, internal_img_1.rows), cv::INTER_LINEAR);
 
 				static cv::Mat ignore_mask1(internal_img_1.rows,
 						internal_img_1.cols, CV_8UC1, cv::Scalar(255));
@@ -1158,7 +1149,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					message.images.push_back(zero_image);
 					message.images.push_back(zero_image);
 				}
-				else
+				else 
 				{
 					if (!imu_moved)
 					{
@@ -1229,7 +1220,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				is_thermal = false;
 
 			}
-			else
+			else //MONO
 			{
 				memcpy(curr_message->image_pixels, (uint8_t*) frame,
 						meta.size_bytes);
@@ -1250,6 +1241,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 				//TODO handling exception!
 				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+				if (zero_image.rows != internal_img.rows)
+					resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_LINEAR);
 
 				static cv::Mat ignore_mask(internal_img.rows,
 						internal_img.cols, CV_8UC1, cv::Scalar(255));
@@ -1289,18 +1282,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				
 				if (use_takeoff_cam)
 				{
-					if (takeoff_cam == 0)
-					{
-						if (en_debug)
-							printf("in takeoff %f\n", (double)alt_z);
-						message.masks.push_back(use_mask);
-						message.masks.push_back(ignore_mask);
-					}
-					else
-					{
-						message.masks.push_back(use_mask);
-					}
-
+					message.masks.push_back(use_mask);
 					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
 						printf(
@@ -2665,8 +2647,8 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 
 		//static auto rT0_begin = _apps_time_monotonic_ns();
 		//auto rT0_end = _apps_time_monotonic_ns();
-		static auto rT0_begin = baro_time_ms;
-		auto rT0_end = baro_time_ms;
+//		static auto rT0_begin = baro_time_ms;
+//		auto rT0_end = baro_time_ms;
 
 		double dist = (log(pressure / 101325) * 8.31432 * (temp + 273.15))
 				/ (-9.80665 * 0.0289644);
@@ -2712,7 +2694,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 			last_val = baro_alt;
 		}
 
-		rT0_begin = rT0_end;
+//		rT0_begin = rT0_end;
 	}
 
  	if (baro_msg->msgid == MAVLINK_MSG_ID_HEARTBEAT)
