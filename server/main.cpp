@@ -106,15 +106,13 @@
 // a stall has occured with a failed state
 #define STALL_TIMEOUT_NS 300000000
 
-// auto restart if the system fails to init after 10 seconds
-#define INIT_FAILURE_TIMEOUT_NS 10000000000
+// auto restart if the system fails to init after 5 seconds
+#define INIT_FAILURE_TIMEOUT_NS 5000000000
 
-// force a timeout if I'm in init for a long time, like 45 seconds
-#define INIT_TOO_LONG_TIMEOUT_NS 60000000000
-
-// do not check for blowups until 1 second after VIO claims to have initialized
-#define BLOWUP_DETECT_TIMEOUT_NS 1000000000
-
+// force a timeout if I'm in init for a long time, like 5 seconds
+#define INIT_TOO_LONG_TIMEOUT_NS_ARMED 25000000000
+#define INIT_TOO_LONG_TIMEOUT_NS_IDLE 5000000000
+                                                                                
 // init after  image frames recevoied at start up
 #define INIT_TIMEOUT_FRAMES 30
 
@@ -165,6 +163,7 @@ static volatile bool is_armed = false;
 static volatile bool is_resetting = false;
 static volatile bool use_takeoff_cam  = true;
 static volatile bool has_idle_images  = false;
+// TODO TBD static volatile int takeoff_horizon = 0;
 
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
@@ -716,6 +715,8 @@ static int _hard_reset_(bool fast_reset)
 		
 		reset_states();
 		
+		usleep(50);
+		
 		vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
 		if (vio_manager == NULL)
 		{
@@ -731,6 +732,8 @@ static int _hard_reset_(bool fast_reset)
 	}
 
 	printf("[INFO] unlocking managers\n");
+
+	usleep(50);
 
 	imu_lock_mutex.unlock();
 	cam_lock_mutex.unlock();
@@ -899,28 +902,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
 
-	//	if (image_update_running)
-//	{
-//		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-//		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-////		printf("Cam block\n");
-//		return;
-//	}
-//	int64_t cam_timestamp_ns = meta.timestamp_ns;
-//	cam_timestamp_ns += meta.exposure_ns / 2;
-//
-//	// TODO perhaps just  the whole buffer instead of only old frames?
-//	// this keeps the fifo from overflowing
-//	if(cam_timestamp_ns < (_apps_time_monotonic_ns()-1000000000)){
-//		global_error_codes |= ERROR_CODE_DROPPED_CAM;
-//		for (int i=0; i<cameras_used; i++)
-//		{
-//			pipe_client_flush(camera_pipe_channels[i]);
-//		}
-//		fprintf(stderr, "ERROR detected frame older than 1s, flushing cam pipe\n");
-//		return;
-//	}
-
 	// try to lock to bigger cores if we can
 #ifdef BUILD_QRB5165
     _check_and_set_affinity();
@@ -959,7 +940,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					internal_img.cols, CV_8UC1, cv::Scalar(0));
 
 			if (zero_image.rows != internal_img.rows)
-				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_LINEAR);
+				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
 
 			if (!vio_manager->initialized())
 			{
@@ -1129,7 +1110,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				//TODO handling exception!
 				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
 				if (zero_image.rows != internal_img_1.rows)
-					resize(zero_image, zero_image, cv::Size(internal_img_1.cols, internal_img_1.rows), cv::INTER_LINEAR);
+					resize(zero_image, zero_image, cv::Size(internal_img_1.cols, internal_img_1.rows), cv::INTER_NEAREST);
 
 				static cv::Mat ignore_mask1(internal_img_1.rows,
 						internal_img_1.cols, CV_8UC1, cv::Scalar(255));
@@ -1170,6 +1151,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					}
 					else
 					{
+						// use real time raw imagery
 						message.images.push_back(internal_img_1.clone());
 						message.images.push_back(internal_img_2.clone());
 					}
@@ -1242,7 +1224,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				//TODO handling exception!
 				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
 				if (zero_image.rows != internal_img.rows)
-					resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_LINEAR);
+					resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
 
 				static cv::Mat ignore_mask(internal_img.rows,
 						internal_img.cols, CV_8UC1, cv::Scalar(255));
@@ -1954,10 +1936,17 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 		{
 			uint64_t time_in_init = current_time - last_was_running_time;
 			
-			if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS)
+			if (is_armed)
 			{
-				if (en_debug)
-					fprintf(stderr, "[ERROR] In init too long, timeout, triggering  RESET\n");
+				if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_ARMED)
+				{
+					fprintf(stderr, "[ERROR] IN FLIGHT and In init too long, timeout, retry  RESET\n");
+					init_failure_detector_reset_flag = 1;
+				}
+			}
+			else if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_IDLE)
+			{
+				fprintf(stderr, "[ERROR] In init too long, timeout, retry  RESET\n");
 				init_failure_detector_reset_flag = 1;
 			}
 		}
