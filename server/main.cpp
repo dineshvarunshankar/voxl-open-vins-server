@@ -159,6 +159,8 @@ static volatile double R_uncertainty = 0;
 static volatile float alt_z = 0.0;
 static volatile bool changed_motion_state = false;
 static volatile bool imu_moved = false;
+static volatile int throttle_state = 0;
+
 static volatile bool is_armed = false;
 static volatile bool is_resetting = false;
 static volatile bool use_takeoff_cam  = true;
@@ -1437,7 +1439,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 				
 				
-				if (dt <0.01)
+				if (!imu_moved && dt <0.01)
 				{
 					static int ramp = 0;
 					static double prev_accel = 0;
@@ -1453,7 +1455,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						double d_accel = accel_mag-base_accel;
 						d_accel  = (0.6 * d_accel) - (0.4 * prev_accel);
 						prev_accel = d_accel; 		
-						if (d_accel > init_imu_thresh_accel)
+						if (d_accel > init_imu_thresh_accel && (throttle_state > 1 || en_vio_always_on))
 						{
 
 							if (ramp < 258)
@@ -1938,15 +1940,15 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 			
 			if (is_armed)
 			{
-				if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_ARMED)
+				if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_ARMED && !init_failure_detector_reset_flag)
 				{
-					fprintf(stderr, "[ERROR] IN FLIGHT and In init too long, timeout, retry  RESET\n");
+					fprintf(stderr, "[ERROR] IN FLIGHT and In init too long, timeout, retry  RESET %ld\n", time_in_init);
 					init_failure_detector_reset_flag = 1;
 				}
 			}
-			else if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_IDLE)
+			else if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_IDLE && !init_failure_detector_reset_flag) 
 			{
-				fprintf(stderr, "[ERROR] In init too long, timeout, retry  RESET\n");
+				fprintf(stderr, "[ERROR] In init too long, timeout, retry  RESET %ld\n", time_in_init);
 				init_failure_detector_reset_flag = 1;
 			}
 		}
@@ -2690,6 +2692,11 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	{
  		// get ARMED state
  		 is_armed = mavlink_msg_heartbeat_get_system_status(baro_msg) == MAV_STATE_ACTIVE;
+ 	}
+
+ 	if (baro_msg->msgid == MAVLINK_MSG_ID_VFR_HUD)
+ 	{
+ 		throttle_state = mavlink_msg_vfr_hud_get_throttle(baro_msg);
  	}
 }
 

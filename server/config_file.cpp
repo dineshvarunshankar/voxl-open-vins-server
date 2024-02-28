@@ -140,6 +140,7 @@ int takeoff_cam;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
 bool en_force_init = false;
+bool en_vio_always_on = false;
 
 //std::string log_path;
 
@@ -264,7 +265,8 @@ int config_file_print(void) {
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
-    
+    printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
+
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -360,7 +362,7 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.6);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.3);
 
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
@@ -370,6 +372,7 @@ int config_file_read(void) {
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
+    json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 0);
 
     
     if (takeoff_cam >= 0)
