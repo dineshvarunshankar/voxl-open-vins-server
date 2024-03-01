@@ -81,6 +81,7 @@ bool en_gyro;
 bool en_descriptors;
 
 bool en_ext_feature_tracker;
+
 char ext_feat_trk_name[CM_CHAR_BUF_SIZE];
 
 
@@ -1771,11 +1772,17 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
 
             json_fetch_string_with_default(camera_item, "tracker_type", string_holder, 64, "cvp");
             if(!strcmp(string_holder, "cvp")) {
-                camera_item_input.tracker_type = TRACKER_CVP;
-            } else if(!strcmp(string_holder, "ocv")) {
-                camera_item_input.tracker_type = TRACKER_OCV;
+            	en_ext_feature_tracker = true;  // TODO allow any tracker to be mixed with cameras
             } else if(!strcmp(string_holder, "vins")) {
-            	
+            	en_ext_feature_tracker = false; // TODO allow any tracker to be mixed with cameras
+            } else {
+                fprintf(stderr, "ERROR: Invalid tracker type specified in config\n");
+                return -1;
+            }
+
+            printf("[INFO] External feature trackers being used? %s\n", en_ext_feature_tracker ? "true" : "false");
+            
+            {
             	// tracking group name
                 json_fetch_string_with_default(group_item, "pipe", string_holder, 
                     MODAL_PIPE_MAX_PATH_LEN-1, "tracking");
@@ -1811,12 +1818,7 @@ int cam_config_file_read(int is_color_cam, int is_single_cam)
                 
                 printf("camera count: %d\n",camera_count );
                 
-            } else if(!strcmp(string_holder, "both")) {
-                camera_item_input.tracker_type = TRACKER_BOTH;
-            } else {
-                fprintf(stderr, "ERROR: Invalid tracker type specified in config\n");
-                return -1;
-            }
+            }     
         }
        
        camera_mode curr_mode;

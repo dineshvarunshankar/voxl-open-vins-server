@@ -43,6 +43,8 @@
 #include <stdio.h>
 #include <voxl_common_config.h>
 //#include <Eigen/Dense>
+//#include <vft_interface.h>  // TODO need this in common SDK
+
 #include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 
 #include <iostream>
@@ -85,7 +87,7 @@
 
 // client channels and config
 #define IMU_CH 0
-#define FEATURE_CH 1
+#define FEATURE_CH 5
 #define FEAT_OVERLAY_CH 2
 #define BARO_CH 3
 #define CPU_CH 4
@@ -243,14 +245,13 @@ static uint32_t global_error_codes = 0;
 std::vector<camera_info> cam_info_vec;
 static char imu_name[CHAR_BUF_SIZE] = "imu";
 static char baro_name[CHAR_BUF_SIZE] = "mavlink_onboard";
+static char vft_name[CHAR_BUF_SIZE] = "tracking_feats";
 
 static size_t num_cams = 0;
 static int max_width = 0;
 static int max_height = 0;
 
-#define VFT_CMD_START   "start"
-#define VFT_CMD_RESTART "restart"
-#define VFT_CMD_PAUSE   "pause"
+std::vector<vft_feature> vft_features;
 
 // function prototypes
 static void _publish(double vio_dt);
@@ -274,6 +275,19 @@ static ext_vio_data_t d;  // complete "extended" vio MPA packet
 static vio_data_t s;      // simplified vio packet
 
 static ext_vio_data_t d_copy;  // complete "extended" vio MPA packet
+
+typedef struct vft_feature_set{
+    uint8_t cam_id;
+    float timestamp;
+	std::vector<ov_core::ExtFeature> features;  // max support of 99 features
+} __vft_feature_set;
+
+std::deque<vft_feature_set> feature_queue;
+std::deque<vft_feature_set> feature_queue2;
+std::deque<vft_feature_set> feature_queue3;
+std::deque<vft_feature_set> feature_queue4;
+std::mutex feature_queue_mtx;
+
 
 typedef struct _bucket
 {
@@ -847,8 +861,55 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 
 static void _new_feat_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
-{
-	//  TBD -- NOT USED currently
+{	
+	static std::map<size_t, vft_feature> last_points;
+
+	uint32_t magic_num = *(uint32_t*)data;
+	if (magic_num != VOXL_FT_MAGIC_NUMBER){
+		fprintf(stderr, "ERROR: Received packet with invalid magic number\n");
+		return;
+	}
+
+	vft_feature_packet* vft_pkt = (vft_feature_packet*)data;
+
+//	if  (en_debug)
+//		printf("VFT features received: %d (%d bytes of metadata) with VFT records in size of %d (%d)\n", 
+//			vft_pkt->num_feats[0], (int)sizeof(vft_feature_packet), bytes, (int)sizeof(vft_feature)*vft_pkt->num_feats[0]);
+			
+	double set_time = (double) vft_pkt->timestamp_ns * 1e-9;
+	
+	vft_features.clear();
+	if (vft_features.size() != (unsigned) vft_pkt->num_feats[0])
+		vft_features.resize(vft_pkt->num_feats[0]);
+
+	void* d_start = data + sizeof(vft_feature_packet);
+	vft_features.assign((vft_feature*)d_start, (vft_feature*)d_start+vft_pkt->num_feats[0]);
+
+	vft_feature_set feat_set;
+	feat_set.features.resize(vft_pkt->num_feats[0]);
+
+	bool use_feats = false;
+	for (size_t i = 0; i < vft_features.size(); i++)
+	{
+		if (vft_features[i].cam_id == 0)
+		{
+			feat_set.timestamp = set_time;							
+			feat_set.cam_id = vft_features[i].cam_id;
+			feat_set.features[i].cam_id = vft_features[i].cam_id;
+			feat_set.features[i].id = vft_features[i].id;
+			feat_set.features[i].u = vft_features[i].x;
+			feat_set.features[i].v = vft_features[i].y;  // TODO subtract from height?
+			memcpy(feat_set.features[i].descriptor, vft_features[i].descriptor, 32);
+			use_feats = true;
+		}
+	}
+
+	if (use_feats)
+	{
+		std::lock_guard < std::mutex > lck(feature_queue_mtx);
+		feature_queue.push_back(feat_set);
+	}
+	
 	return;
 }
 
@@ -1499,20 +1560,34 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(
 								0);
 
-				std::thread thread([&]
+				std::thread thread ([&]
 				{
 
 					std::lock_guard < std::mutex > lck(camera_queue_mtx);
 					std::lock_guard < std::mutex > pub_lg(publish_lock_mutex);
 
-				while (!camera_queue.empty() && camera_queue.at(0).timestamp< timestamp_imu_inC)
-				{
-					vio_manager->feed_measurement_camera(camera_queue.at(0));
-					_publish_default(last_imu_time);
-					camera_queue.pop_front();
-				}
+					if (en_ext_feature_tracker)
+					{
+						while (!feature_queue.empty() && feature_queue.at(0).timestamp< timestamp_imu_inC)
+						{
+							vft_feature_set fst = feature_queue.at(0);
+							vio_manager->feed_measurement_feature(fst.timestamp,fst.features);
+							_publish_default(last_imu_time);
+							feature_queue.pop_front();
+						}
+					}
+					else
+					{
+						while (!camera_queue.empty() && camera_queue.at(0).timestamp< timestamp_imu_inC)
+						{
+							vio_manager->feed_measurement_camera(camera_queue.at(0));
+							_publish_default(last_imu_time);
+							camera_queue.pop_front();
+						}						
+					}
 					thread_update_running = false;
-				});
+				}
+				);
 
 				thread.join();
 
@@ -1527,7 +1602,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 	{
 		fprintf(stderr, "IMU Process error!\n");
 	}
-	return;
+
 }
 
 static double map_double(double x, double in_min, double in_max, double out_min,
@@ -1751,7 +1826,8 @@ static void _post_snapshot()
 									cv::Point2f(
 											display_snapshot.d.features[i].pix_loc[0],
 											display_snapshot.d.features[i].pix_loc[1]),
-									cv::Scalar(255), cv::MARKER_SQUARE, 8, 2);
+									cv::Scalar(255), cv::MARKER_SQUARE, 20, 2);
+							
 						}
 						// tracked feature
 						else if (display_snapshot.d.features[i].point_quality
@@ -1797,6 +1873,23 @@ static void _post_snapshot()
 						}
 					}
 				}
+				
+//				for (size_t i = 0; i < vft_features.size(); i++)
+//				{
+//					int cam_idx = display_snapshot.d.features[i].cam_id;
+//					
+//					// OVERRIDE
+//					if (single_cam_in_use > 0)
+//						cam_idx = single_cam_in_use;
+//					
+//					cv::drawMarker(
+//							img_set[cam_idx],
+//							cv::Point2f(
+//									vft_features[i].x,
+//									vft_features[i].y),
+//							cv::Scalar(200), cv::MARKER_DIAMOND, 10, 2);
+//				}
+				
 			}
 
 			cv::resize(img_set[0], img_set[0],
@@ -2877,7 +2970,7 @@ static int create_server_pipes(void)
 static int read_external_configs_from_file(void)
 {
 	fprintf(stderr,
-			"=====> Using internal KLT Feature Tracking and File base camera configuration: %s\n",
+			"=====> imu to read from: %s\n",
 			imu_name);
 
 	int ret = json_fetch_string(cam_json, "imu", imu_name, 128);
@@ -2953,6 +3046,9 @@ static int read_external_configs_from_file(void)
 
 	return 0;
 }
+
+////////////////////////////////////////////////////////////////
+#ifdef DEPRECATED_SINCE_SDK_1_1_0
 
 static int read_external_configs(void)
 {
@@ -3051,6 +3147,44 @@ static int read_external_configs(void)
 
 	return ret;
 }
+#endif
+////////////////////////////////////////////////////////////////
+
+static bool connect_vft_service()
+{
+	// connect to our feature tracker
+	pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
+	pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler,
+			NULL);
+	if (pipe_client_open(FEATURE_CH, vft_name, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER,
+			1280 * 800 * 1) != 0)
+	{
+		printf(
+				"pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, .... failed\n");
+		_quit(-1);
+	}
+	
+	printf("VFT connected\n");
+	return true;
+}
+
+
+static bool connect_mavlink_service()
+{
+
+	// connect to baro
+	pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
+	pipe_client_set_simple_helper_cb(BARO_CH,
+			_new_baro_data_default_handler, NULL);
+	if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER,
+			IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+	{
+		fprintf(stderr, "failed to open MAVLINK and Baro\n");
+		_quit(-1);
+	}
+
+	return true;
+}
 
 static int connect_client_pipes(void)
 {
@@ -3119,18 +3253,11 @@ static int connect_client_pipes(void)
 
 	fprintf(stderr, "imu pipe name: %s\n", imu_name);
 
-		// connect to baro
-		pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
-		pipe_client_set_simple_helper_cb(BARO_CH,
-				_new_baro_data_default_handler, NULL);
-		flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
-		if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, flags,
-				IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
-		{
-			fprintf(stderr, "failed to open Baro\n");
-			return -1;
-		}
+	connect_mavlink_service();
 
+	if (en_ext_feature_tracker)
+		connect_vft_service();
+		
 	return 0;
 }
 

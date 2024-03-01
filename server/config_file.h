@@ -103,7 +103,6 @@
  * *NOTE*: set zupt_max_disparity to 0 for only imu based zupt, and\n\
  * zupt_chi2_multipler to 0 for only display based zupt\n\
  * \n\
- * use_klt: if we should use KLT tracking, or descriptor matcher\n\
  * num_pts: number of points we should extract and track in each image frame\n\
  * fast_threshold: fast extraction threshold\n\
  * grid_x: number of column-wise grids to do feature extraction in\n\

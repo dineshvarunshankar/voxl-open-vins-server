@@ -46,6 +46,21 @@
  * \n\
  */\n"
 
+// TODO need a lib to extract global camera data instead of pull from VFT
+typedef enum {
+    TRACKER_OCV  = 0,    // run the original OpenCV feature tracker
+    TRACKER_CVP  = 1,    // run the custom CVP feature tracker
+    TRACKER_BOTH = 2     // run both of the above
+} tracker_type_t;
+
+typedef struct tracker_input_t {
+    char input_pipe[CM_CHAR_BUF_SIZE];
+    char output_pipe[CM_CHAR_BUF_SIZE];
+    char overlay_pipe[CM_CHAR_BUF_SIZE];
+    int num_features;
+    tracker_type_t tracker_type;
+} tracker_input_t;
+
 extern std::vector<camera_info_set> cam_info_set_vec;
 extern char tmp_imu_name[CM_CHAR_BUF_SIZE];
 extern int width;
@@ -59,7 +74,8 @@ extern int min_pix_dist;
 extern int pyramid_levels;
 extern int window_size;
 extern int single_cam_in_use;
-
+extern bool en_ext_feature_tracker;
+;
 
 extern bool en_database;
 extern int database_size;
@@ -79,24 +95,5 @@ int cam_config_file_print(void);
 int cam_load_intrinsics_file();
 int cam_load_extrinsics_file();
 int get_config_as_json();
-
-
-// TODO need a lib to extract global camera data instead of pull from VFT
-typedef enum {
-    TRACKER_OCV  = 0,    // run the original OpenCV feature tracker
-    TRACKER_CVP  = 1,    // run the custom CVP feature tracker
-    TRACKER_BOTH = 2     // run both of the above
-} tracker_type_t;
-
-
-typedef struct tracker_input_t {
-    char input_pipe[CM_CHAR_BUF_SIZE];
-    char output_pipe[CM_CHAR_BUF_SIZE];
-    char overlay_pipe[CM_CHAR_BUF_SIZE];
-    int num_features;
-    tracker_type_t tracker_type;
-} tracker_input_t;
-
-
 
 #endif // CAM_CONFIG_FILE_H
