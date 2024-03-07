@@ -1,5 +1,9 @@
 # voxl-open-vins-server
 
+Installation Instructions are here: 
+[Getting Started with OpenVINS for VOXL](Installation Instructions)
+
+
 VIO solution for VOXL based on open_vins (https://github.com/rpng/open_vins)
 
 dependencies:
