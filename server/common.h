@@ -41,6 +41,8 @@
 #include <modal_pipe.h>
 
 
+/// magic number for vft_feature_packet
+#define VOXL_FT_MAGIC_NUMBER (0x54555249)
 /// magic number for calibration_packets
 #define VOXL_CALIB_MAGIC_NUMBER (0x43414C49)
 /// magic number for param_packets
@@ -141,10 +143,6 @@ typedef struct camera_info_set {
     std::vector<cv::Mat> cam_wrt_imu_rot;
     char extrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
     char extrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
-    char extrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
     size_t cam_id;
 } camera_info_set;
 
@@ -158,51 +156,33 @@ typedef struct camera_info {
     size_t cam_id;
 } camera_info;
 
-
-
 //////////////////////////////////////////////////////////////////////////////
 // EXTERNAL PACKETS                                                         //
 // All structs defined below are types we are sending out over a pipe       //
 //////////////////////////////////////////////////////////////////////////////
 
 
-
-/// magic number for vft_feature_packet
-#define VOXL_FT_MAGIC_NUMBER (0x54555249)
-
-
 /**
  * @struct vft_feature
  * voxl-feature-tracker feature, containing all necessary info to describe a feature point
  *
- * @field id             unique id for the feature point, should correspond to a match in the previous frame
- * @fielf cam_id         unique id for the camera the feature was seen from
- * @field x              sub-pixel refined x coord of our feature
- * @field y              sub-pixel refined y coord of our feature
- * @field x_prev         sub-pixel refined previous x coord of our feature
- * @field y_prev         sub-pixel refined previous y coord of our feature
- * @field descriptor     descriptor of the feature
- * @field age            how many frames the feature has been tracked for
- * @field score          custom metric to "score" the feature
- * @field pyr_lvl_mask   mask for which pyramid levels the feature is present on
- * @field cam_id         id of the camera
- * @field reserved_1     reserved
- * @field reserved_1     reserved
+ * *NOTE* will likely expand in the future
+ *
+ * @field id        unique id for the feature point, should correspond to a match in the previous frame
+ * @fielf cam_id    unique id for the camera the feature was seen from
+ * @field x         sub-pixel refined x coord of our feature
+ * @field y         sub-pixel refined y coord of our feature
  */
 typedef struct vft_feature {
-    int64_t id;
+    size_t id;
+    size_t cam_id;
     float x;
     float y;
-    float x_prev;
-    float y_prev;
+    float u;
+    float v;
     unsigned char descriptor[32] = {0};
-    int32_t age;
-    int8_t score;
-    int8_t pyr_lvl_mask;
-    int8_t cam_id;
-    int8_t reserved_1;
-    uint32_t reserved_2;
 } __attribute((packed))__vft_feature;
+
 
 /**
  * @struct vft_feature_packet
@@ -216,20 +196,11 @@ typedef struct vft_feature {
 typedef struct vft_feature_packet{
     uint32_t magic_number;
     int64_t timestamp_ns;
-    int32_t num_feats[4];
-    int32_t frame_ids[4];
+    uint32_t num_feats;
     uint8_t reset;
-    uint8_t n_cams;
-    uint8_t reserved_1;
-    uint8_t reserved_2;
 } __attribute((packed))__vft_feature_packet;
 
 
-
-
-
-////////////////////////////////////////////////////////////////
-#ifdef DEPRECATED_SINCE_SDK_1_1_0
 /**
  * @struct vft_calib_packet
  * packet to send back to open vins only (for now) containing required setup info about our system
@@ -268,8 +239,6 @@ typedef struct vft_param_packet {
     int num_features_to_track;
 } vft_param_packet;
 
-#endif
-////////////////////////////////////////////////////////////////
 
 /**
  * @brief timing helper function

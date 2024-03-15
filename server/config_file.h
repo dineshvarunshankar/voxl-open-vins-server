@@ -103,6 +103,7 @@
  * *NOTE*: set zupt_max_disparity to 0 for only imu based zupt, and\n\
  * zupt_chi2_multipler to 0 for only display based zupt\n\
  * \n\
+ * use_klt: if we should use KLT tracking, or descriptor matcher\n\
  * num_pts: number of points we should extract and track in each image frame\n\
  * fast_threshold: fast extraction threshold\n\
  * grid_x: number of column-wise grids to do feature extraction in\n\
@@ -149,8 +150,6 @@ extern double slam_delay;
 extern double gravity_mag;
 extern double init_window_time;
 extern double init_imu_thresh;
-extern double init_imu_thresh_accel;
-
 extern bool init_dyn_use;
 
 /// IMU NOISE OPTIONS ///
@@ -200,12 +199,12 @@ extern double knn_ratio;
 extern double track_frequency;
 extern int publish_frequency;
 extern bool en_ov_stats;
-extern bool use_baro;
+extern bool en_baro;
 extern int takeoff_cam;
 extern double takeoff_threshold;
 extern double max_allowable_cep;
+
 extern bool en_force_init;
-extern bool en_vio_always_on;
 
 // read only our own config file without printing the contents
 int config_file_read(void);
