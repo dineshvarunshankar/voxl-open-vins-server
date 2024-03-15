@@ -184,6 +184,7 @@ static volatile int is_imu_connected = 0;
 static volatile int is_cam_connected = 0;
 static volatile int is_init = 0;
 static volatile int init_pass_frames = 0;
+static volatile int gravity_axis = 2; // 0=x,1=y,2=z
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -200,6 +201,8 @@ static volatile int64_t time_of_first_okay = 0;
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
 static ov_msckf::VioManagerOptions vio_manager_options;
 std::mutex vio_manager_mutex;
+static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
+static Eigen::Matrix<double, 4, 1> default_level_horizon (0,0,0,1); 
 
 std::mutex cam_lock_mutex;
 std::mutex publish_lock_mutex;
@@ -1242,7 +1245,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 						message.masks.push_back(use_mask2);
 					}
 
-					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+					if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
 						printf(
 								"Detected Takeoff, going to multicamera VINS normal operations\n");
@@ -1328,7 +1331,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				if (use_takeoff_cam)
 				{
 					message.masks.push_back(use_mask);
-					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+					if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
 						printf(
 								"Detected Takeoff, going to multicamera VINS normal operations\n");
@@ -1490,15 +1493,12 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 				Eigen::Matrix<double, 3, 1> t_wm;
 				Eigen::Matrix<double, 3, 1> t_am;
 
-				t_wm(0, 0) = data_array[i].gyro_rad[0];
-				t_wm(1, 0) = data_array[i].gyro_rad[1];
 				t_wm(2, 0) = data_array[i].gyro_rad[2];
-
-				t_am(0, 0) = data_array[i].accl_ms2[0];
-				t_am(1, 0) = data_array[i].accl_ms2[1];
+				t_wm(1, 0) = data_array[i].gyro_rad[1];
+				t_wm(0, 0) = data_array[i].gyro_rad[0];
 				t_am(2, 0) = data_array[i].accl_ms2[2];
-
-				
+				t_am(1, 0) = data_array[i].accl_ms2[1];
+				t_am(0, 0) = data_array[i].accl_ms2[0];
 				
 				if (!imu_moved && dt <0.01)
 				{
@@ -1527,16 +1527,26 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 							vio_manager->force_moving();
 						}
 					}
+
+					if (is_initialized)
+					{
+					    for (int k = 0; k<3; ++k) 
+					    {
+					        if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[gravity_axis])) 
+					        {
+					        	gravity_axis = k;
+					        }
+					    }
+					}
+					else
+					{
+						gravity_axis = 2;
+					}
 				}
 								
 				// NED to FLU systems as per VINS.
-				static Eigen::Matrix3d correction_mat =
-						Eigen::Matrix3d::Identity();
-				correction_mat(1, 1) = -1;
-				correction_mat(2, 2) = -1;
-
-				t_wm = correction_mat * t_wm;
-				t_am = correction_mat * t_am;
+				t_wm = flu_ned_correction_mat * t_wm;
+				t_am = flu_ned_correction_mat * t_am;
 
 				// FLU set data for VINS
 				vio_manager_data.wm(0, 0) = t_wm(0, 0); // roll
@@ -1867,7 +1877,7 @@ static void _post_snapshot()
 										img_set[cam_idx],
 										cv::Point2f(trk_history_x[z],
 												trk_history_y[z]),
-										cv::Scalar(255), cv::MARKER_DIAMOND, 24,
+										cv::Scalar(255), cv::MARKER_DIAMOND, 20,
 										2);
 							}
 						}
@@ -1962,7 +1972,7 @@ static void _post_snapshot()
 					cv::Scalar(255, 255, 255), //font color
 					font_size, cv::LINE_AA);
 
-			if (init_failure_detector_reset_flag && !is_init)
+			if (init_failure_detector_reset_flag && !is_initialized)
 			{
 				reinit_disp_time++;
 				sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
@@ -2073,6 +2083,8 @@ static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 
 static void _publish_default(double pose_timestamp)
 {
+    static Eigen::Matrix3d rot_global_to_imu_frame = Eigen::Matrix3d::Identity();
+
 	int nPoints;
 	int n_good_points = 0;
 	int n_oos_points = 0;
@@ -2225,10 +2237,6 @@ static void _publish_default(double pose_timestamp)
 //	}
 //	printf("\n");
 
-	// correction matrix
-	static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
-	flu_ned_correction_mat(1, 1) = -1;
-	flu_ned_correction_mat(2, 2) = -1;
 	// get features
 	// this function will give us back as much info as available for features in various stages of the overall state
 	std::vector < output_feature > curr_pixel_locs;
@@ -2286,46 +2294,84 @@ static void _publish_default(double pose_timestamp)
 	d.last_cam_frame_id = last_frame_frame_id;
 	d.last_cam_timestamp_ns = last_frame_timestamp_ns;
 
+	// gather all the VINS output
 	Eigen::Matrix<double, 3, 1> imu_wrt_wio_holder = current_state->_imu->pos();
-	if (gravity_vector_direction == 1)
-	{
-		imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
-	}
+	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = current_state->_imu->vel();
+	// Not used anymore!
+	//	Eigen::Matrix3d rot_fej = current_state->_imu->Rot_fej();
+	Eigen::Matrix<double, 4, 1> ned_q = current_state->_imu->quat_fej();
 
-	alt_z = imu_wrt_wio_holder(2);
+    if (gravity_axis == 0 && gravity_vector_direction < 0)
+    {
+            rot_global_to_imu_frame = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())
+                            * Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY())
+                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitZ());
+    }
 
-	//    std::cout << "POS:\n" << imu_wrt_wio_holder << std::endl;
+	//
+	// Translation x y z
+	//
+	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
+	imu_wrt_wio_holder = rot_global_to_imu_frame * imu_wrt_wio_holder;
+	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
 
-	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) =
-			imu_wrt_wio_holder.cast<float>();
-	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder =
-			current_state->_imu->vel();
-	if (gravity_vector_direction == 1)
-	{
-		vel_imu_wrt_vio_holder = flu_ned_correction_mat
-				* vel_imu_wrt_vio_holder;
-	}
-	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<
-			float>();
+	//
+	// Translation velocity vx vy vz
+	//
+	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
+	vel_imu_wrt_vio_holder = rot_global_to_imu_frame * vel_imu_wrt_vio_holder;
+	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
-	Eigen::Matrix3d final_out = current_state->_imu->Rot_fej();
-	if (gravity_vector_direction == -1)
-	{
-		final_out = flu_ned_correction_mat * final_out;
-	}
-	else
-	{
-		final_out = flu_ned_correction_mat.transpose() * final_out
-				* flu_ned_correction_mat;
-	}
+
+	// Rotations
+
+	// TODO make more efficient
+	// TODO maybe use body extrinsics to set a flag if VOXL2 is mounted irregularly
+	// TODO which is what this is for
+	static Eigen::Matrix<double, 4, 1> rot_corrected(default_level_horizon);
+   if (!imu_moved && !is_armed)
+   {
+	   double angle_q = std::acos(default_level_horizon.dot(ned_q));
+	   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
+	   {
+//		   printf("[INFO] dynamic horizon alignment\n");
+		   rot_corrected = ov_core::Inv(ned_q);
+	   }
+	   else
+	   {
+//		   printf("[INFO] static IMU horizon alignment\n");
+		   rot_corrected = default_level_horizon;
+	   }
+   }   
+   
+   // dynamic zeroing horizon as needed
+   Eigen::Matrix<double, 4, 1> new_rot = ov_core::quat_multiply(ned_q, rot_corrected);
+    
+    // Convert ot NED
+    new_rot.y() *= -1;
+    new_rot.z() *= -1;
+    
+    Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
+    
+    if (en_debug)
+    {
+        Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
+    	printf("[INFO]  %f, %f, %f --- %f, %f, %f\n",
+                    rpy(0)/M_PI*180,
+                    rpy(1)/M_PI*180,
+                    rpy(2)/M_PI*180,
+                    imu_wrt_wio_holder(0),
+                    imu_wrt_wio_holder(1),
+                    imu_wrt_wio_holder(2));
+    }
+    
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
-			final_out.cast<float>();
+			final_out_ned.cast<float>();
 
 	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
 	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
-	if (gravity_vector_direction == -1)
-		cam_out = flu_ned_correction_mat * cam_out;
+
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
 			cam_out.cast<float>();
 
@@ -2365,11 +2411,24 @@ static void _publish_default(double pose_timestamp)
 	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
 	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
 
+	// STATE mgmt
+	alt_z = imu_wrt_wio_holder(gravity_axis);   // TODO FIX
+
 	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
 	// voxl flips it to actual
-	float grav_vec[3] =
-	{ 0, 0, (float) gravity_vector_direction };
-	memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	if (gravity_axis == 0)
+	{
+		// NOTE -1 to flip gravity from body coordindates!
+		float grav_vec[3] =
+			{ (float) -1 * gravity_vector_direction, 0, 0 };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
+	else if (gravity_axis == 2)
+	{
+		float grav_vec[3] =
+			{ 0, 0, (float) gravity_vector_direction };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
 
 	// limit the number of features to what fits in our pipe packet
 	d.n_total_features = (int) curr_pixel_locs.size();
@@ -3292,6 +3351,9 @@ int main(int argc, char *argv[])
 	if (en_config_only)
 		_quit(-1);
 
+	// coordindate system correction OVINS only needed
+	flu_ned_correction_mat(1, 1) = -1;
+	flu_ned_correction_mat(2, 2) = -1;
 	
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
