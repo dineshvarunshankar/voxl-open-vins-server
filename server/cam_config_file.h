@@ -66,6 +66,7 @@ extern char tmp_imu_name[CM_CHAR_BUF_SIZE];
 extern int width;
 extern int height;
 extern bool en_gyro;
+extern bool en_force_ned_2_flu;
 extern bool en_descriptors;
 extern int num_features_to_track;
 extern int grid_x;
@@ -75,7 +76,7 @@ extern int pyramid_levels;
 extern int window_size;
 extern int single_cam_in_use;
 extern bool en_ext_feature_tracker;
-;
+
 
 extern bool en_database;
 extern int database_size;

@@ -99,10 +99,14 @@ void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 
 
 	// TODO Fix anything needed for FLIPPED VOXL2 board, aka when IMU is upside down
 	
-	// Return the Euler angles.
-	  r = eulerAngles(0);
-	  p = M_PI - eulerAngles(1);
-	  y = eulerAngles(2) - M_PI;
+	// Return the Euler angles
+	if (en_force_ned_2_flu)
+		r = -eulerAngles(0);
+	else
+		r = eulerAngles(0);
+		
+	p = M_PI - eulerAngles(1);
+	y = eulerAngles(2) - M_PI;
 	  
 	printf("[INFO] Camera: %d -- converted extrinsics *in FLU* are: Roll: %f, Pitch %f, Yaw %f\n", 
 			camera_ctn++,
