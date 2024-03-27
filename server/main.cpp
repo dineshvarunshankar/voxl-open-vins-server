@@ -136,6 +136,7 @@ static int en_debug = 0;
 static int en_debug_pos = 0;
 static int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
+static int offline = 0;
 static bool bypass_reset_checks = false;
 static bool is_thermal = false;
 static bool pause_qmin = false;
@@ -386,6 +387,7 @@ run manually with the following debug options\n\
                               log is from a different setup.\n\
                               log path shoulf be absolute to the start of the dir\n\
                               i.e. /data/voxl-logger/log0001 (with or w/out last /)\n\
+-o, --offline               set is_armed to always be true and prevent updates\n\
 -p, --position              print position and rotation\n\
 -s, --debug-crash           print lots of numbers to track down location of crashes\n\
 -t, --timing-cam            enable timing prints for camera processing\n\
@@ -411,6 +413,7 @@ static bool _parse_opts(int argc, char *argv[])
 	{ "help", no_argument, 0, 'h' },
 	{ "timing-imu", no_argument, 0, 'i' },
 	{ "log_path", required_argument, 0, 'l' },
+	{ "offline", no_argument, 0, 'o' },
 	{ "position", no_argument, 0, 'p' },
 	{ "thresh", no_argument, 0, 'x' },
 	{ "timing-cam", no_argument, 0, 't' },
@@ -426,7 +429,7 @@ static bool _parse_opts(int argc, char *argv[])
 	while (1)
 	{
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "cdhil:ptvx:", long_options,
+		int c = getopt_long(argc, argv, "cdhil:potvx:", long_options,
 				&option_index);
 
 		// Detect the end of the options.
@@ -501,6 +504,11 @@ static bool _parse_opts(int argc, char *argv[])
 
 		case 'p':
 			en_debug_pos = 1;
+			break;
+
+		case 'o':
+            offline = 1;
+			is_armed = true;
 			break;
 
 		case 'x':
@@ -2840,7 +2848,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
 //		rT0_begin = rT0_end;
 	}
 
- 	if (baro_msg->msgid == MAVLINK_MSG_ID_HEARTBEAT)
+ 	if (baro_msg->msgid == MAVLINK_MSG_ID_HEARTBEAT && !offline)
  	{
  		// get ARMED state
  		 is_armed = mavlink_msg_heartbeat_get_system_status(baro_msg) == MAV_STATE_ACTIVE;

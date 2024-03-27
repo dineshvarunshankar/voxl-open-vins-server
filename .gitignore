@@ -11,3 +11,5 @@ pkg/data
 .vscode
 .gitconfig
 tmp_pkgs
+.clangd
+compile_commands.json
