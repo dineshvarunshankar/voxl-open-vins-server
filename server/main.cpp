@@ -833,6 +833,12 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 		init_failure_detector_reset_flag = 2;  // close and restart the object
 		return;
 	}
+	else if (strncmp(string, "forcearm", strlen("forcearm")) == 0)
+	{
+		is_armed = 1;
+		fprintf(stderr,"[ERROR] Client requested forced arm\n");
+		return;
+	}
 	else if (strncmp(string, "forceq", strlen("forceq")) == 0)
 	{
 		pause_qmin = true;
