@@ -3364,6 +3364,11 @@ int main(int argc, char *argv[])
 	else
 		gravity_vector_direction = -1;
 
+	if (en_ext_feature_tracker)
+	{
+		vio_manager_options.use_klt = false;		
+	}
+
 	vio_manager = std::unique_ptr < ov_msckf::VioManager
 			> (new ov_msckf::VioManager(vio_manager_options));
 
