@@ -39,6 +39,7 @@
 #include <functional>
 #include <Eigen/Core>
 #include <modal_pipe.h>
+#include <unistd.h>
 
 
 /// magic number for calibration_packets
@@ -169,6 +170,9 @@ typedef struct camera_info {
 
 /// magic number for vft_feature_packet
 #define VOXL_FT_MAGIC_NUMBER (0x54555249)
+#define MAX_CAMERA_GROUPS 4
+#define MAX_CAMERAS_PER_GROUP 4
+#define MAX_OUTPUT_FEATURES MAX_CAMERAS_PER_GROUP * 100
 
 
 /**
@@ -224,10 +228,50 @@ typedef struct vft_feature_packet{
     uint8_t reserved_2;
 } __attribute((packed))__vft_feature_packet;
 
+static int validate_vft_data(int ch, char* data, int bytes, vft_feature_packet** feature_packet, vft_feature** features) {
+    if(bytes != sizeof(vft_feature_packet)) {
+        printf("n_bytes != feature packet, skipping (%d vs %d/%d)\n", bytes, sizeof(vft_feature_packet), sizeof(vft_feature)*25);
+        return -1;
+    }
 
+    // check against feature packet metadata
+    *feature_packet = (vft_feature_packet*)data;
+    vft_feature_packet* deref_packet = *feature_packet;
 
+    if(deref_packet->magic_number != VOXL_FT_MAGIC_NUMBER) {
+        fprintf(stderr, "\nERROR: invalid metadata, magic number=%d, expected %d\n", deref_packet->magic_number, CAMERA_MAGIC_NUMBER);
+        fprintf(stderr, "most likely client fell behind and pipe overflowed\n");
+        pipe_client_flush(ch);
+        return -1;
+    }
 
+    int n_cams = deref_packet->n_cams;
+    int n_total_features = 0;
+    for(int i = 0; i < n_cams; i++) {
+        n_total_features += deref_packet->num_feats[i];
+    }
 
+    // tbd, may want to read into vec of vecs
+    // std::vector<vft_feature> flat_features(n_total_features);
+    int bytes_to_read = n_total_features * sizeof(vft_feature);
+
+    // now read the data, this may take multiple reads as each camera
+    // is published in a list
+    int total_read = 0;
+    int tries = 0;
+    int fd = pipe_client_get_fd(ch);
+    while(tries < 10 && total_read < bytes_to_read) {
+        int bytes_read = read(fd, ((char*)*features)+total_read, bytes_to_read-total_read);
+        if(0 >= bytes_read) {
+            printf("Error reading bytes, returning...\n");
+            return -1;
+        }
+        // keep track of bytes read and how many tries it's taken
+        total_read += bytes_read;
+        tries++;
+    }
+    return 0;
+}
 ////////////////////////////////////////////////////////////////
 #ifdef DEPRECATED_SINCE_SDK_1_1_0
 /**
