@@ -175,25 +175,7 @@ typedef struct camera_info {
 #define MAX_OUTPUT_FEATURES MAX_CAMERAS_PER_GROUP * 100
 
 
-/**
- * @struct vft_feature
- * voxl-feature-tracker feature, containing all necessary info to describe a feature point
- *
- * @field id             unique id for the feature point, should correspond to a match in the previous frame
- * @fielf cam_id         unique id for the camera the feature was seen from
- * @field x              sub-pixel refined x coord of our feature
- * @field y              sub-pixel refined y coord of our feature
- * @field x_prev         sub-pixel refined previous x coord of our feature
- * @field y_prev         sub-pixel refined previous y coord of our feature
- * @field descriptor     descriptor of the feature
- * @field age            how many frames the feature has been tracked for
- * @field score          custom metric to "score" the feature
- * @field pyr_lvl_mask   mask for which pyramid levels the feature is present on
- * @field cam_id         id of the camera
- * @field reserved_1     reserved
- * @field reserved_1     reserved
- */
-typedef struct vft_feature {
+struct __attribute__((packed)) vft_feature {
     int64_t id;
     float x;
     float y;
@@ -206,7 +188,8 @@ typedef struct vft_feature {
     int8_t cam_id;
     int8_t reserved_1;
     uint32_t reserved_2;
-} __attribute((packed))__vft_feature;
+};
+
 
 /**
  * @struct vft_feature_packet
@@ -216,8 +199,10 @@ typedef struct vft_feature {
  * @field magic_number      expected to be VOXL_FT_MAGIC_NUMBER
  * @field timestamp_ns      timestamp of the image extracted from
  * @field num_feats         number of vft_feature packets that will follow this message
+ *
+ * NOTE: 2/14/2024 removed typedef might cause issues
  */
-typedef struct vft_feature_packet{
+struct __attribute__((packed)) vft_feature_packet {
     uint32_t magic_number;
     int64_t timestamp_ns;
     int32_t num_feats[4];
@@ -226,11 +211,26 @@ typedef struct vft_feature_packet{
     uint8_t n_cams;
     uint8_t reserved_1;
     uint8_t reserved_2;
-} __attribute((packed))__vft_feature_packet;
+
+    vft_feature_packet() : n_cams(0) {}
+};
+
+
+
+
+static void create_vft_memory(vft_feature_packet** p_feature_packet, vft_feature** p_features) {
+    *p_feature_packet = (vft_feature_packet*)malloc(sizeof(vft_feature_packet));
+    *p_features = (vft_feature*)malloc(MAX_OUTPUT_FEATURES * sizeof(vft_feature));
+}
+
+static void destroy_vft_memory(vft_feature_packet** p_feature_packet, vft_feature** p_features) {
+    free(*p_feature_packet);
+    free(*p_features);
+}
 
 static int validate_vft_data(int ch, char* data, int bytes, vft_feature_packet** feature_packet, vft_feature** features) {
     if(bytes != sizeof(vft_feature_packet)) {
-        printf("n_bytes != feature packet, skipping (%d vs %d/%d)\n", bytes, sizeof(vft_feature_packet), sizeof(vft_feature)*25);
+        printf("n_bytes != feature packet, skipping...\n");
         return -1;
     }
 

@@ -95,7 +95,7 @@
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
 #define CAM_PIPE_SIZE (15 * 1280 * 800)         // give ourselves huge buffers
-#define PROCESS_NAME "open-vins-server"
+#define PROCESS_NAME "voxl-open-vins-server"
 #define FEATURE_NAME "tracked_feats"
 #define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
 #define FEATURE_OVERLAY_NAME "feat_overlay"
@@ -289,9 +289,13 @@ typedef struct vft_feature_set{
 std::deque<vft_feature_set> feature_queue;
 std::mutex feature_queue_mtx;
 vft_feature_set feat_set;
+vft_feature_set feat_set_zero;
 std::vector<vft_feature> features;
 static uint8_t slot_image_pixels[MAX_IMAGE_SIZE];   // image pixels
 
+// structs for inspection
+vft_feature_packet* feature_packet_from_vft;
+vft_feature* features_from_vft;
 
 typedef struct _bucket
 {
@@ -879,67 +883,109 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 	return;
 }
 
+
 static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
                        __attribute__((unused)) void* context) 
 {
-	usleep(100);
-	
-	uint32_t magic_num = *(uint32_t*)data;
-	if (magic_num != VOXL_FT_MAGIC_NUMBER)
-	{
-		fprintf(stderr, "ERROR: Received packet with invalid magic number size(%d)\n", bytes);
-		usleep(100);
+	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
+	    printf("ERROR parsing vft data from pipe...\n");
 		return;
 	}
 	
-	std::lock_guard < std::mutex > lck(feature_queue_mtx);
+	double set_time = (double) feature_packet_from_vft->timestamp_ns * 1e-9;
+			
+	static double last_set_time = set_time;
+	static int n_total_features = 0;
 
-	vft_feature_packet* vft_pkt = (vft_feature_packet*)data;
+	double dt_f = set_time-last_set_time;
+	last_set_time = set_time;
 
-    int n_cams = vft_pkt->n_cams;
-    int n_total_features = 0;
-    for (int i = 0; i < n_cams; i++) {
-        n_total_features += vft_pkt->num_feats[i];
-    }
-    
-	double set_time = (double) vft_pkt->timestamp_ns * 1e-9;
-    	
-	void* d_start = data + sizeof(vft_feature_packet);
-	features.assign((vft_feature*)d_start, (vft_feature*)d_start+n_total_features);
-	
-  	feat_set.features.resize(n_total_features);
-  
-	int cam_num = 0;
-	int ctn = 0;
-	bool has_feats = 0;
+	if (dt_f == 0)
+		return;
 
-	for (int i = 0; i < n_total_features; i++)
+	std::lock_guard < std::mutex > lck(feature_queue_mtx);	
+
+	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
 	{
-		if (ctn > vft_pkt->num_feats[cam_num]) 
+		n_total_features = 0;
+		
+		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 		{
-			ctn = 0;
-			cam_num++;
+			printf(
+					"Detected Takeoff, going to multicamera VINS normal operations\n");
+			use_takeoff_cam = false;
+		}			
+		
+		int n_cams = feature_packet_from_vft->n_cams;
+		for (int i = 0; i < n_cams; i++) {
+			if (use_takeoff_cam && i == takeoff_cam)
+			{
+				n_total_features = feature_packet_from_vft->num_feats[i];
+			}
+			else
+			{
+				n_total_features += feature_packet_from_vft->num_feats[i];
+			}
 		}
-
-		feat_set.timestamp = set_time;							
-		feat_set.cam_id = cam_num;
-		feat_set.features[i].cam_id = cam_num;
-		feat_set.features[i].id = features[i].id;
-		feat_set.features[i].u = features[i].x;
-		feat_set.features[i].v = features[i].y;  // TODO subtract from height?
-		memcpy(feat_set.features[i].descriptor, features[i].descriptor, 32);
-		
-		ctn++;
-		
-		has_feats = 1;
-//			printf("%d feat %d (%f %f)\n", feat_set[cam_num].cam_id, feat_set[cam_num].features[ctn].id, feat_set[cam_num].features[ctn].u, 
-//					feat_set[cam_num].features[ctn].v);
-	}        
-
-	feature_queue.push_back(feat_set);
+  
+		int cam_num = 0;
+		int ctn = 0;
+		bool has_feats = 0;
 	
-	is_cam_connected = true;
+	
+		feat_set.features.resize(n_total_features);
+		feat_set_zero.features.resize(n_total_features);
+	
+		for (int i = 0; i < n_total_features; i++)
+		{
+			if (use_takeoff_cam && cam_num != takeoff_cam)
+			{
+				continue;
+			}
 
+			if (ctn >= feature_packet_from_vft->num_feats[cam_num]) 
+			{
+				ctn = 0;
+				cam_num++;
+			}
+
+			feat_set.timestamp = set_time;							
+			feat_set.cam_id = cam_num;
+			feat_set.features[i].cam_id = cam_num;
+			feat_set.features[i].id = features_from_vft[i].id;
+			feat_set.features[i].u = features_from_vft[i].x;
+			feat_set.features[i].v = features_from_vft[i].y;  // TODO subtract from height?
+			memcpy(feat_set.features[i].descriptor, features_from_vft[i].descriptor, 32);
+			
+			feat_set_zero.timestamp = set_time;							
+			feat_set_zero.cam_id = cam_num;
+			feat_set_zero.features[i].cam_id = cam_num;
+			feat_set_zero.features[i].id = features_from_vft[i].id;
+			feat_set_zero.features[i].u = features_from_vft[i].x;
+			feat_set_zero.features[i].v = features_from_vft[i].y;  // TODO subtract from height?
+			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[i].descriptor, 32);
+			
+			ctn++;
+		}        
+		feature_queue.push_back(feat_set);
+	}
+	else
+	{
+		for (int i = 0; i < n_total_features; i++)
+		{
+			feat_set.timestamp = set_time;							
+			feat_set.cam_id = feat_set_zero.cam_id;
+			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
+			feat_set.features[i].id = feat_set_zero.features[i].id;
+			feat_set.features[i].u = feat_set_zero.features[i].u;
+			feat_set.features[i].v = feat_set_zero.features[i].v;  
+			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
+		}
+		feature_queue.push_back(feat_set);	
+	}
+
+
+	is_cam_connected = true;
 }
 
 // helper callback for cams we are using in the system
@@ -967,12 +1013,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			is_initialized = false;
 		}
 
-/* TODO -- post snapshot will take care of this?
  		memcpy(&d.v, &s, sizeof(vio_data_t));
 		// send to both pipes
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-*/
 		
 		// TODO replace with histogram analysis
 		if (resume_processing++ > 12)
@@ -998,6 +1042,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		}
 	}
 	
+	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
+	
 	// try to lock to bigger cores if we can
 #ifdef BUILD_QRB5165
     _check_and_set_affinity();
@@ -1009,9 +1055,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	curr_message->camid = ch;
 	curr_message->metadata = meta;
 	
-//	printf("_cam_helper_cb entrance %d %f\n",  ch, (double)_apps_time_monotonic_ns()* 1e-9);
-	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
-
 	try
 	{
 		if (meta.format == IMAGE_FORMAT_RAW8)
@@ -1028,7 +1071,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	
 				ov_core::CameraData message;
 				message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-	
+				message.sensor_ids.push_back(0);
+
 				//TODO handling exception!
 				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
 				static cv::Mat ignore_mask(internal_img.rows,
@@ -1471,15 +1515,12 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 	if (!is_cam_connected || !main_running)
 	{
-		is_initialized = false;
-		
-/*  TODO -- post snapshot will take care of this?
 		memcpy(&d.v, &s, sizeof(vio_data_t));
-
+		is_initialized = false;
 		// send to both pipes
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
-*/
+
 		return;
 	}
 
@@ -1528,7 +1569,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		last_perf_limit = perf_limit;
 
 		for (int i = 0; i < n_packets; i += perf_limit)
-		//		for (int i = 0; i < n_packets; i+=perf_limit)
 		{
 
 //			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
@@ -1812,7 +1852,6 @@ static void _post_snapshot()
 				font_size = 0.55;
 				if (!en_debug_pos)
 				{
-
 					cv::Mat img(curr_imgs->metadata.height,
 							curr_imgs->metadata.width, CV_8UC1,
 							curr_imgs->image_pixels);
@@ -1884,7 +1923,6 @@ static void _post_snapshot()
 			}
 
 			{
-								
 				for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
 				{
 					int cam_idx = display_snapshot.d.features[i].cam_id;
@@ -2466,6 +2504,8 @@ static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 	return NULL;
 }
 
+
+
 static void _publish_default(double pose_timestamp)
 {
     static Eigen::Matrix3d rot_global_to_imu_frame = Eigen::Matrix3d::Identity();
@@ -2495,10 +2535,9 @@ static void _publish_default(double pose_timestamp)
 
 	if (!vio_manager->initialized())
 	{
-		is_initialized = false;
 		s.state = VIO_STATE_INITIALIZING;
-
 		memcpy(&d.v, &s, sizeof(vio_data_t));
+		is_initialized = false;
 		// send to both pipes
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
@@ -2509,17 +2548,18 @@ static void _publish_default(double pose_timestamp)
 		s.state = VIO_STATE_OK;
 		is_initialized = true;
 	}
+	
+
 #ifdef EXPERIMENTAL // replaces above
 	// check if its initialized or not
 	if (!en_force_init)
 	{
 		if (!vio_manager->initialized())
 		{
-			is_initialized = false;
 			s.state = VIO_STATE_INITIALIZING;
-
-			// send to both pipes
 			memcpy(&d.v, &s, sizeof(vio_data_t));
+			is_initialized = false;
+			// send to both pipes
 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 			
@@ -2837,12 +2877,6 @@ static void _publish_default(double pose_timestamp)
 	
 	if (pause_qmin)
 		s.quality = 1;
-			
-	// fill in simplified struct inside the extended packet
-	memcpy(&d.v, &s, sizeof(vio_data_t));
-
-	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 	if (en_auto_reset && !init_failure_detector_reset_flag
 			&& stable_state(s.state))
@@ -2908,6 +2942,9 @@ static void _publish_default(double pose_timestamp)
 		}
 	}
 	
+	// fill in simplified struct inside the extended packet
+	memcpy(&d.v, &s, sizeof(vio_data_t));
+	
 	if ((pipe_server_get_num_clients(OVSTATUS_CH) > 0) && en_ov_stats)
 	{
 		ov_status.timestamp_ns = s.timestamp_ns;
@@ -2947,6 +2984,9 @@ static void _publish_default(double pose_timestamp)
 	display_snapshot.q = s.quality;
 	display_snapshot.cep = T_uncertainty;
 	display_snapshot.rerr = R_uncertainty;
+
+	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 	return;
 }
@@ -3111,8 +3151,19 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 static void _feat_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
+    destroy_vft_memory(&feature_packet_from_vft, &features_from_vft);
 	return;
 }
+
+
+//static void _feat_connect_cb(__attribute__((unused)) int ch,
+//                        __attribute__((unused)) void* context) {
+//    // get some space for the features
+//    create_vft_memory(&feature_packet_from_vft, &features_from_vft);
+//    return;
+//}
+
+// called whenever we disconnect from the server
 
 static void _imu_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
@@ -3313,7 +3364,7 @@ static int create_server_pipes(void)
 		OV_VIO_EXTENDED_LOCATION,// location
 		"ext_vio_data_t",// type
 		PROCESS_NAME,// server_name
-		CAM_PIPE_SIZE,// size_bytes
+		EXT_VIO_RECOMMENDED_READ_BUF_SIZE,// size_bytes
 		0			  // server_pid
 	};
 
@@ -3339,7 +3390,7 @@ static int create_server_pipes(void)
 		OV_VIO_SIMPLE_LOCATION,// location
 		"vio_data_t",// type
 		PROCESS_NAME,// server_name
-		VIO_RECOMMENDED_PIPE_SIZE*2,// size_bytes
+		VIO_RECOMMENDED_PIPE_SIZE,// size_bytes
 		0// server_pid
 	};
 
@@ -3352,6 +3403,7 @@ static int create_server_pipes(void)
 	// add in optional fields to the info JSON file
 	json = pipe_server_get_info_json_ptr(SIMPLE_CH);
 	cJSON_AddStringToObject(json, "imu", imu_name);
+	
 	pipe_server_update_info(SIMPLE_CH);
 	pipe_server_set_control_cb(SIMPLE_CH, _control_pipe_cb, NULL);
 	pipe_server_set_available_control_commands(SIMPLE_CH,
@@ -3390,7 +3442,7 @@ static int create_server_pipes(void)
 		OV_STATUS_LOCATION,// location
 		"ov_status_t",// type
 		PROCESS_NAME,// server_name
-		VIO_RECOMMENDED_PIPE_SIZE*2,// size_bytes
+		VIO_RECOMMENDED_PIPE_SIZE,// size_bytes
 		0// server_pid
 	};
 
@@ -3493,6 +3545,7 @@ static int read_external_configs(void)
 	pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
 	pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler,
 			NULL);
+	
 	if (pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME,
 			CLIENT_FLAG_EN_SIMPLE_HELPER, 1280 * 800 * 1) != 0)
 	{
@@ -3591,8 +3644,10 @@ static bool connect_vft_service()
 	pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
 	pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler,
 			NULL);
-	if (pipe_client_open(FEATURE_CH, vft_name, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER,
-			1280 * 800 * 1) != 0)
+	create_vft_memory(&feature_packet_from_vft, &features_from_vft);
+	
+	if (pipe_client_open(FEATURE_CH, vft_name, PROCESS_NAME, EN_PIPE_CLIENT_SIMPLE_HELPER /*CLIENT_FLAG_EN_SIMPLE_HELPER*/, 
+			sizeof(vft_feature_packet)) != 0)
 	{
 		printf(
 				"pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, .... failed\n");
@@ -3600,6 +3655,7 @@ static bool connect_vft_service()
 	}
 
 	printf("VFT connected\n");
+
 	return true;
 }
 
@@ -3748,10 +3804,7 @@ int main(int argc, char *argv[])
 	else
 		gravity_vector_direction = -1;
 
-	if (en_ext_feature_tracker)
-	{
-		vio_manager_options.use_klt = false;		
-	}
+	vio_manager_options.use_klt = !en_ext_feature_tracker;		
 
 	vio_manager = std::unique_ptr < ov_msckf::VioManager
 			> (new ov_msckf::VioManager(vio_manager_options));
