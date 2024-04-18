@@ -903,8 +903,9 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 	if (dt_f == 0)
 		return;
 
-	std::lock_guard < std::mutex > lck(feature_queue_mtx);	
-
+	if (is_resetting)
+		return;
+	
 	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
 	{
 		n_total_features = 0;
@@ -920,7 +921,9 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		for (int i = 0; i < n_cams; i++) {
 			if (use_takeoff_cam && i == takeoff_cam)
 			{
+				n_total_features = 0;
 				n_total_features = feature_packet_from_vft->num_feats[i];
+				break;
 			}
 			else
 			{
@@ -967,6 +970,8 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			
 			ctn++;
 		}        
+		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
+
 		feature_queue.push_back(feat_set);
 	}
 	else
@@ -981,6 +986,8 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			feat_set.features[i].v = feat_set_zero.features[i].v;  
 			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
 		}
+		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
+
 		feature_queue.push_back(feat_set);	
 	}
 
@@ -3278,6 +3285,11 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	{
  		throttle_state = mavlink_msg_vfr_hud_get_throttle(baro_msg);
  	}
+ 	
+ 	// TODO make more elegant
+ 	if (en_ext_feature_tracker  && !is_armed && !use_takeoff_cam)
+ 		use_takeoff_cam = true;
+ 		
 }
 
 static void _simple_cpu_cb(__attribute__((unused))int ch, char *raw_data,
