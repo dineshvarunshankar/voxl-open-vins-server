@@ -912,7 +912,8 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		
 		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 		{
-			printf(
+			if (!en_vio_always_on)
+				printf(
 					"Detected Takeoff, going to multicamera VINS normal operations\n");
 			use_takeoff_cam = false;
 		}			
@@ -2890,7 +2891,8 @@ static void _publish_default(double pose_timestamp)
 	{
 	
 		if (fabs(baro_alt) < 1.0 && fabs(d_baro) < 1.0 && fabs(s.T_imu_wrt_vio[2]) > 5.0)
-			printf("WARN: ON GROUND, BUT NO POSITION LOCK--INVOKE ESTOP! (This is just a warning)\n");
+			printf("INFO: MAYBE ON GROUND, POSITION LOCK? -- INVOKE ESTOP! (This is just a warning) %f %f %f\n",
+					baro_alt, 	d_baro, s.T_imu_wrt_vio[2]);
 		
 		bool vio_manager_bad = current_state->error_flag == VIO_STATE_FAILED;
 		bool quality_bad = imu_moved && s.quality < 1;
