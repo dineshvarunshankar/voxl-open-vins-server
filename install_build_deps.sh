@@ -21,7 +21,6 @@ voxl-eigen3
 voxl-open-vins
 voxl-ceres-solver
 voxl-mpa-tools
-voxl-feature-tracker
 librc-math
 libmodal-journal
 libvoxl-cutils
@@ -33,7 +32,6 @@ libmodal-pipe
 libmodal-cv
 libvoxl-cutils
 libmodal-journal
-voxl-feature-tracker
 voxl-opencv
 voxl-boost
 voxl-open-vins

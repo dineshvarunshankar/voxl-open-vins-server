@@ -136,6 +136,7 @@ static int en_debug = 0;
 static int en_debug_pos = 0;
 static int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
+static int set_tracker_mode = 0;
 static int offline = 0;
 static bool bypass_reset_checks = false;
 static bool is_thermal = false;
@@ -383,6 +384,7 @@ This is meant to run in the background as a systemd service, but can be\n\
 run manually with the following debug options\n\
 \n\
 -c, --config   [0|1|2|3]  only parse/create the config file and exit, don't run. Options are: \n\t\t\t0=dual mono, 1=dual color,\n\t\t\t2=single mono, 3=single color, 4=qvio replacement\n\
+-m, --mode   [0|1|2] type of feature tracking, 0=leave as-is (default), 1=change to internal tracker, 2=change to external tracker\n\
 -d, --debug                 enable debug prints\n\
 -h, --help                  print this help message\n\
 -i, --timing-imu            show timing prints for imu processing\n\
@@ -413,6 +415,7 @@ static bool _parse_opts(int argc, char *argv[])
 	static struct option long_options[] =
 	{
 	{ "config", required_argument, 0, 'c' },
+	{ "mode", required_argument, 0, 'm' },
 	{ "debug", no_argument, 0, 'd' },
 	{ "help", no_argument, 0, 'h' },
 	{ "timing-imu", no_argument, 0, 'i' },
@@ -433,7 +436,7 @@ static bool _parse_opts(int argc, char *argv[])
 	while (1)
 	{
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "cdhil:potvx:", long_options,
+		int c = getopt_long(argc, argv, "cdhil:mpotvx:", long_options,
 				&option_index);
 
 		// Detect the end of the options.
@@ -450,6 +453,11 @@ static bool _parse_opts(int argc, char *argv[])
 				break;
 			break;
 
+		case 'm':
+			set_tracker_mode = static_cast<uint8_t>(std::atoi(optarg));
+			break;
+			
+			
 		case 'c':
 			camera_setup = static_cast<uint8_t>(std::atoi(optarg));
 			en_config_only = 1;
@@ -3786,7 +3794,7 @@ int main(int argc, char *argv[])
 	config_file_print();
 
 	// read camera multicam setup and configs
-	if (cam_config_file_read(is_color, is_single) < 0)
+	if (cam_config_file_read(is_color, is_single, set_tracker_mode) < 0)
 	{
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
