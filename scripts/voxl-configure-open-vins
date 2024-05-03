@@ -46,6 +46,12 @@ print_usage () {
 	echo "voxl-configure-open-vins tracking_45 (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
 	echo "voxl-configure-open-vins tracking_fd (e.g. starling max/starling v2.5)"
 	echo "voxl-configure-open-vins tracking_lr (e.g. fpv)"
+	echo "voxl-configure-open-vins tracking_45_ext (e.g. legacy, starling/sentinel/seeker/px4 ed with VFT)" 
+	echo "voxl-configure-open-vins tracking_fd_ext (e.g. starling max/starling v2.5 with VFT)"
+	echo "voxl-configure-open-vins tracking_lr_ext (e.g. fpv with VFT)"
+	echo "voxl-configure-open-vins tracking_45_int (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
+	echo "voxl-configure-open-vins tracking_fd_int (e.g. starling max/starling v2.5)"
+	echo "voxl-configure-open-vins tracking_lr_int (e.g. fpv)"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -145,19 +151,55 @@ case ${arg} in
 		;;
 	"tracking_45") #starling v2
 		delete_config_file
-		voxl-open-vins-server --config 4
+		voxl-open-vins-server --config 4 --mode 1
 		
 		enable_service_and_exit
 		;;
 	"tracking_fd")
 		delete_config_file
-		voxl-open-vins-server --config 0
+		voxl-open-vins-server --config 0 --mode 1
 		
 		enable_service_and_exit
 		;;
 	"tracking_lr") # fpv etc.
 		delete_config_file
-		voxl-open-vins-server --config 1
+		voxl-open-vins-server --config 1 --mode 1
+
+		enable_service_and_exit
+		;;
+	"tracking_45_int") #starling v2
+		delete_config_file
+		voxl-open-vins-server --config 4 --mode 1
+		
+		enable_service_and_exit
+		;;
+	"tracking_fd_int")
+		delete_config_file
+		voxl-open-vins-server --config 0 --mode 1
+		
+		enable_service_and_exit
+		;;
+	"tracking_lr_int") # fpv etc.
+		delete_config_file
+		voxl-open-vins-server --config 1 --mode 1
+
+		enable_service_and_exit
+		;;
+	"tracking_45_ext") #starling v2
+		delete_config_file
+		voxl-open-vins-server --config 4 --mode 2
+		
+		enable_service_and_exit
+		;;
+	"tracking_fd_ext")
+		delete_config_file
+		voxl-open-vins-server --config 0 --mode 2
+		
+		enable_service_and_exit
+		;;
+	"tracking_lr_ext") # fpv etc.
+		delete_config_file
+		voxl-open-vins-server --config 1 --mode 2
 
 		enable_service_and_exit
 		;;
