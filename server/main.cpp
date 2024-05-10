@@ -1082,17 +1082,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 			if ((ctn_cams_ts[0] + ctn_cams_ts[1]) >= 2)  // todo add 3rd cam
 			{
-<<<<<<< HEAD
 				printf(" Ch1 vs Ch2 delta: %f (ms)\n", (cams_ts[1] - cams_ts[0])* 1e3);
 				ctn_cams_ts[0] = 0;
 				ctn_cams_ts[1] = 0;
 				cams_ts[0] = 0;
 				cams_ts[1] = 0;
-=======
-				ctn_cams_ts[0] = 0;
-				ctn_cams_ts[1] = 0;
-				printf(" Ch1 vs Ch2 delta: %f (ms)\n", (cams_ts[1] - cams_ts[0])* 1e3);
->>>>>>> f5addd2007c2acd2f1cbdb74aea2a5d37c502c83
 			}
 			else
 				printf("\n");
