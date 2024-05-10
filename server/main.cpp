@@ -1071,6 +1071,32 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	curr_message->camid = ch;
 	curr_message->metadata = meta;
 	
+	if (en_debug_timing_cam)
+	{		
+		if (cameras_used > 1)
+		{
+			static double cams_ts[2];
+			static int ctn_cams_ts[2];
+			
+			printf("Cam %d ts: %f", ch, curr_message->metadata.timestamp_ns * 1e-09);
+
+			if ((ctn_cams_ts[0] + ctn_cams_ts[1]) >= 2)  // todo add 3rd cam
+			{
+				printf(" Ch1 vs Ch2 delta: %f (ms)\n", (cams_ts[1] - cams_ts[0])* 1e3);
+				ctn_cams_ts[0] = 0;
+				ctn_cams_ts[1] = 0;
+				cams_ts[0] = 0;
+				cams_ts[1] = 0;
+			}
+			else
+				printf("\n");
+			
+			ctn_cams_ts[ch-1] = 1;
+			cams_ts[ch-1] = curr_message->metadata.timestamp_ns * 1e-09;
+		}
+
+	}
+	
 	try
 	{
 		if (meta.format == IMAGE_FORMAT_RAW8)
