@@ -169,6 +169,8 @@ static volatile bool is_armed = false;
 static volatile bool is_resetting = false;
 static volatile bool use_takeoff_cam  = true;
 static volatile bool has_idle_images  = false;
+static volatile bool ext_blind_take_off_force = false;
+
 // TODO TBD static volatile int takeoff_horizon = 0;
 
 // these are the last timestamps that have completely passed into mvvislam
@@ -1826,8 +1828,15 @@ static bool stable_features(int cur_feats)
 	bool is_bad = false;
 	// if quality is less than acceptable for more than 2 sec
 
+	int min_good_feat_thresh = 1;
+	
+	if (ext_blind_take_off_force)
+	{
+		min_good_feat_thresh = 12;
+	}
+	
 	// TODO use auto_reset_min_features!!!	
-	if (cur_feats > 1)
+	if (cur_feats > min_good_feat_thresh)
 		last_good_feat_ts = _apps_time_monotonic_ns();
 
 	double ts = (_apps_time_monotonic_ns() - last_good_feat_ts) * 1e-9;
@@ -1837,6 +1846,7 @@ static bool stable_features(int cur_feats)
 		printf("ERROR: features were 0 for a long time!\n");
 		is_bad = true;
 		wait_for_features = true;
+		ext_blind_take_off_force = false;
 	}
 
 	return is_bad;
@@ -3324,8 +3334,14 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	
  	// TODO make more elegant
  	if (en_ext_feature_tracker  && !is_armed && !use_takeoff_cam)
+ 	{
  		use_takeoff_cam = true;
- 		
+ 		ext_blind_take_off_force = true;
+ 	}	
+ 	else
+ 	{
+ 		ext_blind_take_off_force = false;
+ 	}
 }
 
 static void _simple_cpu_cb(__attribute__((unused))int ch, char *raw_data,
