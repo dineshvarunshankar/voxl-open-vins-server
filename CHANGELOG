@@ -1,3 +1,17 @@
+0.2.53
+    * fix to blind takeoff when using external feature tracker
+0.2.52
+    * delete standalone file so new one can be created in configure request
+0.2.51
+    * update debug fsync
+0.2.50
+    * added debug output for cam timing, monitor fsync
+0.2.49
+    * update voxl-configure-open-vins with EXT and INT tracking modes
+0.2.48
+    * add config options for auto switching between internal or external feature trackers
+0.2.19
+    * Added -o/--offline parameter
 0.2.18
     * many things
 0.2.6

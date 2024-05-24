@@ -84,6 +84,7 @@ double slam_delay;
 double gravity_mag;
 double init_window_time;
 double init_imu_thresh;
+double init_imu_thresh_accel;
 
 /// IMU NOISE OPTIONS ///
 double imu_sigma_w;
@@ -134,11 +135,13 @@ double track_frequency; //ROS only
 int publish_frequency; //VOXL only
 
 bool en_ov_stats;
-bool en_baro;
+bool use_baro;
 int takeoff_cam;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
 bool en_force_init = false;
+bool en_vio_always_on = false;
+bool en_force_ned_2_flu = false;
 
 //std::string log_path;
 
@@ -237,6 +240,7 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("use mask:                         %s\n", use_mask ? "true" : "false");
     printf("use stereo:                       %s\n", use_stereo ? "true" : "false");
+    printf("use baro:                       %s\n", use_baro ? "true" : "false");
     printf("=================================================================\n");
     printf("========================FEATURE INITIALIZER======================\n");
     printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
@@ -256,13 +260,15 @@ int config_file_print(void) {
     printf("knn_ratio:                  %6.5f\n", knn_ratio);
     printf("track_frequency:                  %6.5f\n", track_frequency);
     printf("publish_frequency:                  %d\n", publish_frequency);
+    printf("imu takeoff accel thresh:                  %6.5f\n", init_imu_thresh_accel);
     printf("force init on takeoff:                  %s\n", en_force_init ? "true" : "false");
-    printf("use baro:                  %s\n", en_baro ? "true" : "false");
     printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
-    
+    printf("force FLU to NED transform:                  %s\n", en_force_ned_2_flu ? "true" : "false");
+    printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
+
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -282,7 +288,7 @@ int config_file_read(void) {
     memset(string_holder, '\0', CHAR_BUF_SIZE);
     // auto reset features
 	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
-	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		14.0f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		10.0f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.01f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
@@ -298,9 +304,9 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 30);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 15);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 15);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 20);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 20);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
@@ -327,10 +333,10 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
-    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.04);
+    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.05);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 2);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
     json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
@@ -348,7 +354,8 @@ int config_file_read(void) {
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
-
+    
+    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);    
     json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 7);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
@@ -357,15 +364,18 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
-    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.3);
 
-    json_fetch_bool_with_default(parent, "user_baro", (int *)&en_baro, 0);
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
-    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 0.1524);
+    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 10.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
+	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
+
+    json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
+    json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 0);
 
     
     if (takeoff_cam >= 0)

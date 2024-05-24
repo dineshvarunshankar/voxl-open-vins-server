@@ -56,6 +56,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 typedef struct img_ringbuf_packet{
+	uint8_t camid;
     camera_image_metadata_t metadata;       // image metadata information
     uint8_t image_pixels[MAX_IMAGE_SIZE];   // image pixels
 } __attribute__((packed)) img_ringbuf_packet;

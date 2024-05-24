@@ -1,0 +1,12 @@
+_voxl-configure-open-vins(){
+
+    local OPTS=('disable help factory_enable enable tracking_45 tracking_fd tracking_lr')
+
+    COMPREPLY=()
+	if [ "$COMP_CWORD" -eq 1 ]; then
+		COMPREPLY=( $(compgen -W '${OPTS}' -- ${COMP_WORDS[COMP_CWORD]}) )
+		return 0
+	fi
+}
+
+complete -F _voxl-configure-open-vins voxl-configure-open-vins
