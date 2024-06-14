@@ -204,7 +204,7 @@ struct __attribute__((packed)) vft_feature {
  */
 struct __attribute__((packed)) vft_feature_packet {
     uint32_t magic_number;
-    int64_t timestamp_ns;
+    int64_t timestamp_ns[4];
     int32_t num_feats[4];
     int32_t frame_ids[4];
     uint8_t reset;
@@ -239,7 +239,7 @@ static int validate_vft_data(int ch, char* data, int bytes, vft_feature_packet**
     vft_feature_packet* deref_packet = *feature_packet;
 
     if(deref_packet->magic_number != VOXL_FT_MAGIC_NUMBER) {
-        fprintf(stderr, "\nERROR: invalid metadata, magic number=%d, expected %d\n", deref_packet->magic_number, CAMERA_MAGIC_NUMBER);
+        fprintf(stderr, "\nERROR: invalid metadata, magic number=%d, expected %d\n", deref_packet->magic_number, VOXL_FT_MAGIC_NUMBER);
         fprintf(stderr, "most likely client fell behind and pipe overflowed\n");
         pipe_client_flush(ch);
         return -1;

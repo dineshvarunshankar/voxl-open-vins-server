@@ -264,6 +264,7 @@ static uint8_t update_slots = 0;   // 8 cameras max
 static void _publish(double vio_dt);
 static void _publish_default(double pose_timestamp);
 static bool show_extra_points_on_overlay = true;
+static bool pause_cam_states[6];
 
 // FUNCTIONS PROTOTSYPES
 static int _hard_reset(bool is_locked);
@@ -868,7 +869,19 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 		fprintf(stderr,"[WARN] Playing VIO data (QMIN = 0)\n");
 		return;
 	}
-
+	else if (strncmp(string, "flip1", strlen("flip1")) == 0)
+	{
+		pause_cam_states[0] = !pause_cam_states[0];
+        printf("Client requested cam 0 stream to be %s\n", pause_cam_states[0] ? "paused" : "running");
+		return;
+	}
+	else if (strncmp(string, "flip2", strlen("flip2")) == 0)
+	{
+		pause_cam_states[1] = !pause_cam_states[1];
+        printf("Client requested cam 1 stream to be %s\n", pause_cam_states[1] ? "paused" : "running");
+		return;
+	}
+	
 	printf(
 			"WARNING: Server received unknown command through the control pipe!\n");
 	printf("got %d bytes. Command is: %s\n", bytes, string);
@@ -902,8 +915,9 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		return;
 	}
 	
-	double set_time = (double) feature_packet_from_vft->timestamp_ns * 1e-9;
+	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
 			
+	
 	static double last_set_time = set_time;
 	static int n_total_features = 0;
 
@@ -929,6 +943,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		}			
 		
 		int n_cams = feature_packet_from_vft->n_cams;
+				
 		for (int i = 0; i < n_cams; i++) {
 			if (use_takeoff_cam && i == takeoff_cam)
 			{
@@ -938,14 +953,15 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			}
 			else
 			{
-				n_total_features += feature_packet_from_vft->num_feats[i];
+				if (!pause_cam_states[1])   // FIX THIS!
+					n_total_features += feature_packet_from_vft->num_feats[i];
 			}
 		}
   
 		int cam_num = 0;
 		int ctn = 0;
 		bool has_feats = 0;
-	
+		
 	
 		feat_set.features.resize(n_total_features);
 		feat_set_zero.features.resize(n_total_features);
@@ -957,13 +973,15 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 				continue;
 			}
 
-			if (ctn >= feature_packet_from_vft->num_feats[cam_num]) 
+			if (ctn >= feature_packet_from_vft->num_feats[cam_num])  
 			{
 				ctn = 0;
 				cam_num++;
 			}
 
-			feat_set.timestamp = set_time;							
+			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
+			
+			feat_set.timestamp = cam_time;							
 			feat_set.cam_id = cam_num;
 			feat_set.features[i].cam_id = cam_num;
 			feat_set.features[i].id = features_from_vft[i].id;
@@ -971,7 +989,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			feat_set.features[i].v = features_from_vft[i].y;  // TODO subtract from height?
 			memcpy(feat_set.features[i].descriptor, features_from_vft[i].descriptor, 32);
 			
-			feat_set_zero.timestamp = set_time;							
+			feat_set_zero.timestamp = cam_time;							
 			feat_set_zero.cam_id = cam_num;
 			feat_set_zero.features[i].cam_id = cam_num;
 			feat_set_zero.features[i].id = features_from_vft[i].id;
@@ -981,15 +999,16 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			
 			ctn++;
 		}        
-		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
-
+		std::lock_guard < std::mutex > lck(feature_queue_mtx);			
 		feature_queue.push_back(feat_set);
 	}
 	else
 	{
 		for (int i = 0; i < n_total_features; i++)
 		{
-			feat_set.timestamp = set_time;							
+			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+
+			feat_set.timestamp = cam_time;							
 			feat_set.cam_id = feat_set_zero.cam_id;
 			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
 			feat_set.features[i].id = feat_set_zero.features[i].id;
@@ -999,7 +1018,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		}
 		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
 
-		feature_queue.push_back(feat_set);	
+		feature_queue.push_back(feat_set);
 	}
 
 
@@ -1814,7 +1833,7 @@ static bool stable_state(int the_state)
 static bool stable_features(int cur_feats)
 {
 	static bool wait_for_features = true;
-
+	
 	if (wait_for_features)
 	{
 		if (cur_feats > 3)
@@ -1833,7 +1852,7 @@ static bool stable_features(int cur_feats)
 	if (ext_blind_take_off_force)
 	{
 		min_good_feat_thresh = 12;
-	}
+	}	
 	
 	// TODO use auto_reset_min_features!!!	
 	if (cur_feats > min_good_feat_thresh)

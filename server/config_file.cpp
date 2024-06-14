@@ -304,7 +304,7 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,50);
     json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 20);
     json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 20);
 
@@ -350,7 +350,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "min_dist", &min_dist, 0.1);
     json_fetch_double_with_default(parent, "max_dist", &max_dist, 60);
     json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 40);
-    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 10000);
+    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 100000);
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);

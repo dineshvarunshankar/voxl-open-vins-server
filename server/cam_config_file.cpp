@@ -1584,7 +1584,7 @@ void make_default_groups(
             	json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
                 MODAL_PIPE_MAX_PATH_LEN-1, "vins");
             
-            json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+            json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 
             // add cameras to group_cams
             cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
@@ -1625,7 +1625,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_A, tracking_F);
 
 			cJSON* tracking_D = cJSON_CreateObject();
@@ -1636,7 +1636,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_B, tracking_D);
         
 			cJSON_AddItemToArray(groups_json, tracking_FD_vins);
@@ -1669,7 +1669,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 	
 			json_fetch_bool_with_default(tracking_D, "enable", &int_holder, !is_single_cam);
 			json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
@@ -1678,7 +1678,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 	
 			// add cameras to group_cams
 			cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
@@ -1718,7 +1718,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_front_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_A, tracking_F);
 
 			cJSON* tracking_D = cJSON_CreateObject();
@@ -1729,7 +1729,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_down_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
-			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_B, tracking_D);
         
 			cJSON_AddItemToArray(groups_json, tracking_FD_vins);
@@ -1762,7 +1762,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_front_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 	
 			json_fetch_bool_with_default(tracking_D, "enable", &int_holder, !is_single_cam);
 			json_fetch_string_with_default(tracking_D, "extrinsic", string_holder, 
@@ -1771,7 +1771,7 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_down_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
-			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 50);
+			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
 			cJSON_AddItemToArray(tracking_FD_cams, tracking_D);
         
@@ -1967,7 +1967,7 @@ int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_trac
     
     // These have been optimized  for OpenVINS on VOXL, do not need to change
     strcpy(tmp_imu_name, "imu_apps");
-    num_features_to_track = 20;
+    num_features_to_track = 30;
     grid_x = 5;
     grid_y = 5;
     min_pix_dist = 50;
