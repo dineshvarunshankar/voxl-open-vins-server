@@ -953,8 +953,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			}
 			else
 			{
-				if (!pause_cam_states[1])   // FIX THIS!
-					n_total_features += feature_packet_from_vft->num_feats[i];
+				n_total_features += feature_packet_from_vft->num_feats[i];
 			}
 		}
   
@@ -1000,7 +999,9 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			ctn++;
 		}        
 		std::lock_guard < std::mutex > lck(feature_queue_mtx);			
-		feature_queue.push_back(feat_set);
+		
+		if ((!pause_cam_states[0] && cam_num == 0) || (!pause_cam_states[1] && cam_num == 1))  
+			feature_queue.push_back(feat_set);
 	}
 	else
 	{
@@ -1677,7 +1678,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 					else
 					{
 						double d_accel = accel_mag-base_accel;
-						d_accel  = (0.6 * d_accel) - (0.4 * prev_accel);
+						d_accel  = (0.8 * d_accel) - (0.2 * prev_accel);
 						prev_accel = d_accel; 		
 						if (d_accel > init_imu_thresh_accel && (throttle_state > 1 || en_vio_always_on))
 						{
@@ -3351,8 +3352,8 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  		throttle_state = mavlink_msg_vfr_hud_get_throttle(baro_msg);
  	}
  	
- 	// TODO make more elegant
- 	if (en_ext_feature_tracker  && !is_armed && !use_takeoff_cam)
+ 	// TODO make more elegant, this is a bad indication using non-throttle  autonomous modes
+ 	if (en_ext_feature_tracker  && !is_armed && throttle_state == 0)
  	{
  		use_takeoff_cam = true;
  		ext_blind_take_off_force = true;

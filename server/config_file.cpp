@@ -333,7 +333,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
-    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.05);
+    json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.03);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
     json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
@@ -364,10 +364,10 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.3);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.1);
 
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
-    json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.25);
+    json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 10.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
