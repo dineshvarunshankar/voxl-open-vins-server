@@ -305,8 +305,8 @@ int config_file_read(void) {
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
     json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,50);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 20);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 20);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 25);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
@@ -327,7 +327,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.);
 
     json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 40.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 2.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.8);
 
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 1);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);

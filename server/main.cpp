@@ -917,7 +917,6 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 	
 	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
 			
-	
 	static double last_set_time = set_time;
 	static int n_total_features = 0;
 
@@ -929,6 +928,22 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 
 	if (is_resetting)
 		return;
+	
+	// testing logic
+	int test_offset = 0;
+	if (pause_cam_states[0] || pause_cam_states[1])
+	{
+		if (pause_cam_states[0])
+		{
+			test_offset = feature_packet_from_vft->num_feats[0];
+			feature_packet_from_vft->num_feats[0] = 0;
+		}
+		if (pause_cam_states[1])
+		{
+			feature_packet_from_vft->num_feats[1] = 0;
+		}
+	}
+
 	
 	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
 	{
@@ -961,10 +976,9 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		int ctn = 0;
 		bool has_feats = 0;
 		
-	
 		feat_set.features.resize(n_total_features);
 		feat_set_zero.features.resize(n_total_features);
-	
+		
 		for (int i = 0; i < n_total_features; i++)
 		{
 			if (use_takeoff_cam && cam_num != takeoff_cam)
@@ -979,33 +993,34 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			}
 
 			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
-			
+
+			int tmp_offset = test_offset + i;
 			feat_set.timestamp = cam_time;							
 			feat_set.cam_id = cam_num;
 			feat_set.features[i].cam_id = cam_num;
-			feat_set.features[i].id = features_from_vft[i].id;
-			feat_set.features[i].u = features_from_vft[i].x;
-			feat_set.features[i].v = features_from_vft[i].y;  // TODO subtract from height?
-			memcpy(feat_set.features[i].descriptor, features_from_vft[i].descriptor, 32);
+			feat_set.features[i].id = features_from_vft[tmp_offset].id;
+			feat_set.features[i].u = features_from_vft[tmp_offset].x;
+			feat_set.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
+			memcpy(feat_set.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
 			
 			feat_set_zero.timestamp = cam_time;							
 			feat_set_zero.cam_id = cam_num;
 			feat_set_zero.features[i].cam_id = cam_num;
-			feat_set_zero.features[i].id = features_from_vft[i].id;
-			feat_set_zero.features[i].u = features_from_vft[i].x;
-			feat_set_zero.features[i].v = features_from_vft[i].y;  // TODO subtract from height?
-			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[i].descriptor, 32);
+			feat_set_zero.features[i].id = features_from_vft[tmp_offset].id;
+			feat_set_zero.features[i].u = features_from_vft[tmp_offset].x;
+			feat_set_zero.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
+			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
 			
 			ctn++;
 		}        
+
 		std::lock_guard < std::mutex > lck(feature_queue_mtx);			
-		
-		if ((!pause_cam_states[0] && cam_num == 0) || (!pause_cam_states[1] && cam_num == 1))  
-			feature_queue.push_back(feat_set);
+
+		feature_queue.push_back(feat_set);		
 	}
 	else
 	{
-		for (int i = 0; i < n_total_features; i++)
+		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
 		{
 			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
 
@@ -1021,7 +1036,6 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 
 		feature_queue.push_back(feat_set);
 	}
-
 
 	is_cam_connected = true;
 }
@@ -1883,6 +1897,7 @@ static void _post_snapshot()
 	static float border_scale = 1;
 	static cv::Mat overlay_cp;
 	static char reinit_str[32];
+	static char cam_off_str[32];
 	static int reinit_time = 0;
 	static int reinit_disp_time = 0;
 
@@ -2173,6 +2188,27 @@ static void _post_snapshot()
 						cv::Scalar(255, 255, 255), //font color
 						1.5, cv::LINE_AA);
 			}
+			
+			if (pause_cam_states[0] || pause_cam_states[1])
+			{
+				strcpy(cam_off_str, "Cameras OFF:");
+				
+				if (pause_cam_states[0])
+					strcat(cam_off_str, "   1 ");
+				if (pause_cam_states[1])
+					strcat(cam_off_str, "  2 ");
+				
+				cv::putText(
+						overlay_cp, //target image
+						cam_off_str, //text
+						cv::Point((overlay_cp.cols * 0.4),
+								overlay_cp.rows * 0.94), //top-left position
+						cv::FONT_HERSHEY_COMPLEX, 0.3,
+						cv::Scalar(255, 255, 255), //font color
+						1.5, cv::LINE_AA);
+			}
+
+			
 
 			// draw out to pipe
 			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
@@ -2935,7 +2971,7 @@ static void _publish_default(double pose_timestamp)
 	{
 		d.n_total_features = VIO_MAX_REPORTED_FEATURES;
 	}
-
+	
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
