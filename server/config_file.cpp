@@ -311,7 +311,7 @@ int config_file_read(void) {
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
 
-    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.003);
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.0015);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
