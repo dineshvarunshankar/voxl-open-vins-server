@@ -1864,7 +1864,7 @@ static bool stable_features(int cur_feats)
 
 	int min_good_feat_thresh = 1;
 	
-	if (ext_blind_take_off_force)
+	if (ext_blind_take_off_force && !is_armed)
 	{
 		min_good_feat_thresh = 12;
 	}	
@@ -1877,7 +1877,7 @@ static bool stable_features(int cur_feats)
 
 	if (ts > auto_reset_min_feature_timeout_s)
 	{
-		printf("ERROR: features were 0 for a long time!\n");
+		printf("ERROR: features were 0 for a long time! cur: %d, min_req: %d (are you bench testing?) \n", cur_feats, min_good_feat_thresh);
 		is_bad = true;
 		wait_for_features = true;
 		ext_blind_take_off_force = false;

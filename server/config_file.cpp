@@ -350,7 +350,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "min_dist", &min_dist, 0.1);
     json_fetch_double_with_default(parent, "max_dist", &max_dist, 60);
     json_fetch_double_with_default(parent, "max_baseline", &max_baseline, 40);
-    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 100000);
+    json_fetch_double_with_default(parent, "max_cond_number", &max_cond_number, 600000);
 
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
