@@ -1,3 +1,15 @@
+0.2.59
+    * force autoreset to update zero state if sitting idle for long time
+0.2.58
+    * tuning adjustments
+0.2.57
+    * retune slam sensitivity
+0.2.56
+    * update flip1/2/3 stream control
+0.2.55
+    * tuning update for voxl-feature-tracker integration
+0.2.54
+    * support voxl-feature-tracker multi-non-sync cameras
 0.2.53
     * fix to blind takeoff when using external feature tracker
 0.2.52
