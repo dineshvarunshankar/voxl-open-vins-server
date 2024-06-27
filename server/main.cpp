@@ -1020,10 +1020,18 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 	}
 	else
 	{
+		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+
+		// if idle for a long time, update the zero state by forcing a reset
+		if (cam_time - feat_set_zero.timestamp > 30.0)
+		{
+			printf("Sitting around for a long time, resetting zero state for blind takeoff\n");
+			init_failure_detector_reset_flag = 1;
+		}
+		
 		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
 		{
-			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-
+			
 			feat_set.timestamp = cam_time;							
 			feat_set.cam_id = feat_set_zero.cam_id;
 			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
@@ -1874,7 +1882,7 @@ static bool stable_features(int cur_feats)
 		last_good_feat_ts = _apps_time_monotonic_ns();
 
 	double ts = (_apps_time_monotonic_ns() - last_good_feat_ts) * 1e-9;
-
+	
 	if (ts > auto_reset_min_feature_timeout_s)
 	{
 		printf("ERROR: features were 0 for a long time! cur: %d, min_req: %d (are you bench testing?) \n", cur_feats, min_good_feat_thresh);
