@@ -48,10 +48,12 @@ print_usage () {
 	echo "voxl-configure-open-vins tracking_lr (e.g. fpv)"
 	echo "voxl-configure-open-vins tracking_45_ext (e.g. legacy, starling/sentinel/seeker/px4 ed with VFT)" 
 	echo "voxl-configure-open-vins tracking_fd_ext (e.g. starling max/starling v2.5 with VFT)"
-	echo "voxl-configure-open-vins tracking_lr_ext (e.g. fpv with VFT)"
+	echo "voxl-configure-open-vins tracking_lr_ext (e.g. left-right custom with VFT)"
 	echo "voxl-configure-open-vins tracking_45_int (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
-	echo "voxl-configure-open-vins tracking_fd_int (e.g. starling max/starling v2.5)"
-	echo "voxl-configure-open-vins tracking_lr_int (e.g. fpv)"
+	echo "voxl-configure-open-vins tracking_fd_int (e.g. front-down custom)"
+	echo "voxl-configure-open-vins tracking_lr_int (e.g. left-right custom)"
+	echo "voxl-configure-open-vins tracking_d0008_int (e.g. D0008 vins tracker)"
+	echo "voxl-configure-open-vins tracking_d0008_ext (e.g. D0008 cvp tracker)"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -189,10 +191,21 @@ case ${arg} in
 		
 		enable_service_and_exit
 		;;
+	"tracking_d0008_int") # fpv etc.
+		delete_config_file
+		delete_cam_config_file
+		voxl-configure-cameras 12
+		systemctl disable voxl-feature-tracker
+		sed -i 's/stereo/tracking/g' /etc/modalai/voxl-camera-server.conf
+		voxl-open-vins-server --config 1 --mode 1
+
+		enable_service_and_exit
+		;;
 	"tracking_lr_int") # fpv etc.
 		delete_config_file
 		delete_cam_config_file
 		voxl-open-vins-server --config 1 --mode 1
+		systemctl disable voxl-feature-tracker
 
 		enable_service_and_exit
 		;;
@@ -208,6 +221,15 @@ case ${arg} in
 		delete_cam_config_file
 		voxl-open-vins-server --config 0 --mode 2
 		
+		enable_service_and_exit
+		;;
+	"tracking_d0008_ext") # fpv etc.
+		delete_config_file
+		delete_cam_config_file
+		voxl-configure-cameras 15
+		systemctl enable voxl-feature-tracker
+		voxl-open-vins-server --config 1 --mode 2
+
 		enable_service_and_exit
 		;;
 	"tracking_lr_ext") # fpv etc.

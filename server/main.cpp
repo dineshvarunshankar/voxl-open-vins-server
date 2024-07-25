@@ -712,6 +712,7 @@ static int _hard_reset_(bool fast_reset)
 	
 	// update my state
 	is_resetting = true;
+	s.quality  = -1;
 
 	printf("[INFO] restarting managers\n");
 	
@@ -860,7 +861,7 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
 	else if (strncmp(string, "forceq", strlen("forceq")) == 0)
 	{
 		pause_qmin = true;
-		fprintf(stderr,"[WARN] Pausing VIO data (QMIN = 0)\n");
+		fprintf(stderr,"[WARN] Pausing VIO data (QMIN =-1)\n");
 		return;
 	}
 	else if (strncmp(string, "normq", strlen("normq")) == 0)
@@ -908,6 +909,173 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 
 
 static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
+                       __attribute__((unused)) void* context)
+{
+	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
+	    printf("ERROR parsing vft data from pipe...\n");
+		return;
+	}
+
+	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+
+	static double last_set_time = set_time;
+	static int n_total_features = 0;
+
+	double dt_f = set_time-last_set_time;
+	last_set_time = set_time;
+
+	if (dt_f == 0)
+		return;
+
+	if (is_resetting)
+		return;
+
+	// testing logic
+	int test_offset = 0;
+	if (pause_cam_states[0] || pause_cam_states[1])
+	{
+		if (pause_cam_states[0])
+		{
+			test_offset = feature_packet_from_vft->num_feats[0];
+			feature_packet_from_vft->num_feats[0] = 0;
+		}
+		if (pause_cam_states[1])
+		{
+			feature_packet_from_vft->num_feats[1] = 0;
+		}
+	}
+
+
+	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
+	{
+		n_total_features = 0;
+
+		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+		{
+			if (!en_vio_always_on)
+				printf(
+					"Detected Takeoff, going to multicamera VINS normal operations\n");
+			use_takeoff_cam = false;
+		}
+
+		int n_cams = feature_packet_from_vft->n_cams;
+
+		for (int i = 0; i < n_cams; i++) {
+			if (use_takeoff_cam && i == takeoff_cam)
+			{
+				n_total_features = 0;
+				n_total_features = feature_packet_from_vft->num_feats[i];
+				break;
+			}
+			else
+			{
+				n_total_features += feature_packet_from_vft->num_feats[i];
+			}
+		}
+
+		int cam_num = 0;
+		int ctn = 0;
+		bool has_feats = 0;
+
+		feat_set.features.resize(n_total_features);
+		feat_set_zero.features.resize(n_total_features);
+
+		std::map<double, int> ts_map;
+
+		for (int i = 0; i < n_total_features; i++)
+		{
+			if (use_takeoff_cam && cam_num != takeoff_cam)
+			{
+				continue;
+			}
+
+			if (ctn >= feature_packet_from_vft->num_feats[cam_num])
+			{
+				ctn = 0;
+				cam_num++;
+			}
+
+			double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
+            		ts_map[ts_cam] = cam_num;
+
+			int tmp_offset = test_offset + i;
+//			feat_set.timestamp = cam_time;
+			feat_set.cam_id = cam_num;
+			feat_set.features[i].cam_id = cam_num;
+			feat_set.features[i].id = features_from_vft[tmp_offset].id;
+			feat_set.features[i].u = features_from_vft[tmp_offset].x;
+			feat_set.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
+			memcpy(feat_set.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
+
+//			feat_set_zero.timestamp = cam_time;
+			feat_set_zero.cam_id = cam_num;
+			feat_set_zero.features[i].cam_id = cam_num;
+			feat_set_zero.features[i].id = features_from_vft[tmp_offset].id;
+			feat_set_zero.features[i].u = features_from_vft[tmp_offset].x;
+			feat_set_zero.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
+			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
+
+			ctn++;
+		}
+
+		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+		if (cam_num < 1)
+		{
+			feat_set.timestamp = cam_time;
+			feat_set_zero.timestamp = cam_time;
+			std::lock_guard < std::mutex > lck(feature_queue_mtx);
+			feature_queue.push_back(feat_set);
+		}
+		else
+		{
+	        auto lastElement = ts_map.rbegin();
+//	        std::cout << "Last Key: " << lastElement->first << ", Last Value: " << lastElement->second << std::endl;
+
+			feat_set.timestamp = lastElement->first;
+			feat_set_zero.timestamp = lastElement->first;
+			std::lock_guard < std::mutex > lck(feature_queue_mtx);
+			feature_queue.push_back(feat_set);
+
+			printf("ts %f  \t", last_imu_time);
+			for(const auto& pair : ts_map) {
+		        std::cout << "Key: " << pair.first << "(" << pair.first-last_imu_time << ")" << ", Value: " << pair.second << "\t";
+//				feat_set.timestamp = pair.first;
+//				feat_set_zero.timestamp = pair.first;
+//				feature_queue.push_back(feat_set);
+		    }
+			std::cout << "\n^^^" << std::endl;
+		}
+	}
+	else
+	{
+		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+		// if idle for a long time, update the zero state by forcing a reset
+		if (cam_time - feat_set_zero.timestamp > 30.0)
+		{
+			printf("Sitting around for a long time, resetting zero state for blind takeoff\n");
+			init_failure_detector_reset_flag = 1;
+		}
+
+		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
+		{
+			feat_set.timestamp = cam_time;
+			feat_set.cam_id = feat_set_zero.cam_id;
+			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
+			feat_set.features[i].id = feat_set_zero.features[i].id;
+			feat_set.features[i].u = feat_set_zero.features[i].u;
+			feat_set.features[i].v = feat_set_zero.features[i].v;
+			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
+		}
+		std::lock_guard < std::mutex > lck(feature_queue_mtx);
+
+		feature_queue.push_back(feat_set);
+	}
+
+	is_cam_connected = true;
+}
+
+#ifdef PROD
+static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
                        __attribute__((unused)) void* context) 
 {
 	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
@@ -915,6 +1083,10 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		return;
 	}
 	
+
+	// reorganize
+
+
 	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
 			
 	static double last_set_time = set_time;
@@ -979,6 +1151,8 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		feat_set.features.resize(n_total_features);
 		feat_set_zero.features.resize(n_total_features);
 		
+		std::map<double, int> ts_map;
+
 		for (int i = 0; i < n_total_features; i++)
 		{
 			if (use_takeoff_cam && cam_num != takeoff_cam)
@@ -992,10 +1166,11 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 				cam_num++;
 			}
 
-			double cam_time =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
+			double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
+            ts_map[ts_cam] = cam_num;
 
 			int tmp_offset = test_offset + i;
-			feat_set.timestamp = cam_time;							
+//			feat_set.timestamp = cam_time;
 			feat_set.cam_id = cam_num;
 			feat_set.features[i].cam_id = cam_num;
 			feat_set.features[i].id = features_from_vft[tmp_offset].id;
@@ -1003,7 +1178,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			feat_set.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
 			memcpy(feat_set.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
 			
-			feat_set_zero.timestamp = cam_time;							
+//			feat_set_zero.timestamp = cam_time;
 			feat_set_zero.cam_id = cam_num;
 			feat_set_zero.features[i].cam_id = cam_num;
 			feat_set_zero.features[i].id = features_from_vft[tmp_offset].id;
@@ -1014,9 +1189,38 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			ctn++;
 		}        
 
-		std::lock_guard < std::mutex > lck(feature_queue_mtx);			
+		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
+		if (cam_num < 1)
+		{
+			feat_set.timestamp = cam_time;
+			feat_set_zero.timestamp = cam_time;
+			std::lock_guard < std::mutex > lck(feature_queue_mtx);
+			feature_queue.push_back(feat_set);
+		}
+		else
+		{
 
-		feature_queue.push_back(feat_set);		
+	        	auto lastElement = ts_map.rbegin();
+//	       		  std::cout << "Last Key: " << lastElement->first << ", Last Value: " << lastElement->second << std::endl;
+
+			feat_set.timestamp = lastElement->first;
+			feat_set_zero.timestamp = lastElement->first;
+			std::lock_guard < std::mutex > lck(feature_queue_mtx);
+			feature_queue.push_back(feat_set);
+
+			printf("ts %f  \t", last_imu_time);
+			for(const auto& pair : ts_map) {
+		        std::cout << "Key: " << pair.first << "(" << pair.first-last_imu_time << ")" << ", Value: " << pair.second << "\t";
+//				feat_set.timestamp = pair.first;
+//				feat_set_zero.timestamp = pair.first;
+//				feature_queue.push_back(feat_set);
+		    }
+
+			std::cout << "\n^^^" << std::endl;
+
+		}
+
+
 	}
 	else
 	{
@@ -1047,6 +1251,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 
 	is_cam_connected = true;
 }
+#endif
 
 // helper callback for cams we are using in the system
 static void _cam_helper_cb(__attribute__((unused)) int ch,
@@ -1758,10 +1963,9 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 				std::thread thread ([&]
 				{
-
-					std::lock_guard < std::mutex > lck(camera_queue_mtx);
 					std::lock_guard < std::mutex > feat_lck(feature_queue_mtx);
 					std::lock_guard < std::mutex > pub_lg(publish_lock_mutex);
+					std::lock_guard < std::mutex > lck(camera_queue_mtx);
 
 					if (en_ext_feature_tracker)
 					{
@@ -2651,6 +2855,7 @@ static void _publish_default(double pose_timestamp)
 
 	if (!vio_manager->initialized())
 	{
+		s.quality  = -1;
 		s.state = VIO_STATE_INITIALIZING;
 		memcpy(&d.v, &s, sizeof(vio_data_t));
 		is_initialized = false;
@@ -3404,7 +3609,8 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	}	
  	else
  	{
- 		ext_blind_take_off_force = false;
+ 		// force now...
+ 		ext_blind_take_off_force = true;
  	}
 }
 
