@@ -115,6 +115,9 @@
 #define INIT_TOO_LONG_TIMEOUT_NS_ARMED 25000000000
 #define INIT_TOO_LONG_TIMEOUT_NS_IDLE 5000000000
                                                                                 
+#define STABLE_TIME_REQ 3000000000
+
+
 // init after  image frames recevoied at start up
 #define INIT_TIMEOUT_FRAMES 30
 
@@ -170,6 +173,8 @@ static volatile bool is_resetting = false;
 static volatile bool use_takeoff_cam  = true;
 static volatile bool has_idle_images  = false;
 static volatile bool ext_blind_take_off_force = false;
+static volatile bool check_for_stable_vins = false;
+
 
 // TODO TBD static volatile int takeoff_horizon = 0;
 
@@ -182,6 +187,7 @@ std::mutex feat_ts_mutex;
 static volatile int64_t last_real_pose_timestamp_ns = 0;
 static volatile int64_t last_sent_timestamp_ns = 0;
 static volatile int64_t last_cep_timestamp_ns = 0;
+static double last_good_feat_ts = 0;
 
 // state of imu and camera connections
 static volatile int is_imu_connected = 0;
@@ -706,6 +712,9 @@ static int _hard_reset_(bool fast_reset)
 	
 	if (is_resetting)
 		return 0;
+
+	camera_queue.clear();
+
 	
 	// Lock all external data handlers not related to VINS core instance
 	imu_lock_mutex.lock();
@@ -719,7 +728,6 @@ static int _hard_reset_(bool fast_reset)
 
 	printf("[INFO] restarting managers\n");
 	
-	camera_queue.clear();
 
 	if (!en_force_init && is_armed && imu_moved)
 	{
@@ -734,8 +742,6 @@ static int _hard_reset_(bool fast_reset)
 			is_initialized = 0;
 			vio_manager.reset();  // delete VINS core instance!
 		}
-
-		camera_queue.clear();
 
 		// now start again
 		double oe_init_window_time =
@@ -989,8 +995,6 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 
 		std::map<double, int> ts_map;
 
-
-
 		// TODO currently in use logic, must be deprecated
 //		if (cam_num < 1)
 //		{
@@ -1096,12 +1100,10 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 			for (const auto& pair : ts_map)
 			{
 				int cam_num = pair.second;
-				if (takeoff_cam >= 0  && cam_num != takeoff_cam)
+				if  (use_takeoff_cam && takeoff_cam >= 0  && cam_num != takeoff_cam)
 				{
 					continue;
 				}
-
-				printf("Cam: %d (%d)\n", cam_num, takeoff_cam);
 
 				num_cams_used++;
 				avg_ts += feat_set_multi[cam_num].timestamp;
@@ -1584,7 +1586,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 
 //				if (((update_slots >> 7) & 1) && ((update_slots >> 6) & 1))
-				if ((cameras_used == 2 && update_slots == 160) || (cameras_used == 3 && update_slots == 224))
+				// cam 2 combos
+				bool two_cam = (update_slots == 192) || (update_slots == 160) ||  (update_slots == 96);
+
+				if ((cameras_used == 2 && two_cam) || (cameras_used == 3 && update_slots == 224))
 				{
 					curr_message->camid = ch;
 					curr_message->metadata = meta;
@@ -2206,18 +2211,18 @@ static bool stable_features(int cur_feats)
 	{
 		if (cur_feats > 3)
 		{
+			last_good_feat_ts = _apps_time_monotonic_ns();
 			wait_for_features = false;
 		}
 		return false;
 	}
 
-	static double last_good_feat_ts = _apps_time_monotonic_ns();
 	bool is_bad = false;
 	// if quality is less than acceptable for more than 2 sec
 
 	int min_good_feat_thresh = 1;
 	
-	if (ext_blind_take_off_force && !is_armed)
+	if (!offline && ext_blind_take_off_force && !is_armed)
 	{
 		min_good_feat_thresh = 12;
 	}	
@@ -2592,313 +2597,6 @@ static void _post_snapshot()
 
 }
 
-#ifdef XXX
-static void _post_snapshot()
-{
-	static int skip_cnt = 0;
-	static int target_id = -1;
-	static float font_size = 1.0;
-	static float border_scale = 1;
-	static cv::Mat overlay_cp;
-	static char reinit_str[32];
-	static int reinit_time = 0;
-	static int reinit_disp_time = 0;
-
-	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) // if someone has subscribed to the overlay, draw it
-	{
-		not_displaying = false;
-		{
-			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
-			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
-			if (ret < 0)
-			{
-				fprintf(stderr,
-						"FAILED TO FETCH IMG RINGBUF at time %ld %ld %ld %ld %ld %ld\n",
-						display_snapshot.timestamp,
-						img_ringbuf->get_timestamp_at_position(0),
-						img_ringbuf->get_timestamp_at_position(1),
-						img_ringbuf->get_timestamp_at_position(2),
-						img_ringbuf->get_timestamp_at_position(3),
-						img_ringbuf->get_timestamp_at_position(4));
-				return;
-			}
-			
-			std::vector < cv::Mat > img_set;
-
-			// now, construct some cv::Mats with our images (we know them to be greyscale)
-
-			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
-			{
-				font_size = 0.55;
-				if (!en_debug_pos)
-				{
-					cv::Mat img(curr_imgs->metadata.height,
-							curr_imgs->metadata.width, CV_8UC1,
-							curr_imgs->image_pixels);
-					cv::Mat img2(curr_imgs->metadata.height,
-							curr_imgs->metadata.width, CV_8UC1,
-							curr_imgs->image_pixels
-									+ (curr_imgs->metadata.width
-											* curr_imgs->metadata.height));
-					img_set.push_back(img);
-					img_set.push_back(img2);
-				}
-				else
-				{
-					cv::Mat img(
-							cv::Mat::zeros(curr_imgs->metadata.height,
-									curr_imgs->metadata.width, CV_8UC1));
-					cv::Mat img2(
-							cv::Mat::zeros(curr_imgs->metadata.height,
-									curr_imgs->metadata.width, CV_8UC1));
-					img_set.push_back(img);
-					img_set.push_back(img2);
-				}
-			}
-			else
-			{
-				font_size = 0.33;
-				border_scale = 2;
-
-				if (cameras_used == 1)
-				{
-					cv::Mat img(curr_imgs->metadata.height,
-							curr_imgs->metadata.width, CV_8UC1,
-							curr_imgs->image_pixels);
-					img_set.push_back(img);
-				}
-				else
-				{					
-					cv::Mat img(curr_imgs->metadata.height,
-							curr_imgs->metadata.width, CV_8UC1,
-							curr_imgs->image_pixels);
-					cv::Mat img2(curr_imgs->metadata.height,
-							curr_imgs->metadata.width, CV_8UC1,
-							curr_imgs->image_pixels
-									+ (curr_imgs->metadata.width
-											* curr_imgs->metadata.height));
-					img_set.push_back(img);
-					img_set.push_back(img2);
-				}
-			}
-
-//			feat_ts_mutex.unlock();
-
-			static int16_t trk_id = -1;
-			static std::vector<float> trk_history_x;
-			static std::vector<float> trk_history_y;
-
-			if (trk_history_x.size() > 100)
-			{
-				trk_history_x.clear();
-				trk_history_y.clear();
-			}
-
-			if (trk_id < 0 && display_snapshot.d.n_total_features > 0)
-			{
-				trk_id = display_snapshot.d.features[0].id;
-				if (en_debug)
-					printf("Monitoring id: %d\n", trk_id);
-			}
-
-			{
-				for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
-				{
-					int cam_idx = display_snapshot.d.features[i].cam_id;					
-					// OVERRIDE
-					if (single_cam_in_use > 0)
-						cam_idx = single_cam_in_use;
-					
-					if (!en_debug_pos)
-					{
-						if (display_snapshot.d.features[i].point_quality
-								== (int) OV_RE_HIGH)
-						{
-							cv::drawMarker(
-									img_set[cam_idx],
-									cv::Point2f(
-											display_snapshot.d.features[i].pix_loc[0],
-											display_snapshot.d.features[i].pix_loc[1]),
-									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
-						}
-						// slam landmark
-						else if (display_snapshot.d.features[i].point_quality
-								== (int) OV_HIGH)
-						{
-							cv::drawMarker(
-									img_set[cam_idx],
-									cv::Point2f(
-											display_snapshot.d.features[i].pix_loc[0],
-											display_snapshot.d.features[i].pix_loc[1]),
-									cv::Scalar(255), cv::MARKER_SQUARE, 20, 2);
-							
-						}
-						// tracked feature
-						else if (display_snapshot.d.features[i].point_quality
-								== (int) OV_MEDIUM)
-						{
-							cv::drawMarker(
-									img_set[cam_idx],
-									cv::Point2f(
-											display_snapshot.d.features[i].pix_loc[0],
-											display_snapshot.d.features[i].pix_loc[1]),
-									cv::Scalar(190), cv::MARKER_SQUARE, 8, 2);
-						}
-						else if (show_extra_points_on_overlay)
-						{
-							cv::drawMarker(
-									img_set[cam_idx],
-									cv::Point2f(
-											display_snapshot.d.features[i].pix_loc[0],
-											display_snapshot.d.features[i].pix_loc[1]),
-									cv::Scalar(100), cv::MARKER_SQUARE, 8, 2);
-						}
-					}
-					else
-					{
-						if (trk_id >= 0
-								&& display_snapshot.d.features[i].id
-										== (uint16_t) trk_id)
-						{
-							trk_history_x.push_back(
-									display_snapshot.d.features[i].pix_loc[0]);
-							trk_history_y.push_back(
-									display_snapshot.d.features[i].pix_loc[1]);
-
-							for (size_t z = 0; z < trk_history_x.size(); z++)
-							{
-								cv::drawMarker(
-										img_set[cam_idx],
-										cv::Point2f(trk_history_x[z],
-												trk_history_y[z]),
-										cv::Scalar(255), cv::MARKER_DIAMOND, 20,
-										2);
-							}
-						}
-					}
-				}
-				
-//				for (size_t i = 0; i < vft_features.size(); i++)
-//				{
-//					int cam_idx = display_snapshot.d.features[i].cam_id;
-//					
-//					// OVERRIDE
-//					if (single_cam_in_use > 0)
-//						cam_idx = single_cam_in_use;
-//					
-//					cv::drawMarker(
-//							img_set[cam_idx],
-//							cv::Point2f(
-//									vft_features[i].x,
-//									vft_features[i].y),
-//							cv::Scalar(200), cv::MARKER_DIAMOND, 10, 2);
-//				}
-				
-			}
-
-			cv::resize(img_set[0], img_set[0],
-					cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
-
-			if (img_set.size() == 1)
-			{
-				overlay_cp = img_set[0];
-			}
-			else
-			{
-				cv::resize(img_set[1], img_set[1],
-						cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
-				cv::hconcat(img_set[0], img_set[1], overlay_cp);
-			}
-
-			if (overlay_cp.cols <= OVERLAY_RES_W_X)
-			{
-				border_scale = 1;
-			}
-
-			cv::copyMakeBorder(overlay_cp, overlay_cp,
-			DRAW_BONUS_ROWS_TOP / border_scale,
-			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
-					cv::Scalar(0));
-
-			draw_meta = curr_imgs->metadata;
-			draw_meta.width = overlay_cp.cols;
-			draw_meta.height = overlay_cp.rows;
-			draw_meta.size_bytes = draw_meta.width * draw_meta.height;
-			draw_meta.format = IMAGE_FORMAT_RAW8;
-
-			char str[256];
-			sprintf(str, "XYZ: %6.2lf %6.2lf %6.2lf  CEP: %3.3f  Rerr: %3.2f",
-					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
-					(double) s.T_imu_wrt_vio[2], display_snapshot.cep,
-					display_snapshot.rerr * 180 / M_PI);
-			int baseline = 0;
-			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
-					font_size, font_size, &baseline);
-
-			cv::putText(
-					overlay_cp, //target image
-					str, //text
-					cv::Point((overlay_cp.cols - text_size.width) / 2,
-							text_size.height * 3 / 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size,
-					cv::Scalar(255, 255, 255), //font color
-					font_size, cv::LINE_AA);
-
-			char oos_pts_string[96];
-
-			if (show_extra_points_on_overlay)
-				sprintf(oos_pts_string, "#pts: %2d  (%2d)",
-						display_snapshot.used_pts,
-						display_snapshot.not_used_pts);
-			else
-				oos_pts_string[0] = 0;
-
-			sprintf(str, "Q: %3d %s  %s  ex(ms): %6.1f Gain: %5d", s.quality,
-					(s.state == VIO_STATE_OK ? "OK" : "INIT"), oos_pts_string,
-					draw_meta.exposure_ns / 1000000.0, draw_meta.gain);
-
-			cv::putText(
-					overlay_cp, //target image
-					str, //text
-					cv::Point((overlay_cp.cols - text_size.width) / 2,
-							overlay_cp.rows - text_size.height / 2 + 2), //top-left position
-					cv::FONT_HERSHEY_COMPLEX, font_size,
-					cv::Scalar(255, 255, 255), //font color
-					font_size, cv::LINE_AA);
-
-			if (init_failure_detector_reset_flag && !is_initialized)
-			{
-				reinit_disp_time++;
-				sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
-				cv::putText(
-						overlay_cp, //target image
-						reinit_str, //text
-						cv::Point((overlay_cp.cols * 0.1),
-								overlay_cp.rows * 0.5), //top-left position
-						cv::FONT_HERSHEY_COMPLEX, 1.0,
-						cv::Scalar(255, 255, 255), //font color
-						1.5, cv::LINE_AA);
-			}
-
-			// draw out to pipe
-			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
-					(char*) overlay_cp.data);
-			
-			
-			if (curr_imgs != NULL)
-			{
-				delete curr_imgs;
-			}
-			
-		}
-
-		not_displaying = true;
-
-	}
-
-}
-#endif
-
 // pose data is published from the same thread that does the camera processing
 // and pose estimation. That freezes, sometimes for over a second, during blowups
 // so this thread exists to keep data coming out during that situation, warning
@@ -2909,13 +2607,47 @@ static void _post_snapshot()
 static void* _health_thread_func(__attribute__((unused)) void *ctx)
 {
 	int64_t last_was_running_time = _apps_time_monotonic_ns();
+	int64_t last_stable_time = _apps_time_monotonic_ns();
 
 	
 	while (main_running)
 	{
 		// 66Hz
-		usleep(33333);  
+		usleep(33333);
 		int64_t current_time = _apps_time_monotonic_ns();
+
+
+		if (check_for_stable_vins)
+		{
+			uint64_t last_check  = current_time - last_stable_time;
+			if (vio_manager->initialized())
+			{
+				last_good_feat_ts = _apps_time_monotonic_ns();
+
+				double vel_norm = vio_manager->get_state()->_imu->vel().norm();
+				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
+
+				if (vel_norm < 2.0 && last_check > STABLE_TIME_REQ)
+				{
+//					if (en_debug)
+						fprintf(stderr, "[INFO] VINS stable, going live\n");
+
+					check_for_stable_vins = false;
+					last_was_running_time = current_time;
+					time_of_last_reset = _apps_time_monotonic_ns();
+				}
+				else if (vel_norm > 10.0 || pos_from_new_origin > 3.0)
+					init_failure_detector_reset_flag = 1;
+				else
+				{
+//					if (en_debug)
+						fprintf(stderr, "[INFO] waiting for VINS stable %f (t=%f)\n", vel_norm, last_check);
+				}
+				fprintf(stderr, "[INFO] VINS pos %f\n", pos_from_new_origin);
+
+			}
+		}
+
 
 		if (init_failure_detector_reset_flag)
 		{
@@ -2935,6 +2667,9 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				time_of_last_reset = _apps_time_monotonic_ns();
 
 				init_failure_detector_reset_flag = 0;
+
+				check_for_stable_vins = true;
+				last_stable_time = current_time;
 			}
 		}
 		
@@ -3357,7 +3092,12 @@ static void _publish_default(double pose_timestamp)
 	if (pause_qmin)
 		s.quality = 1;
 
-	if (en_auto_reset && !init_failure_detector_reset_flag
+	if (check_for_stable_vins)
+	{
+		s.quality = -1;
+	}
+
+	if (!check_for_stable_vins && en_auto_reset && !init_failure_detector_reset_flag
 			&& stable_state(s.state))
 	{
 	
@@ -3372,7 +3112,7 @@ static void _publish_default(double pose_timestamp)
 		bool too_fast = imu_vel.norm() > auto_reset_max_velocity;
 		bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
 		
-		if (	vio_manager_bad
+		if (vio_manager_bad
 				|| quality_bad
 				|| stable_quality_bad 
 				|| stable_features_bad
@@ -3382,31 +3122,41 @@ static void _publish_default(double pose_timestamp)
 			if (vio_manager_bad)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] State flag was set to FAIL.\n");
+				s.error_code |= ERROR_CODE_STALLED;
 			}
 			else if (quality_bad)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] Quality less than 1.\n");
+				s.error_code |= ERROR_CODE_CONSTRAINT;
 			}
 			else if (stable_quality_bad)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] Quality was not STABLE.\n");
+				s.error_code |= ERROR_CODE_NO_FEATURES;
 			}
 			else if (stable_features_bad)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] No Stable feature.\n");
+				s.error_code |= ERROR_CODE_NO_FEATURES;
 			}
 			else if (too_fast)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] Exceeded MAX IMU Velocity %f vs %f\n", imu_vel.norm(),
 						auto_reset_max_velocity);
+				s.error_code |= ERROR_CODE_VEL_INST_CERT;
+
 			}
 			else if (too_uncertain)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] Exceeded V_uncertainty. %f vs %f\n", V_uncertainty,
 						auto_reset_max_v_cov_instant);
+				s.error_code |= ERROR_CODE_VEL_INST_CERT;
 			}
 			else
+			{
 				fprintf(stderr,"[CRITICAL] UNKNOWN RESET TRIGGERED\n");
+				s.error_code |= ERROR_CODE_UNKNOWN;
+			}
 			
 			fprintf(stderr,
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f Uncert: %f State: %d(%d)\n",
@@ -3465,6 +3215,7 @@ static void _publish_default(double pose_timestamp)
 	display_snapshot.cep = T_uncertainty;
 	display_snapshot.rerr = R_uncertainty;
 
+	//publish
 	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
