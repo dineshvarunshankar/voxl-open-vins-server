@@ -993,6 +993,7 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 
 		feat_set_zero.features.resize(feature_packet_from_vft->num_feats[0]);
 		std::map<double, int> ts_map;
+
 		{
 			int last_feat_ctn = 0;
 
@@ -1327,7 +1328,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 {
 
 	static int idler_ctn = 0;
-
 
 	if (!en_ext_feature_tracker)
 		is_cam_connected = true;
@@ -2925,7 +2925,6 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 		int64_t current_time = _apps_time_monotonic_ns();
 
-
 		if (check_for_stable_vins)
 		{
 			uint64_t last_check  = current_time - last_stable_time;
@@ -2935,6 +2934,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				double vel_norm = vio_manager->get_state()->_imu->vel().norm();
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
+
 
 				if (vel_norm < 2.0 && last_check > STABLE_TIME_REQ)
 				{
