@@ -1,3 +1,10 @@
+0.2.62
+    * 3 cam VIO fixes
+    * switch to internal tracker as default
+0.2.61
+    * enable 3 & 4 cameras
+0.2.60
+    * enhance QMIN usage, CVP usage, switching between VIO subsystems
 0.2.59
     * force autoreset to update zero state if sitting idle for long time
 0.2.58
