@@ -1624,7 +1624,7 @@ void make_default_groups(
 			json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
-				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
 			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_A, tracking_F);
 
@@ -1635,7 +1635,7 @@ void make_default_groups(
 			json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingR_grey_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
-				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
 			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_B, tracking_D);
         
@@ -1717,7 +1717,7 @@ void make_default_groups(
 			json_fetch_string_with_default(tracking_F, "intrinsic", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_front_intrinsics.yml");
 			json_fetch_string_with_default(tracking_F, "tracker_type", string_holder, 
-				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
 			json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_A, tracking_F);
 
@@ -1728,7 +1728,7 @@ void make_default_groups(
 			json_fetch_string_with_default(tracking_D, "intrinsic", string_holder, 
 				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_down_intrinsics.yml");
 			json_fetch_string_with_default(tracking_D, "tracker_type", string_holder, 
-				MODAL_PIPE_MAX_PATH_LEN-1, "cvp");
+				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
 			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_B, tracking_D);
         

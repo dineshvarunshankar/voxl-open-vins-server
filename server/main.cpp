@@ -753,7 +753,7 @@ static int _hard_reset_(bool fast_reset)
 
 		if (is_armed)
 		{
-			vio_manager_options.init_options.init_imu_thresh = 2.5;
+			vio_manager_options.init_options.init_imu_thresh = 1.0;
 		}
 		
 		if (fast_reset)
@@ -1329,7 +1329,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 {
 
 	static int idler_ctn = 0;
-	
+
 
 	if (!en_ext_feature_tracker)
 		is_cam_connected = true;
@@ -1740,8 +1740,12 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			is_thermal = false;
 			
 		}
+
+
+#ifdef LEPTON
 		else if (meta.format == IMAGE_FORMAT_RAW16)
 		{
+
 			cv::Mat internal_img(meta.height, meta.width, CV_16UC1,
 					(uint8_t*) frame);
 
@@ -1808,7 +1812,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			is_thermal = true;
 
 			std::sort(camera_queue.begin(), camera_queue.end());
+
 		}
+#endif
+
 		else if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
 		{
 			if (*cm == STEREO)
@@ -2028,6 +2035,170 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				
 			}
 		}
+
+///////////////////////////////////////////////////////////////////////////////////
+	// SPECIAL MODE
+	// SPECIAL MODE  SEEK BOSON
+	// SPECIAL MODE  SEEK BOSON
+	// SPECIAL MODE
+        else if (meta.format == IMAGE_FORMAT_NV12)
+        {
+            cv::Mat internal_img(meta.height, meta.width, CV_8UC1, (uchar*)frame);
+
+			memcpy(curr_message->image_pixels, internal_img.data,
+									internal_img.total() * internal_img.elemSize());
+
+			img_ringbuf->insert_data(curr_message);
+
+			ov_core::CameraData message;
+			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+			message.sensor_ids.push_back(0);
+
+			//TODO handling exception!
+			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+			static cv::Mat ignore_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(255));
+			static cv::Mat use_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+			if (zero_image.rows != internal_img.rows)
+				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
+
+			if (!vio_manager->initialized())
+			{
+				if (en_debug)
+					printf("Initializing\n");
+
+				message.images.push_back(zero_image);
+			}
+			else
+			{
+				if (!imu_moved)
+				{
+					if (en_debug)
+						printf("Idling\n");
+
+					if (!has_idle_images)
+					{
+						if (en_debug)
+							printf("Capture new idle images\n");
+						idle_image1 = internal_img.clone();
+						has_idle_images = true;
+					}
+
+					message.images.push_back(idle_image1);
+				}
+				else
+				{
+					message.images.push_back(internal_img.clone());
+				}
+			}
+
+			if (use_takeoff_cam)
+			{
+				message.masks.push_back(use_mask);
+				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+				{
+					printf(
+							"Detected Takeoff, going to VINS normal operations\n");
+					use_takeoff_cam = false;
+
+					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+					idler_limit = -1;
+				}
+			}
+			else
+			{
+				message.masks.push_back(use_mask);
+			}
+
+			std::lock_guard < std::mutex > lck(camera_queue_mtx);
+			camera_queue.push_back(message);
+			std::sort(camera_queue.begin(), camera_queue.end());
+
+        }
+        else if (meta.format == IMAGE_FORMAT_RAW16)
+        {
+		    cv::Mat internal_img;
+		    cv::Mat raw16Image(meta.height, meta.width, CV_16UC1, (uint8_t*) frame);
+		    // Normalize and convert to RAW8 grayscale
+		    raw16Image.convertTo(internal_img, CV_8UC1, 1.0 / 256.0); // Scaling to fit into 8-bit
+
+			memcpy(curr_message->image_pixels, internal_img.data,
+									internal_img.total() * internal_img.elemSize());
+
+			img_ringbuf->insert_data(curr_message);
+
+			ov_core::CameraData message;
+			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+			message.sensor_ids.push_back(0);
+
+			//TODO handling exception!
+			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+			static cv::Mat ignore_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(255));
+			static cv::Mat use_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+			if (zero_image.rows != internal_img.rows)
+				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
+
+			if (!vio_manager->initialized())
+			{
+				if (en_debug)
+					printf("Initializing\n");
+
+				message.images.push_back(zero_image);
+			}
+			else
+			{
+				if (!imu_moved)
+				{
+					if (en_debug)
+						printf("Idling\n");
+
+					if (!has_idle_images)
+					{
+						if (en_debug)
+							printf("Capture new idle images\n");
+						idle_image1 = internal_img.clone();
+						has_idle_images = true;
+					}
+
+					message.images.push_back(idle_image1);
+				}
+				else
+				{
+					message.images.push_back(internal_img.clone());
+				}
+			}
+
+			if (use_takeoff_cam)
+			{
+				message.masks.push_back(use_mask);
+				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+				{
+					printf(
+							"Detected Takeoff, going to VINS normal operations\n");
+					use_takeoff_cam = false;
+
+					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+					idler_limit = -1;
+				}
+			}
+			else
+			{
+				message.masks.push_back(use_mask);
+			}
+
+			std::lock_guard < std::mutex > lck(camera_queue_mtx);
+			camera_queue.push_back(message);
+			std::sort(camera_queue.begin(), camera_queue.end());
+
+        }
+
+///////////////////////////////////////////////////////////////////////////////////
+
 
 		last_cam_time = _apps_time_monotonic_ns();
 
