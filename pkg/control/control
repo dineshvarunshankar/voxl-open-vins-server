@@ -1,5 +1,5 @@
 Package: voxl-open-vins-server
-Version: 0.2.61
+Version: 0.2.63.1
 Section: base
 Priority: optional
 Architecture: arm64

@@ -289,8 +289,8 @@ int config_file_read(void) {
     // auto reset features
 	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
 	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		10.0f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.01f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.01f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.075f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.025f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
 	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		1);
 	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s, 3.0f);
@@ -304,7 +304,7 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,50);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
     json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
     json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 25);
 
@@ -356,7 +356,7 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
     
     json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);    
-    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 7);
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 9);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
     int tmp_hist = 0;
@@ -369,8 +369,8 @@ int config_file_read(void) {
     json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
-    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 10.0);
-    json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
+    json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 1.0);
+    json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 1);
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
