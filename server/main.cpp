@@ -751,14 +751,15 @@ static int _hard_reset_(bool fast_reset)
 		double oe_zupt_max_disparity= vio_manager_options.zupt_max_disparity;
 		bool oe_init_dyn_use = vio_manager_options.init_options.init_dyn_use;
 
-		if (is_armed)
+		if (is_armed || offline)
 		{
-			vio_manager_options.init_options.init_imu_thresh = 2;
+			printf("Force reset (%f).\n", vio_manager_options.init_options.init_imu_thresh);
+			vio_manager_options.init_options.init_imu_thresh = 1.5;
 		}
 		
 		if (fast_reset)
 		{
-			printf("FAST RESET requested at Alt.\n");
+			printf("FAST RESET requested at Alt (%f).\n", vio_manager_options.init_options.init_imu_thresh);
 			vio_manager_options.init_options.init_window_time = 0.25;
 	//		vio_manager_options.init_options.init_max_disparity += 1;
 			vio_manager_options.zupt_max_disparity += 0.6;
@@ -2923,7 +2924,8 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 	while (main_running)
 	{
 		// 66Hz
-		usleep(33333);
+		usleep(15000);
+
 		int64_t current_time = _apps_time_monotonic_ns();
 
 		if (check_for_stable_vins)
@@ -2936,9 +2938,10 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				double vel_norm = vio_manager->get_state()->_imu->vel().norm();
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
 
+
 				if (vel_norm < 2.0 && last_check > STABLE_TIME_REQ)
 				{
-//					if (en_debug)
+					if (en_debug)
 						fprintf(stderr, "[INFO] VINS stable, going live\n");
 
 					check_for_stable_vins = false;
@@ -2951,11 +2954,12 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				}
 				else
 				{
-//					if (en_debug)
-						fprintf(stderr, "[INFO] waiting for VINS stable %f (t=%f)\n", vel_norm, last_check);
+					if (en_debug)
+					{
+						fprintf(stderr, "[INFO] pos from origin: %f\n", pos_from_new_origin);
+						fprintf(stderr, "[INFO] waiting for VINS stable %f (t=%f)\n", vel_norm, last_check*1e-9);
+					}
 				}
-				fprintf(stderr, "[INFO] VINS pos %f\n", pos_from_new_origin);
-
 			}
 		}
 
@@ -2979,7 +2983,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				init_failure_detector_reset_flag = 0;
 
-				if (is_armed)
+				if (is_armed || offline)
 					check_for_stable_vins = true;
 
 				last_stable_time = current_time;
