@@ -753,7 +753,7 @@ static int _hard_reset_(bool fast_reset)
 
 		if (is_armed)
 		{
-			vio_manager_options.init_options.init_imu_thresh = 1.0;
+			vio_manager_options.init_options.init_imu_thresh = 3;
 		}
 		
 		if (fast_reset)
