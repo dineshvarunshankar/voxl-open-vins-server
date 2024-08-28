@@ -984,18 +984,15 @@ static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char*
 		}
 
 //		printf("n_cams (%d) ,%d ,%d ,%d ,%d  %d %d\n", n_cams, n_total_features, feature_packet_from_vft->num_feats[0], feature_packet_from_vft->num_feats[1], feature_packet_from_vft->num_feats[2], use_takeoff_cam, takeoff_cam);
-
-
 //		int cam_num = 0;
 //		int ctn = 0;
 //		bool has_feats = 0;
 		// not the best but VFT sends the same number for every camera
-		feat_set_zero.features.resize(feature_packet_from_vft->num_feats[0]);
 //		feat_set.features.resize(n_total_features);
 //		feat_set_zero.features.resize(n_total_features);
 
+		feat_set_zero.features.resize(feature_packet_from_vft->num_feats[0]);
 		std::map<double, int> ts_map;
-
 		{
 			int last_feat_ctn = 0;
 
@@ -2928,6 +2925,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 		int64_t current_time = _apps_time_monotonic_ns();
 
+
 		if (check_for_stable_vins)
 		{
 			uint64_t last_check  = current_time - last_stable_time;
@@ -2937,7 +2935,6 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				double vel_norm = vio_manager->get_state()->_imu->vel().norm();
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
-
 
 				if (vel_norm < 2.0 && last_check > STABLE_TIME_REQ)
 				{
