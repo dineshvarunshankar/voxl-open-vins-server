@@ -94,7 +94,7 @@
 
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
-#define CAM_PIPE_SIZE (15 * 1280 * 800)         // give ourselves huge buffers
+#define CAM_PIPE_SIZE (30 * 1280 * 800)         // give ourselves huge buffers
 #define PROCESS_NAME "voxl-open-vins-server"
 #define FEATURE_NAME "tracked_feats"
 #define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
@@ -892,7 +892,12 @@ static void _control_pipe_cb(__attribute__((unused)) int ch, char *string,
         printf("Client requested cam 1 stream to be %s\n", pause_cam_states[1] ? "paused" : "running");
 		return;
 	}
-	
+	else if (strncmp(string, "flip3", strlen("flip3")) == 0)
+	{
+		pause_cam_states[2] = !pause_cam_states[2];
+        printf("Client requested cam 1 stream to be %s\n", pause_cam_states[1] ? "paused" : "running");
+		return;
+	}
 	printf(
 			"WARNING: Server received unknown command through the control pipe!\n");
 	printf("got %d bytes. Command is: %s\n", bytes, string);
@@ -1721,11 +1726,24 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					}
 					else
 					{
-						message.masks.push_back(use_mask1);
-						message.masks.push_back(use_mask1);
-						if (cameras_used == 3)
+						if (pause_cam_states[0])
+							message.masks.push_back(ignore_mask1);
+						else
 							message.masks.push_back(use_mask1);
 
+						if (pause_cam_states[1])
+							message.masks.push_back(ignore_mask1);
+						else
+							message.masks.push_back(use_mask1);
+
+						if (cameras_used == 3)
+						{
+							if (pause_cam_states[2])
+								message.masks.push_back(ignore_mask1);
+							else
+								message.masks.push_back(use_mask1);
+
+						}
 					}
 
 					std::lock_guard < std::mutex > lck(camera_queue_mtx);
@@ -2219,14 +2237,14 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 	if (is_initialized && idler_limit <= 0)
 	{
-		if (!bypass_reset_checks && cam_imu_time_delta > 0.15)
+		if (!bypass_reset_checks && cam_imu_time_delta > 0.3)
 		{
-			printf("-----------> UNSTABLE [THERMAL?]  <----------------\n");
+			printf("-----------> UNSTABLE [THERMAL?] %1.2f <----------------\n", cam_imu_time_delta);
 			bypass_reset_checks = true;
 		}
-		else if (bypass_reset_checks && cam_imu_time_delta < 0.1)
+		else if (bypass_reset_checks && cam_imu_time_delta < 0.25)
 		{
-			printf("-----------> STABLE [THERMAL?]  <----------------\n");
+			printf("-----------> STABLE [THERMAL?] %1.2f  <----------------\n", cam_imu_time_delta);
 			bypass_reset_checks = false;
 			resume_processing = 1;
 		}
@@ -2872,7 +2890,7 @@ static void _post_snapshot()
 						1.5, cv::LINE_AA);
 			}
 			
-			if (pause_cam_states[0] || pause_cam_states[1])
+			if (pause_cam_states[0] || pause_cam_states[1] || pause_cam_states[2])
 			{
 				strcpy(cam_off_str, "Cameras OFF:");
 				
@@ -2880,6 +2898,8 @@ static void _post_snapshot()
 					strcat(cam_off_str, "   1 ");
 				if (pause_cam_states[1])
 					strcat(cam_off_str, "  2 ");
+				if (pause_cam_states[2])
+					strcat(cam_off_str, "  3 ");
 				
 				cv::putText(
 						overlay_cp, //target image
