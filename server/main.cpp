@@ -115,8 +115,6 @@
 #define INIT_TOO_LONG_TIMEOUT_NS_ARMED 25000000000
 #define INIT_TOO_LONG_TIMEOUT_NS_IDLE 5000000000
                                                                                 
-#define STABLE_TIME_REQ 3000000000
-
 
 // init after  image frames recevoied at start up
 #define INIT_TIMEOUT_FRAMES 30
@@ -2494,6 +2492,7 @@ static bool stable_quality(int cur_qual)
 
 	// if quality is less than acceptable for more than 2 sec
 	double ts = (_apps_time_monotonic_ns() - last_good_qual_ts) * 1e-9;
+
 	if (ts > auto_reset_max_v_cov_timeout_s)
 	{
 		printf("[ERROR] quality was bad for a long time!\n");
@@ -2558,7 +2557,7 @@ static bool stable_features(int cur_feats)
 		last_good_feat_ts = _apps_time_monotonic_ns();
 
 	double ts = (_apps_time_monotonic_ns() - last_good_feat_ts) * 1e-9;
-	
+
 	if (ts > auto_reset_min_feature_timeout_s)
 	{
 		printf("ERROR: features were 0 for a long time! cur: %d, min_req: %d (are you bench testing?) \n", cur_feats, min_good_feat_thresh);
@@ -2954,9 +2953,9 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				double vel_norm = vio_manager->get_state()->_imu->vel().norm();
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
+				double ts = last_check * 1e-9;
 
-
-				if (vel_norm < 2.0 && last_check > STABLE_TIME_REQ)
+				if (vel_norm < auto_fallback_min_v && ts > auto_fallback_timeout_s)
 				{
 					if (en_debug)
 						fprintf(stderr, "[INFO] VINS stable, going live\n");

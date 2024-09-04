@@ -124,6 +124,8 @@ extern float auto_reset_max_v_cov;
 extern float auto_reset_max_v_cov_timeout_s;
 extern int   auto_reset_min_features;
 extern float auto_reset_min_feature_timeout_s;
+extern float auto_fallback_timeout_s;
+extern float auto_fallback_min_v;
 
 /// STATE OPTIONS ///
 extern bool do_fej;

@@ -59,6 +59,8 @@ float auto_reset_max_v_cov;
 float auto_reset_max_v_cov_timeout_s;
 int   auto_reset_min_features;
 float auto_reset_min_feature_timeout_s;
+float auto_fallback_timeout_s;
+float auto_fallback_min_v;
 
 /// STATE OPTIONS ///
 bool do_fej;
@@ -195,6 +197,9 @@ int config_file_print(void) {
 	printf("auto_reset_max_v_cov_timeout_s:   %6.3f\n", (double)auto_reset_max_v_cov_timeout_s);
 	printf("auto_reset_min_features:          %d\n",    auto_reset_min_features);
 	printf("auto_reset_min_feature_timeout_s: %6.3f\n", (double)auto_reset_min_feature_timeout_s);
+	printf("auto_fallback_timeout_s: %6.3f\n", (double)auto_fallback_timeout_s);
+	printf("auto_fallback_min_v: %6.3f\n", (double)auto_fallback_min_v);
+
     printf("===========================STATE=================================\n");
     printf("do fej:                           %s\n", do_fej ? "true" : "false");
     printf("imu avg:                          %s\n", imu_avg ? "true" : "false");
@@ -288,12 +293,14 @@ int config_file_read(void) {
     memset(string_holder, '\0', CHAR_BUF_SIZE);
     // auto reset features
 	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
-	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		10.0f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.075f);
-	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.04f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		15.0f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.1f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.1f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
 	json_fetch_int_with_default(	parent, "auto_reset_min_features",		&auto_reset_min_features,		1);
 	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s, 2.0f);
+	json_fetch_float_with_default(	parent, "auto_fallback_timeout_s",&auto_fallback_timeout_s, 4.0f);
+	json_fetch_float_with_default(	parent, "auto_fallback_min_v",&auto_fallback_min_v, 1.5f);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
     json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
