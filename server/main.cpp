@@ -712,18 +712,27 @@ static int _hard_reset_(bool fast_reset)
 	if (is_resetting)
 		return 0;
 
+	while (!camera_queue.empty())
+	{
+		usleep(100);
+	}
+	update_slots = 0;
+
 	// Lock all external data handlers not related to VINS core instance
-	imu_lock_mutex.lock();
-	cam_lock_mutex.lock();
-	baro_lock_mutex.lock();
-	publish_lock_mutex.lock();
-	
+	// reset the image count for multicam
+	std::lock_guard<std::mutex> imu_lock(imu_lock_mutex);
+	std::lock_guard<std::mutex> cam_lock(cam_lock_mutex);
+	std::lock_guard<std::mutex> pub_lock(baro_lock_mutex);
+	std::lock_guard<std::mutex> baro_lock(publish_lock_mutex);
+
 	// update my state
 	is_resetting = true;
 	s.quality  = -1;
+	s.state = VIO_STATE_FAILED;
+	s.error_code |= ERROR_CODE_STALLED;
+
 
 	printf("[INFO] restarting managers\n");
-	
 
 	if (!en_force_init && is_armed && imu_moved)
 	{
@@ -732,7 +741,6 @@ static int _hard_reset_(bool fast_reset)
 	}
 	else
 	{
-		// stop it if it's running
 		if (is_initialized)
 		{
 			is_initialized = 0;
@@ -783,16 +791,7 @@ static int _hard_reset_(bool fast_reset)
 		vio_manager_options.init_options.init_dyn_use = oe_init_dyn_use;
 	}
 
-	printf("[INFO] unlocking managers\n");
-
 	usleep(50);
-
-	imu_lock_mutex.unlock();
-	cam_lock_mutex.unlock();
-	baro_lock_mutex.unlock();
-	publish_lock_mutex.unlock();
-
-//	camera_queue.clear();
 
 	is_resetting = false;
 	
@@ -1350,10 +1349,19 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			is_initialized = false;
 		}
 
+		std::shared_ptr < ov_msckf::State > current_state =
+				vio_manager->get_state(); // contains a few extra pieces we need
+
+		s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+		s.error_code |= ERROR_CODE_DROPPED_IMU;
+
  		memcpy(&d.v, &s, sizeof(vio_data_t));
 		// send to both pipes
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+ 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+
+ 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 		
 		// TODO replace with histogram analysis
 		if (resume_processing++ > 12)
@@ -2273,11 +2281,20 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 	if (!is_cam_connected || !main_running)
 	{
+		std::shared_ptr < ov_msckf::State > current_state =
+				vio_manager->get_state(); // contains a few extra pieces we need
+		s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
+		s.error_code |= ERROR_CODE_CAM_MISSING;
+
 		memcpy(&d.v, &s, sizeof(vio_data_t));
+
 		is_initialized = false;
 		// send to both pipes
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+ 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+
+ 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 		return;
 	}
@@ -2966,10 +2983,15 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				}
 				else if ( (vel_norm > (auto_reset_max_velocity * 0.5)) || (pos_from_new_origin > (auto_reset_max_velocity * 0.3))) // safety net, 50% of max vel and 300ms of distance gain
 				{
+					s.quality = -1;
+					s.error_code |= ERROR_CODE_VEL_INST_CERT;
 					init_failure_detector_reset_flag = 1;
+					// otherwise already in reset, just wait
 				}
 				else
 				{
+					s.error_code |= ERROR_CODE_IMU_OOB;
+
 					if (en_debug)
 					{
 						fprintf(stderr, "[INFO] pos from origin: %f\n", pos_from_new_origin);
@@ -3067,10 +3089,14 @@ static void _publish_default(double pose_timestamp)
 	d.v.magic_number = VIO_MAGIC_NUMBER;
 	d.v.error_code = global_error_codes;
 
+	std::shared_ptr < ov_msckf::State > current_state =
+			vio_manager->get_state(); // contains a few extra pieces we need
+
 	// simple lib modal pipe standard vio packet
 	memset(&s, 0, sizeof(s));
 	s.magic_number = VIO_MAGIC_NUMBER;
 	s.error_code = global_error_codes;
+	s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
 	// simple lib modal pipe standard vio packet
 	memset(&ov_status, 0, sizeof(ov_status));
@@ -3083,11 +3109,16 @@ static void _publish_default(double pose_timestamp)
 	{
 		s.quality  = -1;
 		s.state = VIO_STATE_INITIALIZING;
+		s.error_code |= ERROR_CODE_STALLED;
 		memcpy(&d.v, &s, sizeof(vio_data_t));
 		is_initialized = false;
 		// send to both pipes
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
+		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
 		return;
 	}
 	else
@@ -3139,9 +3170,6 @@ static void _publish_default(double pose_timestamp)
 	}
 #endif
 	
-	std::shared_ptr < ov_msckf::State > current_state =
-			vio_manager->get_state(); // contains a few extra pieces we need
-
 	std::vector < std::shared_ptr < ov_type::Type >> statevars;
 	statevars.push_back(current_state->_imu->p());
 	statevars.push_back(current_state->_imu->q());
@@ -3252,6 +3280,8 @@ static void _publish_default(double pose_timestamp)
 	{
 		fprintf(stderr, "WARNING: skipping pose data from the past %f %ld\n",
 				current_state->_timestamp * 1e9, last_sent_timestamp_ns);
+		s.error_code |= ERROR_CODE_BAD_TIMESTAMP;
+
 		return;
 	}
 
@@ -3261,7 +3291,6 @@ static void _publish_default(double pose_timestamp)
 			* 1e9);
 
 	// populate some other data
-	s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 	d.imu_cam_time_shift_s = current_state->_calib_dt_CAMtoIMU->value()(0);
 	last_time_alignment_ns = current_state->_calib_dt_CAMtoIMU->value()(0)
 			* 1e9;
@@ -3491,7 +3520,11 @@ static void _publish_default(double pose_timestamp)
 				fprintf(stderr,"[CRITICAL] UNKNOWN RESET TRIGGERED\n");
 				s.error_code |= ERROR_CODE_UNKNOWN;
 			}
-			
+
+			s.quality = -1;
+			s.state = VIO_STATE_FAILED;
+			init_failure_detector_reset_flag = 1;
+
 			fprintf(stderr,
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f Uncert: %f State: %d(%d)\n",
 							(current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", 
@@ -3500,9 +3533,7 @@ static void _publish_default(double pose_timestamp)
 							V_uncertainty,
 							s.state,
 							stable_state(s.state));
-			s.state = VIO_STATE_FAILED;
 			
-			init_failure_detector_reset_flag = 1;
 		}
 	}
 	
@@ -3528,7 +3559,9 @@ static void _publish_default(double pose_timestamp)
 			ov_status.features[b].pix_loc[0] = curr_pixel_locs[b].pix_loc[0];
 			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
 		}
-		pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
+
+		if (pipe_server_get_num_clients(OVSTATUS_CH) > 0) // if someone has subscribed to the overlay, draw it
+			pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
 	}
 
 	if (en_debug_pos)
@@ -3550,8 +3583,10 @@ static void _publish_default(double pose_timestamp)
 	display_snapshot.rerr = R_uncertainty;
 
 	//publish
-	pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-	pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+	if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+	if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 	return;
 }
