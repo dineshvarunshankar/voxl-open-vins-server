@@ -1,3 +1,7 @@
+0.2.66
+    * refactor ov flip commands for 3 cam
+    * fallback thresholds now parameterized in config file
+    * change order of locking to remove race condition
 0.2.62
     * 3 cam VIO fixes
     * switch to internal tracker as default
