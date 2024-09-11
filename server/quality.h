@@ -35,14 +35,16 @@
 #ifndef QUALITY_H
 #define QUALITY_H
 
-// #define DEBUG_QUALITY
+// debug development flags, not for normal use
+//#define DEBUG_QUALITY
+//#define DEBUG_QUALITY_GRID
 
 #include <modal_pipe_interfaces.h>
 
 // tunable params
 #define GRID_W 20
 #define GRID_H 15
-#define BLOCKS_FOR_100_PERCENT 0.6f
+#define BLOCKS_FOR_100_PERCENT 0.5f
 #define STDDEV_WEIGHT 10.0f // higher number weights the stddev of features more
 
 // non-tunable params
@@ -51,6 +53,7 @@
 
 int grid_spacing_x;
 int grid_spacing_y;
+
 
 
 static void _populate_single_block(float score, float* grid_scores, int pos_x, int pos_y)
@@ -85,6 +88,8 @@ static void _add_feature_to_grid(float score, float* grid_scores, int x, int y)
 
 }
 
+
+
 /**
  * @brief      Calculates a vio quality based on feature points and covariance
  *
@@ -93,6 +98,8 @@ static void _add_feature_to_grid(float score, float* grid_scores, int x, int y)
  *             Optional odometry quality metric as a percentage. -1 = odometry
  *             has failed, 0 = unknown/unset quality, 1 = worst quality, 100 =
  *             best quality
+ *
+ *             This assumes only 1 camera. TODO support multiple cam IDs
  *
  * @param[in]  state       The state
  * @param      vel_cov     The velocity cov
@@ -103,18 +110,23 @@ static void _add_feature_to_grid(float score, float* grid_scores, int x, int y)
  *
  * @return     The quality.
  */
-static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w, int img_h, int n_features, int n_cams, vio_feature_t* features)
+static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int n_features, vio_feature_t* features)
 {
 	int i;
 
 	if(state != VIO_STATE_OK){
+		#ifdef DEBUG_QUALITY
+		printf("negative quality due to failed state\n");
+		#endif
 		return -1;
 	}
 
-//	if(vel_cov[0]<0.0f || vel_cov[6]<0.0f || vel_cov[11]<0.0f){
-//		fprintf(stderr, "negative covariance\n");
-//		return -1;
-//	}
+	if(vel_cov[0]<=0.0f || vel_cov[6]<=0.0f || vel_cov[11]<=0.0f){
+		#ifdef DEBUG_QUALITY
+		printf("negative quality due to negative velocity covariance\n");
+		#endif
+		return -1;
+	}
 
 	if(img_w < GRID_W || img_h < GRID_H){
 		fprintf(stderr, "ERROR in %s, invalid img width or height\n", __FUNCTION__);
@@ -124,21 +136,17 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 	grid_spacing_x = img_w/GRID_W;
 	grid_spacing_y = img_h/GRID_H;
 
-
-
-	float grid_scores[n_cams][GRID_BLOCKS];
-	for (int i = 0; i < n_cams; i++){
-		memset(grid_scores[i], 0, sizeof(float)*GRID_BLOCKS);
-	}
+	float grid_scores[GRID_BLOCKS];
+	memset(grid_scores, 0, sizeof(float)*GRID_BLOCKS);
 
 	// loop through features and save the best depth covariance for each
 	// block with a feature in it
 	for(i=0; i<n_features; i++){
 
 		// skip points not in state
-		if(features[i].point_quality == LOW){
-			#ifdef DEBUG_QUALITY
-			fprintf(stderr, "skipping oos point with qual of %d\n", features[i].point_quality);
+		if(features[i].point_quality != HIGH){
+			#ifdef DEBUG_QUALITY_GRID
+			printf("skipping feature:       i:%2d point_quality: %d\n", i, features[i].point_quality);
 			#endif
 			continue;
 		}
@@ -147,69 +155,76 @@ static int calc_quality(uint8_t state, float* vel_cov, float vel_norm, int img_w
 		// reports features with a position of -1
 		int x = features[i].pix_loc[0];
 		int y = features[i].pix_loc[1];
-		if(x<0 || y<0) {
-			#ifdef DEBUG_QUALITY
-			fprintf(stderr, "skipping feat with negative loc\n");
+		if(x<0 || y<0){
+			#ifdef DEBUG_QUALITY_GRID
+			printf("skipping feature:       i:%2d x:%3d y:%3d\n", i, x, y);
 			#endif
 			continue;
 		}
 
 		// points with a higher stddev will contribute less to the total score
 		float stddev = features[i].depth_error_stddev;
-		if (stddev == -1.) continue;
 		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
-
-		if (features[i].point_quality >= HIGH){
-			score += MAX_SCORE_PER_BLOCK/3.;
-			if (vel_norm < 0.05) score += MAX_SCORE_PER_BLOCK/3.;
-		}
-		_add_feature_to_grid(score, grid_scores[features[i].cam_id], x, y);
+		#ifdef DEBUG_QUALITY_GRID
+		printf("adding feature to grid: i:%2d x:%3d y:%3d stddev:%f\n", i, x, y, stddev);
+		#endif
+		_add_feature_to_grid(score, grid_scores, x, y);
 	}
 
-#ifdef DEBUG_QUALITY
-	for (int m = 0; m < n_cams; m++){
+#ifdef DEBUG_QUALITY_GRID
 	printf("scores:\n");
-		for(i=0; i<GRID_H; i++){
-			for(int j=0; j<GRID_W; j++){
-				printf("%3.1f ", (double)grid_scores[m][(i*GRID_W)+j]);
-			}
-			printf("\n");
+	for(i=0; i<GRID_H; i++){
+		for(int j=0; j<GRID_W; j++){
+			printf("%3.1f ", (double)grid_scores[(i*GRID_W)+j]);
 		}
+		printf("\n");
 	}
-
 #endif
-	float sum[n_cams] = {0.0f};
 
-	for (int m = 0; m < n_cams; m++){
-		for(i=0; i<GRID_BLOCKS; i++) sum[m] += grid_scores[m][i];
-	}
-
-	float best_sum = 0;
-	for (int m = 0; m < n_cams; m++){
-		if (sum[m] > best_sum) best_sum = sum[m];	
-	}
 	// calculate the total score
+	float sum = 0.0f;
+	for(i=0; i<GRID_BLOCKS; i++) sum += grid_scores[i];
 
 	// theoretical max score would be a perfect feature in every block.
 	// consider 100% quality to be half the blocks filled
 	float perfect_sum = MAX_SCORE_PER_BLOCK * (GRID_BLOCKS) * BLOCKS_FOR_100_PERCENT;
 	perfect_sum = perfect_sum*perfect_sum;
 
-//	printf("best: %f perfect: %f\n", best_sum, perfect_sum);
+	int instant_quality = roundf((sum*sum / perfect_sum) * 100.0f);
 
+	// upper bound
+	if(instant_quality>100) instant_quality = 100;
 
-	int quality = roundf((best_sum*best_sum / perfect_sum) * 100.0f);
+	// below quality of 10, slow down the descent so that sudden camera motion
+	// doesn't kill the quality instantly. temporary loss of features is normal
+	// and not usually harmful
+	static int count_down = 10;
+	int filtered_quality;
+	if(instant_quality<10){
 
-	// bound the output. Remember 0 is a special value meaning unknown so
-	// don't report that since we calculating the quality.
-	if(quality>100) quality = 100;
-	if(quality<1) quality = -1;
+		if(instant_quality<count_down){
+			filtered_quality=count_down--;
+		}
+		else{
+			count_down=instant_quality;
+			filtered_quality=instant_quality;
+		}
+	}
+	else{
+		count_down = 10;
+		filtered_quality = instant_quality;
+	}
+
+	// lower bound. Remember 0 is a special value meaning unknown so
+	// don't report that since it is indeed known!!
+	if(filtered_quality<1) filtered_quality = 1;
+
 
 #ifdef DEBUG_QUALITY
-	printf("final quality: %d\n", quality);
+	printf("instant quality: %3d filtered_quality: %3d count_down %3d\n", instant_quality, filtered_quality, count_down);
 #endif
 
-	return quality;
+	return filtered_quality;
 }
 
 

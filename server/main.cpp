@@ -262,6 +262,8 @@ static char vft_name[CHAR_BUF_SIZE] = "tracking_feats";
 static size_t num_cams = 0;
 static int max_width = 0;
 static int max_height = 0;
+static int current_width = 0;
+static int current_height = 0;
 
 static uint8_t update_slots = 0;   // 8 cameras max
 
@@ -703,6 +705,8 @@ void reset_states()
 	last_time_alignment_ns = 0;
 	last_frame_frame_id = 0;
 	last_frame_timestamp_ns = 0;
+
+	s.quality = 0;
 }
 
 
@@ -1357,10 +1361,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
  		memcpy(&d.v, &s, sizeof(vio_data_t));
 		// send to both pipes
- 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
  			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 
- 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
  			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 		
 		// TODO replace with histogram analysis
@@ -2231,6 +2235,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 	thread_update_running = false;
 
+
+	current_height = meta.height;
+	current_width = meta.width;
+
 	delete curr_message;
 }
 
@@ -2290,10 +2298,10 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 		is_initialized = false;
 		// send to both pipes
- 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
  			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 
- 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+ 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
  			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 		return;
@@ -2561,7 +2569,7 @@ static bool stable_features(int cur_feats)
 	bool is_bad = false;
 	// if quality is less than acceptable for more than 2 sec
 
-	int min_good_feat_thresh = 1;
+	int min_good_feat_thresh = auto_reset_min_features;
 	
 	if (!offline && ext_blind_take_off_force && !is_armed)
 	{
@@ -2569,7 +2577,6 @@ static bool stable_features(int cur_feats)
 		cur_feats = min_good_feat_thresh - 1;
 	}	
 	
-	// TODO use auto_reset_min_features!!!	
 	if (cur_feats > min_good_feat_thresh)
 		last_good_feat_ts = _apps_time_monotonic_ns();
 
@@ -2601,7 +2608,7 @@ static void _post_snapshot()
 	static int reinit_time = 0;
 	static int reinit_disp_time = 0;
 
-	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) // if someone has subscribed to the overlay, draw it
+	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) // publish
 	{
 		not_displaying = false;
 		{
@@ -3016,6 +3023,8 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 					_hard_reset_(false);
 				else if (init_failure_detector_reset_flag == 3)
 					_hard_reset_(true);
+				else if (init_failure_detector_reset_flag == 4)
+					_hard_reset_(false);
 										
 				time_of_last_reset = _apps_time_monotonic_ns();
 
@@ -3043,7 +3052,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 			else if (time_in_init > INIT_TOO_LONG_TIMEOUT_NS_IDLE && !init_failure_detector_reset_flag) 
 			{
 				fprintf(stderr, "[ERROR] In init too long, timeout, retry  RESET %ld\n", time_in_init);
-				init_failure_detector_reset_flag = 1;
+				init_failure_detector_reset_flag = 4;
 			}
 		}
 		else
@@ -3114,9 +3123,9 @@ static void _publish_default(double pose_timestamp)
 		is_initialized = false;
 		// send to both pipes
 
-		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 		return;
@@ -3444,16 +3453,52 @@ static void _publish_default(double pose_timestamp)
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
-	s.quality = map_double(T_uncertainty, 0.004375, max_allowable_cep, 100, 0);
+
+	if (!is_armed || !is_initialized)
+	{
+		s.quality = map_double(T_uncertainty, 0.004375, max_allowable_cep, 100, 0);
+	}
+	else
+	{		// calc quality separately for each camera
+		int qualities[cameras_used];
+
+		for (int z=0; z<cameras_used;z++)
+		{
+			int t_cam_feats = 0;
+			vio_feature_t cam_feats[VIO_MAX_REPORTED_FEATURES];
+
+			for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
+			{
+				if (display_snapshot.d.features[i].cam_id == z)
+				{
+					cam_feats[t_cam_feats] = display_snapshot.d.features[i];
+					t_cam_feats++;
+				}
+			}
+			qualities[z] = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, t_cam_feats, cam_feats);
+		}
+
+		// then as a average
+		int avg_qual = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, d.n_total_features, d.features);
+
+		int max_q = 0;
+		for (int z=0; z<cameras_used;z++)
+		{
+			if (qualities[z] > max_q)
+				max_q = qualities[z];
+		}
+		if (avg_qual > max_q)
+			max_q = avg_qual;
+
+		s.quality = max_q;
+
+	}
 
 	if (s.quality > 100)
 		s.quality = 100;
-	
-	if (s.quality < 1)
-		s.quality = 0;
-	
+
 	if (pause_qmin)
-		s.quality = 1;
+		s.quality = 0;
 
 	if (check_for_stable_vins)
 	{
@@ -3523,7 +3568,11 @@ static void _publish_default(double pose_timestamp)
 
 			s.quality = -1;
 			s.state = VIO_STATE_FAILED;
-			init_failure_detector_reset_flag = 1;
+
+			if (is_armed || offline)
+				init_failure_detector_reset_flag = 1;
+			else
+				init_failure_detector_reset_flag = 4;
 
 			fprintf(stderr,
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f Uncert: %f State: %d(%d)\n",
@@ -3560,7 +3609,7 @@ static void _publish_default(double pose_timestamp)
 			ov_status.features[b].pix_loc[1] = curr_pixel_locs[b].pix_loc[1];
 		}
 
-		if (pipe_server_get_num_clients(OVSTATUS_CH) > 0) // if someone has subscribed to the overlay, draw it
+		if (pipe_server_get_num_clients(OVSTATUS_CH) > 0)
 			pipe_server_write(OVSTATUS_CH, (char*) &ov_status, sizeof(ov_status_t));
 	}
 
@@ -3583,9 +3632,9 @@ static void _publish_default(double pose_timestamp)
 	display_snapshot.rerr = R_uncertainty;
 
 	//publish
-	if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // if someone has subscribed to the overlay, draw it
+	if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
 		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-	if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // if someone has subscribed to the overlay, draw it
+	if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
 		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
 
 	return;
@@ -4408,7 +4457,9 @@ int main(int argc, char *argv[])
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
 	
-	en_vio_always_on = offline;
+	if (offline)
+		en_vio_always_on = offline;
+
 	use_takeoff_cam =takeoff_cam >= 0;
 
 

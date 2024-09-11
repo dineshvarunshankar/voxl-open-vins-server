@@ -293,7 +293,7 @@ int config_file_read(void) {
     memset(string_holder, '\0', CHAR_BUF_SIZE);
     // auto reset features
 	json_fetch_bool_with_default(	parent, "en_auto_reset",				&en_auto_reset,					1);
-	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		15.0f);
+	json_fetch_float_with_default(	parent, "auto_reset_max_velocity",		&auto_reset_max_velocity,		20.0f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_instant",	&auto_reset_max_v_cov_instant,	0.1f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov",			&auto_reset_max_v_cov,			0.1f);
 	json_fetch_float_with_default(	parent, "auto_reset_max_v_cov_timeout_s",&auto_reset_max_v_cov_timeout_s,0.5f);
@@ -377,7 +377,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 1.0);
-    json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 1);
+    json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
