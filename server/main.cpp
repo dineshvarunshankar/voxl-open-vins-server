@@ -684,7 +684,6 @@ void reset_states()
 	alt_z = 0.0;
 	changed_motion_state = false;
 	imu_moved = false;
-	is_armed = false;
 	if (takeoff_cam >= 0)
 		use_takeoff_cam  = true;
 	has_idle_images  = false;
@@ -706,7 +705,7 @@ void reset_states()
 	last_frame_frame_id = 0;
 	last_frame_timestamp_ns = 0;
 
-	s.quality = 0;
+	s.quality = -1;
 }
 
 
@@ -735,16 +734,15 @@ static int _hard_reset_(bool fast_reset)
 	s.state = VIO_STATE_FAILED;
 	s.error_code |= ERROR_CODE_STALLED;
 
-
-	printf("[INFO] restarting managers\n");
-
 	if (!en_force_init && is_armed && imu_moved)
 	{
+		printf("[INFO] restarting managers STATEFUL\n");
 		vio_manager->zero_state();
 		reset_states();
 	}
 	else
 	{
+		printf("[INFO] restarting managers STATELESS\n");
 		if (is_initialized)
 		{
 			is_initialized = 0;
@@ -2979,26 +2977,24 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
 				double ts = last_check * 1e-9;
 
-				if (vel_norm < auto_fallback_min_v && ts > auto_fallback_timeout_s)
+				if (vel_norm < auto_fallback_min_v  && pos_from_new_origin < auto_fallback_min_v &&  ts > auto_fallback_timeout_s)
 				{
-					if (en_debug)
-						fprintf(stderr, "[INFO] VINS stable, going live\n");
-
+					fprintf(stderr, "[WARN] VINS stable, going live\n");
 					check_for_stable_vins = false;
 					last_was_running_time = current_time;
 					time_of_last_reset = _apps_time_monotonic_ns();
 				}
-				else if ( (vel_norm > (auto_reset_max_velocity * 0.5)) || (pos_from_new_origin > (auto_reset_max_velocity * 0.3))) // safety net, 50% of max vel and 300ms of distance gain
+				else if ( (vel_norm > (auto_reset_max_velocity * 0.5)) || (pos_from_new_origin > (auto_reset_max_velocity * 0.33))) // safety net, 50% of max vel and 300ms of distance gain
 				{
 					s.quality = -1;
 					s.error_code |= ERROR_CODE_VEL_INST_CERT;
-					init_failure_detector_reset_flag = 1;
+					init_failure_detector_reset_flag = 4;
 					// otherwise already in reset, just wait
 				}
 				else
 				{
+					s.quality = -1;
 					s.error_code |= ERROR_CODE_IMU_OOB;
-
 					if (en_debug)
 					{
 						fprintf(stderr, "[INFO] pos from origin: %f\n", pos_from_new_origin);
@@ -3032,6 +3028,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				if (is_armed || offline)
 					check_for_stable_vins = true;
+
 
 				last_stable_time = current_time;
 			}
@@ -3449,7 +3446,7 @@ static void _publish_default(double pose_timestamp)
 	{
 		d.n_total_features = VIO_MAX_REPORTED_FEATURES;
 	}
-	
+
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
