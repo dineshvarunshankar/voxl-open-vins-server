@@ -109,10 +109,10 @@
 #define STALL_TIMEOUT_NS 300000000
 
 // auto restart if the system fails to init after 5 seconds
-#define INIT_FAILURE_TIMEOUT_NS 5000000000
+#define INIT_FAILURE_TIMEOUT_NS 2000000000
 
 // force a timeout if I'm in init for a long time, like 5 seconds
-#define INIT_TOO_LONG_TIMEOUT_NS_ARMED 25000000000
+#define INIT_TOO_LONG_TIMEOUT_NS_ARMED 20000000000
 #define INIT_TOO_LONG_TIMEOUT_NS_IDLE 5000000000
                                                                                 
 
@@ -186,7 +186,7 @@ static volatile int64_t last_real_pose_timestamp_ns = 0;
 static volatile int64_t last_sent_timestamp_ns = 0;
 static volatile int64_t last_cep_timestamp_ns = 0;
 static double last_good_feat_ts = 0;
-
+static double current_reset_max_velocity = 3;
 // state of imu and camera connections
 static volatile int is_imu_connected = 0;
 static volatile int is_cam_connected = 0;
@@ -684,7 +684,7 @@ void reset_states()
 	alt_z = 0.0;
 	changed_motion_state = false;
 	imu_moved = false;
-	if (takeoff_cam >= 0)
+	if (takeoff_cam >= 0 && !is_armed)
 		use_takeoff_cam  = true;
 	has_idle_images  = false;
 	last_imu_timestamp_ns = 0;
@@ -704,6 +704,8 @@ void reset_states()
 	last_time_alignment_ns = 0;
 	last_frame_frame_id = 0;
 	last_frame_timestamp_ns = 0;
+
+	current_reset_max_velocity  = 3;
 
 	s.quality = -1;
 }
@@ -734,13 +736,14 @@ static int _hard_reset_(bool fast_reset)
 	s.state = VIO_STATE_FAILED;
 	s.error_code |= ERROR_CODE_STALLED;
 
-	if (!en_force_init && is_armed && imu_moved)
-	{
-		printf("[INFO] restarting managers STATEFUL\n");
-		vio_manager->zero_state();
-		reset_states();
-	}
-	else
+	// TODO FIX THIS as OVINS mutex locks in API are preventing objects from resettting properly!
+//	if (!en_force_init && is_armed && imu_moved)
+//	{
+//		printf("[INFO] restarting managers STATEFUL\n");
+//		vio_manager->zero_state();
+//		reset_states();
+//	}
+//	else
 	{
 		printf("[INFO] restarting managers STATELESS\n");
 		if (is_initialized)
@@ -1332,6 +1335,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 {
 
 	static int idler_ctn = 0;
+
+	if (is_resetting)
+		return;
 
 	if (!en_ext_feature_tracker)
 		is_cam_connected = true;
@@ -2244,6 +2250,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {	
+
 	double cam_imu_time_delta = (double) (_apps_time_monotonic_ns()
 			- last_cam_time) * 1e-9;
 
@@ -2304,9 +2311,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 		return;
 	}
-
-	try
-	{
 
 		is_init = vio_manager->initialized();
 
@@ -2438,7 +2442,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 				vio_manager_data.am(2, 0) = t_am(2, 0);  // Z axis
 
 				vio_manager->feed_measurement_imu(vio_manager_data);
-				
+
 				last_imu_timestamp_ns = data_array[i].timestamp_ns;
 				last_imu_time = vio_manager_data.timestamp;
 
@@ -2457,31 +2461,36 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 					std::lock_guard < std::mutex > pub_lg(publish_lock_mutex);
 					std::lock_guard < std::mutex > lck(camera_queue_mtx);
 
-					if (en_ext_feature_tracker)
+					try
 					{
-						while (!feature_queue.empty() && feature_queue.at(0).timestamp< timestamp_imu_inC)
+						if (en_ext_feature_tracker)
 						{
-							vft_feature_set fst = feature_queue.at(0);
-							vio_manager->feed_measurement_feature(fst.timestamp,fst.features);
-							_publish_default(last_imu_time);
-							feature_queue.pop_front();
+							while (!feature_queue.empty() && feature_queue.at(0).timestamp< timestamp_imu_inC)
+							{
+								vft_feature_set fst = feature_queue.at(0);
+								vio_manager->feed_measurement_feature(fst.timestamp,fst.features);
+								_publish_default(last_imu_time);
+								feature_queue.pop_front();
+							}
+						}
+						else
+						{
+							while (!camera_queue.empty() && camera_queue.at(0).timestamp< timestamp_imu_inC)
+							{
+								vio_manager->feed_measurement_camera(camera_queue.at(0));
+								_publish_default(last_imu_time);
+								camera_queue.pop_front();
+							}
 						}
 					}
-					else
+					catch (...)
 					{
-						while (!camera_queue.empty() && camera_queue.at(0).timestamp< timestamp_imu_inC)
-						{
-							vio_manager->feed_measurement_camera(camera_queue.at(0));
-							_publish_default(last_imu_time);
-							camera_queue.pop_front();
-						}						
-
-
+						fprintf(stderr, "IMU Process error!\n");
 					}
+
 					thread_update_running = false;
 				}
 				);
-
 				thread.join();
 
 			}
@@ -2491,10 +2500,6 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 
 		}
 
-	} catch (const std::out_of_range &e)
-	{
-		fprintf(stderr, "IMU Process error!\n");
-	}
 
 }
 
@@ -2957,12 +2962,12 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 {
 	int64_t last_was_running_time = _apps_time_monotonic_ns();
 	int64_t last_stable_time = _apps_time_monotonic_ns();
-
+	int64_t last_max_vel_check_time = _apps_time_monotonic_ns();
 	
 	while (main_running)
 	{
-		// 66Hz
-		usleep(15000);
+		// 30Hz 30gps
+		usleep(33333);
 
 		int64_t current_time = _apps_time_monotonic_ns();
 
@@ -2977,6 +2982,8 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				double pos_from_new_origin = vio_manager->get_state()->_imu->pos().norm();
 				double ts = last_check * 1e-9;
 
+				//printf("Last check: %f (%f)\n", ts, auto_fallback_timeout_s);
+
 				if (vel_norm < auto_fallback_min_v  && pos_from_new_origin < auto_fallback_min_v &&  ts > auto_fallback_timeout_s)
 				{
 					fprintf(stderr, "[WARN] VINS stable, going live\n");
@@ -2984,7 +2991,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 					last_was_running_time = current_time;
 					time_of_last_reset = _apps_time_monotonic_ns();
 				}
-				else if ( (vel_norm > (auto_reset_max_velocity * 0.5)) || (pos_from_new_origin > (auto_reset_max_velocity * 0.33))) // safety net, 50% of max vel and 300ms of distance gain
+				else if ( (vel_norm >= auto_fallback_min_v) || (pos_from_new_origin >2) ||  ts > auto_fallback_timeout_s) // safety net, 50% of max vel and 300ms of distance gain
 				{
 					s.quality = -1;
 					s.error_code |= ERROR_CODE_VEL_INST_CERT;
@@ -3002,6 +3009,25 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 					}
 				}
 			}
+			else
+				last_stable_time = _apps_time_monotonic_ns();
+		}
+		else
+		{
+			last_stable_time = _apps_time_monotonic_ns();
+
+			uint64_t last_max_vel_check  = (current_time - last_max_vel_check_time)*1e-9;
+
+			if (last_max_vel_check >= 0.2)
+			{
+				last_max_vel_check_time = current_time;
+
+				if (is_armed && current_reset_max_velocity < auto_reset_max_velocity)
+					current_reset_max_velocity += auto_fallback_min_v;
+				else
+					current_reset_max_velocity = auto_reset_max_velocity;
+			}
+//			printf("Max velocity: %f\n",current_reset_max_velocity );
 		}
 
 
@@ -3012,7 +3038,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 			{
 				if (en_debug)
 					fprintf(stderr, "[ERROR] Triggered RESET type: %d\n", init_failure_detector_reset_flag);
-				
+		
 				if (init_failure_detector_reset_flag == 1)
 					_hard_reset_(!is_thermal);
 				else if (init_failure_detector_reset_flag == 2)
@@ -3028,7 +3054,6 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 				if (is_armed || offline)
 					check_for_stable_vins = true;
-
 
 				last_stable_time = current_time;
 			}
@@ -3056,7 +3081,6 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 		{
 			last_was_running_time = current_time;
 		}
-		
 	}
 
 	return NULL;
@@ -3502,6 +3526,7 @@ static void _publish_default(double pose_timestamp)
 		s.quality = -1;
 	}
 
+
 	if (!check_for_stable_vins && en_auto_reset && !init_failure_detector_reset_flag
 			&& stable_state(s.state))
 	{
@@ -3514,7 +3539,8 @@ static void _publish_default(double pose_timestamp)
 		bool quality_bad = imu_moved && s.quality < 1;
 		bool stable_quality_bad = imu_moved && stable_quality(s.quality);
 		bool stable_features_bad = imu_moved && stable_features(n_good_points);
-		bool too_fast = imu_vel.norm() > auto_reset_max_velocity;
+
+		bool too_fast = imu_vel.norm() > current_reset_max_velocity;
 		bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
 		
 		if (vio_manager_bad
@@ -3547,7 +3573,7 @@ static void _publish_default(double pose_timestamp)
 			else if (too_fast)
 			{
 				fprintf(stderr,"[VIO_BAD_STATE] Exceeded MAX IMU Velocity %f vs %f\n", imu_vel.norm(),
-						auto_reset_max_velocity);
+						current_reset_max_velocity);
 				s.error_code |= ERROR_CODE_VEL_WINDOW_CERT;
 
 			}

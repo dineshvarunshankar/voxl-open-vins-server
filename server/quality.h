@@ -192,6 +192,9 @@ static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int
 
 	int instant_quality = roundf((sum*sum / perfect_sum) * 100.0f);
 
+
+	instant_quality -= 1;
+
 	// upper bound
 	if(instant_quality>100) instant_quality = 100;
 
