@@ -735,6 +735,7 @@ static int _hard_reset_(bool fast_reset)
 	s.quality  = -1;
 	s.state = VIO_STATE_FAILED;
 	s.error_code |= ERROR_CODE_STALLED;
+	std::unique_ptr<ov_msckf::VioManager> old_vio_manager;
 
 	// TODO FIX THIS as OVINS mutex locks in API are preventing objects from resettting properly!
 //	if (!en_force_init && is_armed && imu_moved)
@@ -749,7 +750,6 @@ static int _hard_reset_(bool fast_reset)
 		if (is_initialized)
 		{
 			is_initialized = 0;
-			vio_manager.reset();  // delete VINS core instance!
 		}
 
 		// now start again
@@ -781,13 +781,19 @@ static int _hard_reset_(bool fast_reset)
 		reset_states();
 		
 		usleep(50);
-		
+
+		// swap instances
+		old_vio_manager = std::move(vio_manager);
 		vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
+
+		// check new instance
 		if (vio_manager == NULL)
 		{
 			fprintf(stderr, "Error creating vio_manager object\n");
 			_quit(-1);
 		}
+
+		// revert back to old params
 		vio_manager_options.zupt_max_velocity = oe_zupt_max_vel;
 		vio_manager_options.init_options.init_window_time = oe_init_window_time;
 		vio_manager_options.init_options.init_imu_thresh = oe_init_imu_thresh;
@@ -796,10 +802,18 @@ static int _hard_reset_(bool fast_reset)
 		vio_manager_options.init_options.init_dyn_use = oe_init_dyn_use;
 	}
 
+	// allow mutex/threads to do their thing
 	usleep(50);
 
+	// allow delegate to start consuming data
 	is_resetting = false;
 	
+	// allow threads to start
+	usleep(50);
+
+	// clean up old stuff
+	old_vio_manager.reset();  // delete OLD VINS core instance via mutex releases
+
 	return 1;
 }
 
