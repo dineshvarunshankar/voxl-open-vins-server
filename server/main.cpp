@@ -161,6 +161,8 @@ static int gravity_vector_direction = -1;
 static volatile int every_other = 0;
 static volatile double T_uncertainty = 0;
 static volatile double R_uncertainty = 0;
+static volatile double current_yawrate = 0;
+
 static volatile float alt_z = 0.0;
 static volatile bool changed_motion_state = false;
 static volatile bool imu_moved = false;
@@ -3459,6 +3461,14 @@ static void _publish_default(double pose_timestamp)
 	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
 	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
 
+	// check for agressive yaw
+    bool  bypass_feat_check = false;
+    if ( !en_fast_yaw_checks)
+    {
+    	// if I'm yawing in place > 45 deg/s then ignore quality checks and ovins will take care of it.
+    	bypass_feat_check = (s.imu_angular_vel[2] >= 0.785398 && s.imu_angular_vel[1] <= 0.1 && s.imu_angular_vel[1] <= 0.1);
+    }
+
 	// STATE mgmt
 	alt_z = imu_wrt_wio_holder(gravity_axis);   // TODO FIX
 
@@ -3553,6 +3563,14 @@ static void _publish_default(double pose_timestamp)
 		bool quality_bad = imu_moved && s.quality < 1;
 		bool stable_quality_bad = imu_moved && stable_quality(s.quality);
 		bool stable_features_bad = imu_moved && stable_features(n_good_points);
+
+		// override
+		if (bypass_feat_check)
+		{
+			quality_bad = false;
+			stable_quality_bad = false;
+			stable_features_bad = false;
+		}
 
 		bool too_fast = imu_vel.norm() > current_reset_max_velocity;
 		bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;

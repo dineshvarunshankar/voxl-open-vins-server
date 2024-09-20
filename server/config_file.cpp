@@ -61,6 +61,7 @@ int   auto_reset_min_features;
 float auto_reset_min_feature_timeout_s;
 float auto_fallback_timeout_s;
 float auto_fallback_min_v;
+bool  en_fast_yaw_checks;
 
 /// STATE OPTIONS ///
 bool do_fej;
@@ -199,6 +200,7 @@ int config_file_print(void) {
 	printf("auto_reset_min_feature_timeout_s: %6.3f\n", (double)auto_reset_min_feature_timeout_s);
 	printf("auto_fallback_timeout_s: %6.3f\n", (double)auto_fallback_timeout_s);
 	printf("auto_fallback_min_v: %6.3f\n", (double)auto_fallback_min_v);
+	printf("en_fast_yaw_checks: %s\n", en_fast_yaw_checks ?  "true" : "false");
 
     printf("===========================STATE=================================\n");
     printf("do fej:                           %s\n", do_fej ? "true" : "false");
@@ -301,6 +303,7 @@ int config_file_read(void) {
 	json_fetch_float_with_default(	parent, "auto_reset_min_feature_timeout_s",&auto_reset_min_feature_timeout_s, 3.0f);
 	json_fetch_float_with_default(	parent, "auto_fallback_timeout_s",&auto_fallback_timeout_s, 3.0f);
 	json_fetch_float_with_default(	parent, "auto_fallback_min_v",&auto_fallback_min_v, 0.6f);
+    json_fetch_bool_with_default(parent, "en_fast_yaw_checks", (int *)&en_fast_yaw_checks, 0);
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
     json_fetch_bool_with_default(parent, "imu_avg", (int *)&imu_avg, 1);
