@@ -345,6 +345,7 @@ static ov_status_t ov_status;
 std::string log_path = "";
 int is_color = 0; // assume mono
 int is_single = 0;  // assume alway dual
+int config_cam_count = 2;
 
 static RingBuffer *img_ringbuf = new RingBuffer(5);
 
@@ -498,6 +499,18 @@ static bool _parse_opts(int argc, char *argv[])
 			{
 				is_color = -1;
 				is_single = -1;
+			}
+			else if (camera_setup == 5)
+			{
+				is_color = 0;
+				is_single = 0;
+				config_cam_count  = 3;
+			}
+			else if (camera_setup == 6)
+			{
+				is_color = 0;
+				is_single = 0;
+				config_cam_count  = 1;
 			}
 
 						
@@ -4523,7 +4536,7 @@ int main(int argc, char *argv[])
 	config_file_print();
 
 	// read camera multicam setup and configs
-	if (cam_config_file_read(is_color, is_single, set_tracker_mode) < 0)
+	if (cam_config_file_read(is_color, is_single, set_tracker_mode, config_cam_count) < 0)
 	{
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);

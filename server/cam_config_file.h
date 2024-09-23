@@ -87,7 +87,7 @@ extern cv::Matx33d tmp_world_correction;
 extern cJSON *cam_json;
 
 // read only our own config file without printing the contents
-int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_tracker);
+int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_tracker, int num_cams);
 
 // prints the current configuration values to the screen.
 int cam_config_file_print(void);

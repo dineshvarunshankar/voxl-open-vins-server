@@ -48,9 +48,11 @@ print_usage () {
 	echo "voxl-configure-open-vins tracking_lr (e.g. fpv)"
 	echo "voxl-configure-open-vins tracking_45_ext (e.g. legacy, starling/sentinel/seeker/px4 ed with VFT)" 
 	echo "voxl-configure-open-vins tracking_fd_ext (e.g. starling max/starling v2.5 with VFT)"
+	echo "voxl-configure-open-vins tracking_fdr_ext (e.g. starling v2 triple camera tracking)"
+	echo "voxl-configure-open-vins tracking_f_ext (e.g. starling, starlingv2, starling MAX, front single cam)"
 	echo "voxl-configure-open-vins tracking_lr_ext (e.g. left-right custom with VFT)"
 	echo "voxl-configure-open-vins tracking_45_int (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
-	echo "voxl-configure-open-vins tracking_fd_int (e.g. front-down custom)"
+	echo "voxl-configure-open-vins tracking_fd_int (e.g. starling, starlingv2, starling MAX, dual cam front down)"
 	echo "voxl-configure-open-vins tracking_lr_int (e.g. left-right custom)"
 	echo "voxl-configure-open-vins tracking_d0008_int (e.g. D0008 vins tracker)"
 	echo "voxl-configure-open-vins tracking_d0008_ext (e.g. D0008 cvp tracker)"
@@ -156,7 +158,7 @@ case ${arg} in
 	"enable")
 		enable_service_and_exit
 		;;
-	"tracking_45") #starling v2
+	"tracking_45") #starling m500 sentinel
 		delete_config_file
 		delete_cam_config_file
 		voxl-open-vins-server --config 4 --mode 1
@@ -220,6 +222,20 @@ case ${arg} in
 		delete_config_file
 		delete_cam_config_file
 		voxl-open-vins-server --config 0 --mode 2
+		
+		enable_service_and_exit
+		;;
+	"tracking_fdr_ext")
+		delete_config_file
+		delete_cam_config_file
+		voxl-open-vins-server --config 5 --mode 2
+		
+		enable_service_and_exit
+		;;
+	"tracking_f_ext")
+		delete_config_file
+		delete_cam_config_file
+		voxl-open-vins-server --config 6 --mode 2
 		
 		enable_service_and_exit
 		;;

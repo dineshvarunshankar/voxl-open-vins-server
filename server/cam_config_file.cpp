@@ -1547,8 +1547,11 @@ void make_default_groups(
     int* n_groups,
 	int is_color_cam,
 	int is_single_cam,
-	int is_external_ft
+	int is_external_ft,
+	int num_cams
 ) {
+	printf("Num cams: %d\n", num_cams);
+
     // tmp vars for holding
     int int_holder;
     char string_holder[CM_CHAR_BUF_SIZE];
@@ -1684,6 +1687,21 @@ void make_default_groups(
 			cJSON_AddItemToArray(tracking_FD_cams, tracking_F);
 			cJSON_AddItemToArray(tracking_FD_cams, tracking_D);
 	
+			if (num_cams == 3)
+			{
+				cJSON* tracking_R = cJSON_CreateObject();
+				json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
+				json_fetch_string_with_default(tracking_R, "extrinsic", string_holder,
+					MODAL_PIPE_MAX_PATH_LEN-1, "trackingL");
+				json_fetch_string_with_default(tracking_R, "intrinsic", string_holder,
+					MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_trackingL_grey_intrinsics.yml");
+				json_fetch_string_with_default(tracking_R, "tracker_type", string_holder,
+					MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+				json_fetch_int_with_default(tracking_F, "num_features", &int_holder, 30);
+				cJSON_AddItemToArray(tracking_FD_cams, tracking_R);
+			}
+
+
 			// add tracking to groups
 			cJSON_AddItemToArray(groups_json, tracking_FD_vins);
 			group_counter += 1;
@@ -1700,16 +1718,22 @@ void make_default_groups(
         if (is_external_ft == 2)
         {
 			cJSON* tracking_FD_vins_B = cJSON_CreateObject();
-			json_fetch_bool_with_default(tracking_FD_vins_B, "enable", &int_holder, 1);
-            
-			json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder, 
+            cJSON* tracking_FD_vins_C = cJSON_CreateObject();
+
+            json_fetch_bool_with_default(tracking_FD_vins_B, "enable", &int_holder, num_cams >= 2);
+            json_fetch_string_with_default(tracking_FD_vins, "pipe", string_holder,
                 MODAL_PIPE_MAX_PATH_LEN-1, "tracking_front");
             json_fetch_string_with_default(tracking_FD_vins_B, "pipe", string_holder, 
                 MODAL_PIPE_MAX_PATH_LEN-1, "tracking_down");
+			json_fetch_bool_with_default(tracking_FD_vins_C, "enable", &int_holder, num_cams >= 3);
+	         json_fetch_string_with_default(tracking_FD_vins_C, "pipe", string_holder,
+	                MODAL_PIPE_MAX_PATH_LEN-1, "tracking_rear");
 
-            cJSON* tracking_FD_cams_A = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
+			cJSON* tracking_FD_cams_A = json_fetch_array_and_add_if_missing(tracking_FD_vins, "group_cams", &int_holder);
             cJSON* tracking_FD_cams_B = json_fetch_array_and_add_if_missing(tracking_FD_vins_B, "group_cams", &int_holder);
+			cJSON* tracking_FD_cams_C = json_fetch_array_and_add_if_missing(tracking_FD_vins_C, "group_cams", &int_holder);
 
+            //
             cJSON* tracking_F = cJSON_CreateObject();
 			json_fetch_bool_with_default(tracking_F, "enable", &int_holder, 1);
 			json_fetch_string_with_default(tracking_F, "extrinsic", string_holder, 
@@ -1731,10 +1755,27 @@ void make_default_groups(
 				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
 			json_fetch_int_with_default(tracking_D, "num_features", &int_holder, 30);
 			cJSON_AddItemToArray(tracking_FD_cams_B, tracking_D);
-        
+
+
+			cJSON* tracking_R = cJSON_CreateObject();
+			json_fetch_bool_with_default(tracking_R, "enable", &int_holder, 1);
+			json_fetch_string_with_default(tracking_R, "extrinsic", string_holder,
+				MODAL_PIPE_MAX_PATH_LEN-1, "tracking_rear");
+			json_fetch_string_with_default(tracking_R, "intrinsic", string_holder,
+				MODAL_PIPE_MAX_PATH_LEN-1, "/data/modalai/opencv_tracking_rear_intrinsics.yml");
+			json_fetch_string_with_default(tracking_R, "tracker_type", string_holder,
+				MODAL_PIPE_MAX_PATH_LEN-1, "vins");
+			json_fetch_int_with_default(tracking_R, "num_features", &int_holder, 30);
+			cJSON_AddItemToArray(tracking_FD_cams_C, tracking_R);
+
 			cJSON_AddItemToArray(groups_json, tracking_FD_vins);
 			cJSON_AddItemToArray(groups_json, tracking_FD_vins_B);
-			group_counter += 2;
+			cJSON_AddItemToArray(groups_json, tracking_FD_vins_C);
+
+			group_counter += 3;
+
+
+//
 
         }
         else
@@ -1793,7 +1834,7 @@ void make_default_groups(
 ///
 // TODO Following is a duopliate of what is in VFT, refactor to the camera config library
 //
-int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_tracker)
+int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_tracker, int num_cams)
 {
 
 	if (force_ext_tracker != 0)
@@ -1836,7 +1877,7 @@ int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_trac
 
     // if no camera groups, lets create some
     if(n_groups == 0) 
-    	make_default_groups(groups_json, &n_groups, is_color_cam, is_single_cam, force_ext_tracker);
+    	make_default_groups(groups_json, &n_groups, is_color_cam, is_single_cam, force_ext_tracker, num_cams);
 
    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
    // START PROCESSING CAM CONFIG
