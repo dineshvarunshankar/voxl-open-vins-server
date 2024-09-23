@@ -161,7 +161,6 @@ static int gravity_vector_direction = -1;
 static volatile int every_other = 0;
 static volatile double T_uncertainty = 0;
 static volatile double R_uncertainty = 0;
-static volatile double current_yawrate = 0;
 
 static volatile float alt_z = 0.0;
 static volatile bool changed_motion_state = false;
@@ -2526,18 +2525,25 @@ static double map_double(double x, double in_min, double in_max, double out_min,
 }
 
 // Looks at quality over time
-static bool stable_quality(int cur_qual)
+static bool stable_quality(int cur_qual, bool bypass=false)
 {
+
 	static double last_good_qual_ts = _apps_time_monotonic_ns();
 	bool is_bad = false;
+	double ts_threshold = auto_reset_max_v_cov_timeout_s;
+
+	if (bypass)
+		ts_threshold = auto_reset_max_v_cov_timeout_s - 1;
 
 	if (cur_qual >= 1)
+	{
 		last_good_qual_ts = _apps_time_monotonic_ns();
+	}
 
 	// if quality is less than acceptable for more than 2 sec
 	double ts = (_apps_time_monotonic_ns() - last_good_qual_ts) * 1e-9;
 
-	if (ts > auto_reset_max_v_cov_timeout_s)
+	if (ts > ts_threshold)
 	{
 		printf("[ERROR] quality was bad for a long time!\n");
 		is_bad = true;
@@ -2571,10 +2577,11 @@ static bool stable_state(int the_state)
 }
 
 // Looks at quality over time
-static bool stable_features(int cur_feats)
+static bool stable_features(int cur_feats, bool bypass = false)
 {
 	static bool wait_for_features = true;
-	
+	double ts_threshold = auto_reset_min_feature_timeout_s;
+
 	if (wait_for_features)
 	{
 		if (cur_feats > 3)
@@ -2596,12 +2603,17 @@ static bool stable_features(int cur_feats)
 		cur_feats = min_good_feat_thresh - 1;
 	}	
 	
+	if (bypass)
+		ts_threshold = auto_reset_min_feature_timeout_s -1;
+
 	if (cur_feats > min_good_feat_thresh)
+	{
 		last_good_feat_ts = _apps_time_monotonic_ns();
+	}
 
 	double ts = (_apps_time_monotonic_ns() - last_good_feat_ts) * 1e-9;
 
-	if (ts > auto_reset_min_feature_timeout_s)
+	if (ts > ts_threshold)
 	{
 		printf("ERROR: features were 0 for a long time! cur: %d, min_req: %d (are you bench testing?) \n", cur_feats, min_good_feat_thresh);
 		is_bad = true;
@@ -3321,8 +3333,7 @@ static void _publish_default(double pose_timestamp)
 
 	// don't send packets from the past, this can happen when qvio stalls
 	// during a reset
-	if (static_cast<int64_t>(current_state->_timestamp * 1e9)
-			< last_sent_timestamp_ns)
+	if (s.timestamp_ns < last_sent_timestamp_ns)
 	{
 		fprintf(stderr, "WARNING: skipping pose data from the past %f %ld\n",
 				current_state->_timestamp * 1e9, last_sent_timestamp_ns);
@@ -3330,6 +3341,8 @@ static void _publish_default(double pose_timestamp)
 
 		return;
 	}
+
+	double run_rate_s = (s.timestamp_ns - last_sent_timestamp_ns)*1e-9;
 
 	// All checks passed, after this point this function should not return
 	// until the end
@@ -3447,27 +3460,34 @@ static void _publish_default(double pose_timestamp)
 	s.velocity_covariance[11] = (float) cov_varis(8, 8);
 
 	// open vins does not estimate this, but reports it
-	double imu_angular_vel[3];
-	Eigen::Matrix<double, 3, 1> imu_vel = current_state->_imu->vel();
-	imu_angular_vel[0] = imu_vel(0);
-	imu_angular_vel[1] = imu_vel(1);
-	imu_angular_vel[2] = imu_vel(2);
+//	Eigen::Matrix<double, 3, 1> imu_vel = current_state->_imu->vel();
+//	double imu_angular_vel[3];
+//	imu_angular_vel[0] = imu_vel(0);
+//	imu_angular_vel[1] = imu_vel(1);
+//	imu_angular_vel[2] = imu_vel(2);
+//
+//	Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
+//	imu_angular_vel_holder = flu_ned_correction_mat * imu_angular_vel_holder;
 
-	Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
-	imu_angular_vel_holder = flu_ned_correction_mat * imu_angular_vel_holder;
+// NO 	//imu_angular_vel_holder = world_correction_mat * imu_angular_vel_holder;
+//	s.imu_angular_vel[0] = imu_angular_vel_holder(0);
+//	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
+//	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
 
-	//imu_angular_vel_holder = world_correction_mat * imu_angular_vel_holder;
-	s.imu_angular_vel[0] = imu_angular_vel_holder(0);
-	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
-	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
+	static Eigen::Matrix<double, 3, 1> last_rpy;
 
-	// check for agressive yaw
-    bool  bypass_feat_check = false;
-    if ( !en_fast_yaw_checks)
-    {
-    	// if I'm yawing in place > 45 deg/s then ignore quality checks and ovins will take care of it.
-    	bypass_feat_check = (s.imu_angular_vel[2] >= 0.785398 && s.imu_angular_vel[1] <= 0.1 && s.imu_angular_vel[1] <= 0.1);
-    }
+    Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
+    double delta_yaw = rpy(2) - last_rpy(2);
+    double yawrate =  fabs(delta_yaw / run_rate_s);
+    double delta_roll = rpy(0) - last_rpy(0);
+    double rollrate =  fabs(delta_roll / run_rate_s);
+    double delta_pitch = rpy(1) - last_rpy(1);
+    double pitchrate =  fabs(delta_pitch / run_rate_s);
+    last_rpy = rpy;
+
+	s.imu_angular_vel[0] = rollrate;
+	s.imu_angular_vel[1] = pitchrate;
+	s.imu_angular_vel[2] = yawrate;
 
 	// STATE mgmt
 	alt_z = imu_wrt_wio_holder(gravity_axis);   // TODO FIX
@@ -3559,20 +3579,28 @@ static void _publish_default(double pose_timestamp)
 			printf("INFO: MAYBE ON GROUND, POSITION LOCK? -- INVOKE ESTOP! (This is just a warning) %f %f %f\n",
 					baro_alt, 	d_baro, s.T_imu_wrt_vio[2]);
 		
+
+		// check for agressive yaw
+	    bool  spinning_in_place = false;
+	    bool too_much_spinning = false;
+	    if ( !en_cont_yaw_checks)
+	    {
+	    	static double start_spin_time = s.timestamp_ns;
+
+	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.2 && fabs(pitchrate)<=0.2);
+
+	    	if (!spinning_in_place)
+	    		start_spin_time = s.timestamp_ns;
+
+	    	too_much_spinning = (s.timestamp_ns - start_spin_time) * 1e-9 > fast_yaw_timeout_s;
+	    }
+
+
 		bool vio_manager_bad = current_state->error_flag == VIO_STATE_FAILED;
 		bool quality_bad = imu_moved && s.quality < 1;
 		bool stable_quality_bad = imu_moved && stable_quality(s.quality);
 		bool stable_features_bad = imu_moved && stable_features(n_good_points);
-
-		// override
-		if (bypass_feat_check)
-		{
-			quality_bad = false;
-			stable_quality_bad = false;
-			stable_features_bad = false;
-		}
-
-		bool too_fast = imu_vel.norm() > current_reset_max_velocity;
+		bool too_fast = current_state->_imu->vel().norm() > current_reset_max_velocity;
 		bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
 		
 		if (vio_manager_bad
@@ -3580,7 +3608,8 @@ static void _publish_default(double pose_timestamp)
 				|| stable_quality_bad 
 				|| stable_features_bad
 				|| too_fast
-				|| too_uncertain)
+				|| too_uncertain
+				|| too_much_spinning)
 		{
 			if (vio_manager_bad)
 			{
@@ -3604,10 +3633,15 @@ static void _publish_default(double pose_timestamp)
 			}
 			else if (too_fast)
 			{
-				fprintf(stderr,"[VIO_BAD_STATE] Exceeded MAX IMU Velocity %f vs %f\n", imu_vel.norm(),
+				fprintf(stderr,"[VIO_BAD_STATE] Exceeded MAX IMU Velocity %f vs %f\n", current_state->_imu->vel().norm(),
 						current_reset_max_velocity);
 				s.error_code |= ERROR_CODE_VEL_WINDOW_CERT;
 
+			}
+			else if (too_much_spinning)
+			{
+				fprintf(stderr,"[VIO_BAD_STATE] Exceeded spin rate over time of 2.0 seconds!\n");
+				s.error_code |= ERROR_CODE_UNKNOWN;
 			}
 			else if (too_uncertain)
 			{
@@ -3633,7 +3667,7 @@ static void _publish_default(double pose_timestamp)
 					"WARNING auto-resetting, Bad VIO, State: %s   Q: %d   Vel: %f Uncert: %f State: %d(%d)\n",
 							(current_state->error_flag == VIO_STATE_FAILED) ? "false" : " true", 
 							s.quality, 
-							imu_vel.norm(),
+							current_state->_imu->vel().norm(),
 							V_uncertainty,
 							s.state,
 							stable_state(s.state));

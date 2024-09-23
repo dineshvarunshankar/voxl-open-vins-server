@@ -126,7 +126,9 @@ extern int   auto_reset_min_features;
 extern float auto_reset_min_feature_timeout_s;
 extern float auto_fallback_timeout_s;
 extern float auto_fallback_min_v;
-extern bool  en_fast_yaw_checks;
+extern bool  en_cont_yaw_checks;
+extern float fast_yaw_thresh;
+extern float fast_yaw_timeout_s;
 
 /// STATE OPTIONS ///
 extern bool do_fej;
