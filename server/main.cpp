@@ -3600,7 +3600,7 @@ static void _publish_default(double pose_timestamp)
 	    {
 	    	static double start_spin_time = s.timestamp_ns;
 
-	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.2 && fabs(pitchrate)<=0.2);
+	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.5 && fabs(pitchrate)<=0.5);
 
 	    	if (!spinning_in_place)
 	    		start_spin_time = s.timestamp_ns;
