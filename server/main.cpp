@@ -3156,7 +3156,7 @@ static void _publish_default(double pose_timestamp)
 
 	// make sure we start with clean data structs and apply any global error codes
 	// full extended vio packet
-	memset(&d, 0, sizeof(d));
+//	memset(&d, 0, sizeof(d));
 	d.v.magic_number = VIO_MAGIC_NUMBER;
 	d.v.error_code = global_error_codes;
 
@@ -3164,13 +3164,13 @@ static void _publish_default(double pose_timestamp)
 			vio_manager->get_state(); // contains a few extra pieces we need
 
 	// simple lib modal pipe standard vio packet
-	memset(&s, 0, sizeof(s));
+//	memset(&s, 0, sizeof(s));
 	s.magic_number = VIO_MAGIC_NUMBER;
 	s.error_code = global_error_codes;
 	s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
 	// simple lib modal pipe standard vio packet
-	memset(&ov_status, 0, sizeof(ov_status));
+//	memset(&ov_status, 0, sizeof(ov_status));
 	ov_status.magic_number = VIO_MAGIC_NUMBER;
 
 	// record that we just got a successful pose and point cloud
@@ -3178,6 +3178,7 @@ static void _publish_default(double pose_timestamp)
 
 	if (!vio_manager->initialized())
 	{
+		s.timestamp_ns = last_real_pose_timestamp_ns;
 		s.quality  = -1;
 		s.state = VIO_STATE_INITIALIZING;
 		s.error_code |= ERROR_CODE_STALLED;
@@ -3600,8 +3601,9 @@ static void _publish_default(double pose_timestamp)
 	    {
 	    	static double start_spin_time = s.timestamp_ns;
 
-	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.5 && fabs(pitchrate)<=0.5);
-
+//      	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.5 && fabs(pitchrate)<=0.5);
+	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(vel_imu_wrt_vio_holder(0)) <= 1.0 && fabs(vel_imu_wrt_vio_holder(1))<= 1.0);
+	    	//spinning_in_place = (fabs(yawrate) > fast_yaw_thresh );   // 10 degees
 	    	if (!spinning_in_place)
 	    		start_spin_time = s.timestamp_ns;
 
@@ -3653,8 +3655,8 @@ static void _publish_default(double pose_timestamp)
 			}
 			else if (too_much_spinning)
 			{
-				fprintf(stderr,"[VIO_BAD_STATE] Exceeded spin rate over time of 2.0 seconds!\n");
-				s.error_code |= ERROR_CODE_UNKNOWN;
+				fprintf(stderr,"[VIO_BAD_STATE] Exceeded spin rate over time threshold %f!\n", fast_yaw_timeout_s);
+				s.error_code |= ERROR_CODE_IMU_OOB;
 			}
 			else if (too_uncertain)
 			{

@@ -309,7 +309,7 @@ int config_file_read(void) {
 	json_fetch_float_with_default(	parent, "auto_fallback_min_v",&auto_fallback_min_v, 0.6f);
     json_fetch_bool_with_default(parent, "en_cont_yaw_checks", (int *)&en_cont_yaw_checks, 0);
 	json_fetch_float_with_default(	parent, "fast_yaw_thresh",&fast_yaw_thresh, 5.0f);
-	json_fetch_float_with_default(	parent, "fast_yaw_timeout_s",&fast_yaw_timeout_s, 2.0f);
+	json_fetch_float_with_default(	parent, "fast_yaw_timeout_s",&fast_yaw_timeout_s,  1.75f);
 
 
     json_fetch_bool_with_default(parent, "do_fej", (int *)&do_fej, 1);
