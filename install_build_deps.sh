@@ -36,7 +36,6 @@ libmodal-journal
 voxl-opencv
 voxl-boost
 voxl-open-vins
-voxl-feature-tracker
 voxl-eigen3
 voxl-ceres-solver
 voxl-mpa-tools

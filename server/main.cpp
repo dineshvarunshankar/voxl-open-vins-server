@@ -43,7 +43,9 @@
 #include <stdio.h>
 #include <voxl_common_config.h>
 //#include <Eigen/Dense>
+#if defined(BUILD_QRB5165) && BUILD_QRB5165 == 1
 #include <vft_interface.h>  // TODO need this in common SDK
+#endif
 
 #include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 
