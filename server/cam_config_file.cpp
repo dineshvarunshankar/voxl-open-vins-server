@@ -59,7 +59,7 @@
 
 void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 1> &quaternion);
 void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R);
-void make_default_groups(cJSON* groups_json, int* n_groups, int is_color_cam, int is_single_cam, int is_external_ft) ;
+void make_default_groups(cJSON* groups_json, int* n_groups, int is_color_cam, int is_single_cam, int is_external_ft, int num_cams) ;
 
 //DEPRECATED
 int get_RPY_from_NED(Eigen::Matrix<double,3,3>  R, double* roll, double* pitch, double* yaw);
@@ -101,12 +101,19 @@ void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<double, 4, 
 	
 	// Return the Euler angles
 	if (en_force_ned_2_flu)
-		r = -eulerAngles(0);
-	else
+	{
+		// Case when user enters directly FLU RPY
 		r = eulerAngles(0);
+		p = eulerAngles(1);
+		y = eulerAngles(2);
+	}
+	else
+	{
+		r = eulerAngles(0);
+		p = M_PI - eulerAngles(1);
+		y = eulerAngles(2) - M_PI;
+	}
 		
-	p = M_PI - eulerAngles(1);
-	y = eulerAngles(2) - M_PI;
 	  
 	printf("[INFO] Camera: %d -- converted extrinsics *in FLU* are: Roll: %f, Pitch %f, Yaw %f\n", 
 			camera_ctn++,

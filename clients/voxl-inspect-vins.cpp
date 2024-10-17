@@ -175,7 +175,7 @@ static void _disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused
 
 static void _print_data(ext_vio_data_t d)
 {
-	if(!en_newline) printf("\r" CLEAR_LINE);
+  if(!en_newline) printf("\r" CLEAR_LINE);
 
 	// always print translation and rotation
 	printf("%8.2f%8.2f%8.2f|", (double)d.v.T_imu_wrt_vio[0], (double)d.v.T_imu_wrt_vio[1], (double)d.v.T_imu_wrt_vio[2]);

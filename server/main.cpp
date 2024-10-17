@@ -60,6 +60,7 @@
 #include "img_ringbuffer.h"
 #include "rc_transform.h"
 #include "cpu_monitor_interface.h"
+//#include "memwatch.h"
 
 #define OV_VIO_CONTROL_COMMANDS (RESET_VIO_SOFT "," RESET_VIO_HARD)
 
@@ -142,6 +143,7 @@ static int offline = 0;
 static bool bypass_reset_checks = false;
 static bool is_thermal = false;
 static bool pause_qmin = false;
+static bool zero_horizon = true;
 static uint16_t resume_processing = 0;
 static pthread_t health_thread;
 static pthread_t overlay_thread;
@@ -249,6 +251,9 @@ static bool not_displaying = true;
 std::mutex overlay_mutex;
 
 static cv::Mat world_correction;
+static Eigen::Matrix3d world_correction_eigen;
+static Eigen::Matrix<double, 4, 1> world_correction_q;
+
 std::deque<ov_core::CameraData> camera_queue;
 std::mutex camera_queue_mtx;
 
@@ -827,6 +832,9 @@ static int _hard_reset_(bool fast_reset)
 
 	// clean up old stuff
 	old_vio_manager.reset();  // delete OLD VINS core instance via mutex releases
+
+
+	printf("Camera queue size after reset: %d\n", camera_queue.size());
 
 	return 1;
 }
@@ -2441,21 +2449,31 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 						}
 					}
 
-					if (is_initialized)
+//////////////////////////////////////////////////////////////////
+// TODO -- why was this added
+//					if (is_initialized)
+//					{
+//////////////////////////////////////////////////////////////////
+
+					for (int k = 0; k<3; ++k)
 					{
-					    for (int k = 0; k<3; ++k) 
-					    {
-					        if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[gravity_axis])) 
-					        {
-					        	gravity_axis = k;
-					        }
-					    }
+						if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[gravity_axis]))
+						{
+							gravity_axis = k;
+						}
 					}
-					else
-					{
-						gravity_axis = 2;
-					}
-				}
+
+//////////////////////////////////////////////////////////////////
+// TODO -- why was this added
+//					}
+//					else
+//					{
+//						gravity_axis = 2;
+//					}
+//////////////////////////////////////////////////////////////////
+
+			}
+
 								
 				// NED to FLU systems as per VINS.
 				t_wm = flu_ned_correction_mat * t_wm;
@@ -3092,6 +3110,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 				time_of_last_reset = _apps_time_monotonic_ns();
 
 				init_failure_detector_reset_flag = 0;
+				zero_horizon = true;
 
 				if (is_armed || offline)
 					check_for_stable_vins = true;
@@ -3144,10 +3163,75 @@ static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 }
 
 
+/*
+ * Convert from Rotation matrix representing transformation from
+ * frame 2 to frame 1.
+ * The result will hold the angles defining the 3-2-1 intrinsic
+ * Tait-Bryan rotation sequence from frame 1 to frame 2.
+ * This is the usual nautical/aerospace order
+ */
+static void _Trotation_to_tait_bryan(float R[3][3], float* roll, float* pitch, float* yaw)
+{
+	*roll  = atan2(R[2][1], R[2][2]);
+	*pitch = asin(-R[2][0]);
+	*yaw   = atan2(R[1][0], R[0][0]);
+
+	if(fabs((double)*pitch - M_PI_2) < 1.0e-3){
+		*roll = 0.0;
+		*pitch = atan2(R[1][2], R[0][2]);
+	}
+	else if(fabs((double)*pitch + M_PI_2) < 1.0e-3) {
+		*roll = 0.0;
+		*pitch = atan2(-R[1][2], -R[0][2]);
+	}
+	return;
+}
+
+/*
+ * Convert from Rotation matrix representing transformation from
+ * frame 2 to frame 1.
+ * The result will hold the angles defining the 1-2-3 intrinsic
+ * Tait-Bryan rotation sequence from frame 1 to frame 2.
+ * This is the order used for imu-camera extrinsic
+ */
+static void _Trotation_to_tait_bryan_xyz_intrinsic(float R[3][3], float* roll, float* pitch, float* yaw)
+{
+	*pitch = asin(R[0][2]);
+	if(fabs(R[0][2]) < 0.9999999){
+		*roll = atan2(-R[1][2], R[2][2]);
+		*yaw  = atan2(-R[0][1], R[0][0]);
+	}
+	else{
+		*roll = atan2(R[2][1], R[1][1]);
+		*yaw  = 0.0f;
+	}
+	return;
+}
+
+
+Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch, double yaw) {
+    double cy = cos(yaw / 2);
+    double sy = sin(yaw / 2);
+    double cp = cos(pitch / 2);
+    double sp = sin(pitch / 2);
+    double cr = cos(roll / 2);
+    double sr = sin(roll  / 2);
+
+    Eigen::Matrix<double, 4, 1> q;
+    q(3) = cy * cp * cr + sy * sp * sr;
+    q(0) = cy * cp * sr - sy * sp * cr;
+    q(1) = cy * sp * cr + sy * cp * sr;
+    q(2) = sy * cp * cr - cy * sp * sr;
+
+    return q;
+}
+
 
 static void _publish_default(double pose_timestamp)
 {
     static Eigen::Matrix3d rot_global_to_imu_frame = Eigen::Matrix3d::Identity();
+	static double nullpoint = 1;
+	static double flipframe = 1;
 
 	int nPoints;
 	int n_good_points = 0;
@@ -3378,58 +3462,89 @@ static void _publish_default(double pose_timestamp)
 	//	Eigen::Matrix3d rot_fej = current_state->_imu->Rot_fej();
 	Eigen::Matrix<double, 4, 1> ned_q = current_state->_imu->quat_fej();
 
-    if (gravity_axis == 0 && gravity_vector_direction < 0)
-    {
-            rot_global_to_imu_frame = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())
-                            * Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY())
-                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitZ());
-    }
-
-	//
-	// Translation x y z
-	//
-	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
-	imu_wrt_wio_holder = rot_global_to_imu_frame * imu_wrt_wio_holder;
-	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
-
-	//
-	// Translation velocity vx vy vz
-	//
-	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
-	vel_imu_wrt_vio_holder = rot_global_to_imu_frame * vel_imu_wrt_vio_holder;
-	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
-
-
 	// Rotations
 
 	// TODO make more efficient
 	// TODO maybe use body extrinsics to set a flag if VOXL2 is mounted irregularly
 	// TODO which is what this is for
 	static Eigen::Matrix<double, 4, 1> rot_corrected(default_level_horizon);
-   if (!imu_moved && !is_armed)
-   {
-	   double angle_q = std::acos(default_level_horizon.dot(ned_q));
-	   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
-	   {
-//		   printf("[INFO] dynamic horizon alignment\n");
-		   rot_corrected = ov_core::Inv(ned_q);
-	   }
-	   else
-	   {
-//		   printf("[INFO] static IMU horizon alignment\n");
-		   rot_corrected = default_level_horizon;
-	   }
-   }   
-   
-   // dynamic zeroing horizon as needed
-   Eigen::Matrix<double, 4, 1> new_rot = ov_core::quat_multiply(ned_q, rot_corrected);
-    
-    // Convert ot NED
+
+#ifdef EXPERIMENTAL
+	if (!imu_moved && !is_armed)
+	{
+		   double angle_q = std::acos(default_level_horizon.dot(ned_q));
+		   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
+		   {
+			   printf("[INFO] dynamic horizon alignment\n");
+			   rot_corrected = ov_core::Inv(ned_q);
+		   }
+		   else
+		   {
+			   printf("[INFO] static IMU horizon alignment\n");
+			   rot_corrected = default_level_horizon;
+		   }
+    }
+#endif
+
+	Eigen::Matrix<double, 4, 1> new_rot = ov_core::quat_multiply(ned_q, rot_corrected);
+
+   // Convert to NED of quat
     new_rot.y() *= -1;
     new_rot.z() *= -1;
-    
-    Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
-    
+
+    if (gravity_axis == 0 && gravity_vector_direction < 0)
+	{
+    	new_rot = ov_core::quat_multiply(world_correction_q, new_rot);
+
+    	static double offset;
+		double rr,pp,yy;
+		quaternionToRPY(new_rot(0),new_rot(1), new_rot(2),new_rot(3), rr,pp,yy);
+
+    	if (zero_horizon)
+    	{
+ 		   double angle_q = std::acos(default_level_horizon.dot(ned_q));
+		   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
+		   {
+			   offset = yy;
+		   }
+	    	if (yy >=0)
+	    	{
+	    		nullpoint = 0;
+	    	}
+	    	else
+	    	{
+	    		nullpoint = 1;
+	    	}
+
+	    	// one shot
+			zero_horizon = false;
+
+	    	if (world_correction_q(gravity_axis) < 0)
+	    	{
+	    		flipframe= -1;
+	    	}
+	    	else
+	    	{
+	    		flipframe = 1;
+	    	}
+
+	    	printf("NULL FACTOR [%f]  from yaw->roll: %f\n", nullpoint, yy*180.0 / M_PI);
+	    	printf("Flipframe gravity on roll axis: %f\n", flipframe);
+
+    	}
+
+    	// auto horizon to account for null point
+    	yy = yy-offset;
+
+
+    	// HACK for X being the gravity axis
+        	new_rot = euler_to_quaternion(yy,flipframe*rr, flipframe*pp);
+	}
+
+	Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
+	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
+			final_out_ned.cast<float>();
+
     if (en_debug)
     {
         Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
@@ -3442,8 +3557,6 @@ static void _publish_default(double pose_timestamp)
                     imu_wrt_wio_holder(2));
     }
     
-	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
-			final_out_ned.cast<float>();
 
 	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
 	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
@@ -3451,6 +3564,44 @@ static void _publish_default(double pose_timestamp)
 
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
 			cam_out.cast<float>();
+
+
+    if (gravity_axis == 0 && gravity_vector_direction < 0)
+    {
+    	if (nullpoint == 0)
+    	{
+    		rot_global_to_imu_frame =
+    			                            Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitY())*
+    										Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ());
+
+    	}
+    	else
+    	{
+    		rot_global_to_imu_frame =
+    			                            Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY());
+    	}
+//   						Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+//                        Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY()) *
+//                        Eigen::AngleAxisd(0, Eigen::Vector3d::UnitZ());
+    }
+    // support other rotation here!
+
+
+	//
+	// Translation x y z
+	//
+	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
+	imu_wrt_wio_holder = rot_global_to_imu_frame * imu_wrt_wio_holder;
+	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
+
+	//
+	// Translation velocity vx vy vz
+	//
+	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
+	vel_imu_wrt_vio_holder =rot_global_to_imu_frame * vel_imu_wrt_vio_holder;
+	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
+
+
 
 	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat().transpose())
@@ -3491,12 +3642,12 @@ static void _publish_default(double pose_timestamp)
 	static Eigen::Matrix<double, 3, 1> last_rpy;
 
     Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
-    double delta_yaw = rpy(2) - last_rpy(2);
-    double yawrate =  fabs(delta_yaw / run_rate_s);
-    double delta_roll = rpy(0) - last_rpy(0);
-    double rollrate =  fabs(delta_roll / run_rate_s);
-    double delta_pitch = rpy(1) - last_rpy(1);
-    double pitchrate =  fabs(delta_pitch / run_rate_s);
+    double delta_yaw =  last_rpy(2) - rpy(2);
+    double yawrate =  delta_yaw / run_rate_s;
+    double delta_roll =  last_rpy(0) - rpy(0);
+    double rollrate =  delta_roll / run_rate_s;
+    double delta_pitch =  last_rpy(1) - rpy(1);
+    double pitchrate =  delta_pitch / run_rate_s;
     last_rpy = rpy;
 
 	s.imu_angular_vel[0] = rollrate;
@@ -3513,6 +3664,13 @@ static void _publish_default(double pose_timestamp)
 		// NOTE -1 to flip gravity from body coordindates!
 		float grav_vec[3] =
 			{ (float) -1 * gravity_vector_direction, 0, 0 };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
+	else if (gravity_axis == 1)
+	{
+		// NOTE -1 to flip gravity from body coordindates!
+		float grav_vec[3] =
+			{ 0, (float) -1 * gravity_vector_direction,  0 };
 		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
 	}
 	else if (gravity_axis == 2)
@@ -3601,9 +3759,7 @@ static void _publish_default(double pose_timestamp)
 	    {
 	    	static double start_spin_time = s.timestamp_ns;
 
-//      	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(rollrate) <= 0.5 && fabs(pitchrate)<=0.5);
 	    	spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && fabs(vel_imu_wrt_vio_holder(0)) <= 1.0 && fabs(vel_imu_wrt_vio_holder(1))<= 1.0);
-	    	//spinning_in_place = (fabs(yawrate) > fast_yaw_thresh );   // 10 degees
 	    	if (!spinning_in_place)
 	    		start_spin_time = s.timestamp_ns;
 
@@ -4275,6 +4431,18 @@ static int read_external_configs_from_file(void)
 			world_correction = cv::Mat(3, 3, CV_64F);
 			memcpy(world_correction.data, arr_world_correction,
 					3 * 3 * sizeof(double));
+
+		    for (int i = 0; i < 3; ++i) {
+		        for (int j = 0; j < 3; ++j) {
+		        	world_correction_eigen(i, j) = world_correction.at<double>(i, j);
+		        }
+		    }
+
+		    world_correction_q = ov_core::rot_2_quat(world_correction_eigen);
+
+		    printf("WORLD QUATERNION: %f %f %f %f\n", world_correction_q.x(), world_correction_q.y(), world_correction_q.z(), world_correction_q.w());
+
+
 			is_wrldc_set = true;
 		}
 		// now populate our vector with this information
