@@ -43,7 +43,9 @@
 #include <stdio.h>
 #include <voxl_common_config.h>
 //#include <Eigen/Dense>
-//#include <vft_interface.h>  // TODO need this in common SDK
+#if defined(BUILD_QRB5165) && BUILD_QRB5165 == 1
+#include <vft_interface.h>  // TODO need this in common SDK
+#endif
 
 #include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 
@@ -454,7 +456,7 @@ static bool _parse_opts(int argc, char *argv[])
 	while (1)
 	{
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "cdhil:mpotvx:", long_options,
+		int c = getopt_long(argc, argv, "c:dhil:m:potvx:", long_options,
 				&option_index);
 
 		// Detect the end of the options.

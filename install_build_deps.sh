@@ -19,6 +19,7 @@ libboost-thread-dev:arm64
 libboost-date-time-dev:arm64
 voxl-eigen3
 voxl-open-vins
+voxl-feature-tracker
 voxl-ceres-solver
 voxl-mpa-tools
 librc-math

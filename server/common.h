@@ -175,6 +175,7 @@ typedef struct camera_info {
 #define MAX_OUTPUT_FEATURES MAX_CAMERAS_PER_GROUP * 100
 
 
+#if !defined(BUILD_QRB5165) || BUILD_QRB5165 == 0
 struct __attribute__((packed)) vft_feature {
     int64_t id;
     float x;
@@ -214,8 +215,6 @@ struct __attribute__((packed)) vft_feature_packet {
 
     vft_feature_packet() : n_cams(0) {}
 };
-
-
 
 
 static void create_vft_memory(vft_feature_packet** p_feature_packet, vft_feature** p_features) {
@@ -272,6 +271,10 @@ static int validate_vft_data(int ch, char* data, int bytes, vft_feature_packet**
     }
     return 0;
 }
+
+#endif
+
+
 ////////////////////////////////////////////////////////////////
 #ifdef DEPRECATED_SINCE_SDK_1_1_0
 /**
