@@ -2513,6 +2513,7 @@ static void _new_imu_data_default_handler(__attribute__((unused)) int ch,
 					{
 						if (en_ext_feature_tracker)
 						{
+							camera_queue.clear();
 							while (!feature_queue.empty() && feature_queue.at(0).timestamp< timestamp_imu_inC)
 							{
 								vft_feature_set fst = feature_queue.at(0);
