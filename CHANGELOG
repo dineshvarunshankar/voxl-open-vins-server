@@ -1,3 +1,9 @@
+0.2.77
+    * fix voxl orientation when X axis is gravity, nullpoint
+    * unwrap tranformation from ovin global frmae to imu frame for vvhub
+    * fix quanternion issue
+0.2.70
+    * allow cvp vs vins tracking
 0.2.66
     * refactor ov flip commands for 3 cam
     * fallback thresholds now parameterized in config file
