@@ -3545,6 +3545,12 @@ static void _publish_default(double pose_timestamp)
 		new_rot = euler_to_quaternion(gravity_vector_direction*rpy(2), rpy(0), rpy(1));
 
 	}
+    else  if (gravity_axis == 2 && gravity_vector_direction  < 0)
+	{
+    	Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_x(M_PI);
+    	new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(roll_offset_rot));
+	}
+
     // support other rotation here!
 
 	Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
@@ -3570,13 +3576,14 @@ static void _publish_default(double pose_timestamp)
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
 			cam_out.cast<float>();
 
+
     if (gravity_axis == 0 && gravity_vector_direction < 0)
     {
 		rot_global_zero_horizon =
 										Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
     }
 
-	//
+    //
 	// Translation x y z
 	//
 	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;

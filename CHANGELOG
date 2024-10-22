@@ -1,3 +1,5 @@
+0.2.78
+    * re-add inverted voxl2 imu support, remove FLU reference
 0.2.77
     * fix voxl orientation when X axis is gravity, nullpoint
     * unwrap tranformation from ovin global frmae to imu frame for vvhub
