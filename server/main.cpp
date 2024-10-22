@@ -55,6 +55,8 @@
 
 #include "cCharacter.h"
 
+#include "shared_vars.h"
+#include "vft_module.h"
 #include "config_file.h"
 #include "cam_config_file.h"
 #include "quality.h"
@@ -82,27 +84,10 @@
 #define OV_STATUS_NAME "ov_status"
 #define OV_STATUS_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_STATUS_NAME "/"
 
-// server channels
-#define EXTENDED_CH 0
-#define SIMPLE_CH 1
-#define OVERLAY_CH 2
-#define OVSTATUS_CH 3
-
-// client channels and config
-#define IMU_CH 0
-#define FEATURE_CH 8
-#define FEAT_OVERLAY_CH 9
-#define BARO_CH 10
-#define CPU_CH 11
 
 #define CAMERA_CH_START_OFFSET 1
 #define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
 #define CAM_PIPE_SIZE (30 * 1280 * 800)         // give ourselves huge buffers
-#define PROCESS_NAME "voxl-open-vins-server"
-#define FEATURE_NAME "tracked_feats"
-#define FEATURE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_NAME "/"
-#define FEATURE_OVERLAY_NAME "feat_overlay"
-#define FEATURE_OVERLAY_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR FEATURE_OVERLAY_NAME "/"
 
 #define CPU_PIPE_DIR MODAL_PIPE_DEFAULT_BASE_DIR  "cpu_monitor/"
 
@@ -136,68 +121,68 @@
     }
 
 static int en_config_only = 0;
-static int en_debug = 0;
-static int en_debug_pos = 0;
-static int en_debug_timing_cam = 0;
+int en_debug = 0;
+int en_debug_pos = 0;
+int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
 static int set_tracker_mode = 0;
-static int offline = 0;
-static bool bypass_reset_checks = false;
-static bool is_thermal = false;
-static bool pause_qmin = false;
+int offline = 0;
+bool bypass_reset_checks = false;
+bool is_thermal = false;
+bool pause_qmin = false;
 static bool zero_horizon = true;
-static uint16_t resume_processing = 0;
+uint16_t resume_processing = 0;
 static pthread_t health_thread;
 static pthread_t overlay_thread;
 
 static double last_feature_time;
-static double last_imu_time;
-static int64_t last_cam_time;
+double last_imu_time;
+int64_t last_cam_time;
 static int64_t time_avg;
 static int avg = 0;
 static uint8_t thresh_level = 127;
-static volatile int perf_limit = 1;
+volatile int perf_limit = 1;
 static int start_idx = 0;
-static int cameras_used = 0;
-static int camera_pipe_channels[10];
-static int gravity_vector_direction = -1;
+int cameras_used = 0;
+int camera_pipe_channels[10];
+int gravity_vector_direction = -1;
 
 static volatile int every_other = 0;
 static volatile double T_uncertainty = 0;
 static volatile double R_uncertainty = 0;
 
-static volatile float alt_z = 0.0;
-static volatile bool changed_motion_state = false;
-static volatile bool imu_moved = false;
-static volatile int throttle_state = 0;
+volatile float alt_z = 0.0;
+volatile bool changed_motion_state = false;
+volatile bool imu_moved = false;
+volatile int throttle_state = 0;
 
-static volatile bool is_armed = false;
-static volatile bool is_resetting = false;
-static volatile bool use_takeoff_cam  = true;
-static volatile bool has_idle_images  = false;
-static volatile bool ext_blind_take_off_force = false;
-static volatile bool check_for_stable_vins = false;
+volatile bool is_armed = false;
+volatile bool is_resetting = false;
+volatile bool use_takeoff_cam  = true;
+volatile bool has_idle_images  = false;
+volatile bool ext_blind_take_off_force = false;
+volatile bool check_for_stable_vins = false;
 
 
 // TODO TBD static volatile int takeoff_horizon = 0;
 
 // these are the last timestamps that have completely passed into mvvislam
 // cam time is middle of frame. Also last pose to have been received from mvvislam
-static volatile int64_t last_imu_timestamp_ns = 0;
-static volatile int64_t last_feat_timestamp_ns = 0;
+volatile int64_t last_imu_timestamp_ns = 0;
+volatile int64_t last_feat_timestamp_ns = 0;
 std::mutex feat_ts_mutex;
 // this will need to be populated per camera before we start referencing it
-static volatile int64_t last_real_pose_timestamp_ns = 0;
-static volatile int64_t last_sent_timestamp_ns = 0;
+volatile int64_t last_real_pose_timestamp_ns = 0;
+volatile int64_t last_sent_timestamp_ns = 0;
 static volatile int64_t last_cep_timestamp_ns = 0;
-static double last_good_feat_ts = 0;
-static double current_reset_max_velocity = 3;
+double last_good_feat_ts = 0;
+double current_reset_max_velocity = 3;
 // state of imu and camera connections
-static volatile int is_imu_connected = 0;
-static volatile int is_cam_connected = 0;
-static volatile int is_init = 0;
+volatile int is_imu_connected = 0;
+volatile int is_cam_connected = 0;
+volatile int is_init = 0;
 static volatile int init_pass_frames = 0;
-static volatile int gravity_axis = 2; // 0=x,1=y,2=z
+volatile int gravity_axis = 2; // 0=x,1=y,2=z
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -205,7 +190,7 @@ static volatile int hard_reset_blowup_flag = 1;
 
 // flag and time when a reset is requested to indicate to the init failure
 // detection how long VIO has been trying to init
-static volatile int init_failure_detector_reset_flag = 0;
+volatile int init_failure_detector_reset_flag = 0;
 static volatile int64_t time_of_last_reset = 0;
 static volatile int blowup_detector_flag = 0;
 static volatile int64_t time_of_first_okay = 0;
@@ -214,21 +199,21 @@ static volatile int64_t time_of_first_okay = 0;
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
 static ov_msckf::VioManagerOptions vio_manager_options;
 std::mutex vio_manager_mutex;
-static Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
-static Eigen::Matrix<double, 4, 1> default_level_horizon (0,0,0,1); 
+Eigen::Matrix3d flu_ned_correction_mat = Eigen::Matrix3d::Identity();
+Eigen::Matrix<double, 4, 1> default_level_horizon (0,0,0,1); 
 
 std::mutex cam_lock_mutex;
 std::mutex publish_lock_mutex;
 std::mutex imu_lock_mutex;
 std::mutex baro_lock_mutex;
 
-static volatile int is_initialized = 0;
-static volatile int idler_limit = -1;
+volatile int is_initialized = 0;
+volatile int idler_limit = -1;
 static int blank_counter = 0;
 static int fade_counter = 0;
-static int64_t last_time_alignment_ns = 0;
-static int32_t last_frame_frame_id = 0;
-static int64_t last_frame_timestamp_ns = 0;
+int64_t last_time_alignment_ns = 0;
+int32_t last_frame_frame_id = 0;
+int64_t last_frame_timestamp_ns = 0;
 
 // Thermal stuff
 cv::Mat last_img8;
@@ -260,26 +245,25 @@ std::deque<ov_core::CameraData> camera_queue;
 std::mutex camera_queue_mtx;
 
 // set any error codes here for publishing in the data structure
-static uint32_t global_error_codes = 0;
+uint32_t global_error_codes = 0;
 
 std::vector<camera_info> cam_info_vec;
 static char imu_name[CHAR_BUF_SIZE] = "imu";
 static char baro_name[CHAR_BUF_SIZE] = "mavlink_onboard";
-static char vft_name[CHAR_BUF_SIZE] = "tracking_feats";
 
 static size_t num_cams = 0;
 static int max_width = 0;
 static int max_height = 0;
-static int current_width = 0;
-static int current_height = 0;
+int current_width = 0;
+int current_height = 0;
 
-static uint8_t update_slots = 0;   // 8 cameras max
+uint8_t update_slots = 0;   // 8 cameras max
 
 // function prototypes
 static void _publish(double vio_dt);
-static void _publish_default(double pose_timestamp);
+void _publish_default(double pose_timestamp);
 static bool show_extra_points_on_overlay = true;
-static bool pause_cam_states[6];
+bool pause_cam_states[6];
 
 // FUNCTIONS PROTOTSYPES
 static int _hard_reset(bool is_locked);
@@ -294,75 +278,32 @@ static int8_t verbosity_level
 	static_cast<uint8_t>(ov_core::Printer::PrintLevel::SILENT) 
 };
 
-static ext_vio_data_t d;  // complete "extended" vio MPA packet
-static vio_data_t s;      // simplified vio packet
+ext_vio_data_t d;  // complete "extended" vio MPA packet
+vio_data_t s;      // simplified vio packet
 
 static ext_vio_data_t d_copy;  // complete "extended" vio MPA packet
 
-typedef struct vft_feature_set{
-    uint8_t cam_id;
-    float timestamp;
-	std::vector<ov_core::ExtFeature> features;  // max support of 99 features
-} __vft_feature_set;
-
-std::deque<vft_feature_set> feature_queue;
-std::mutex feature_queue_mtx;
-vft_feature_set feat_set;
-vft_feature_set feat_set_multi[4];
-vft_feature_set feat_set_zero;
 std::vector<vft_feature> features;
-static uint8_t slot_image_pixels[MAX_IMAGE_SIZE];   // image pixels
+uint8_t slot_image_pixels[MAX_IMAGE_SIZE];   // image pixels
 
-// structs for inspection
-vft_feature_packet* feature_packet_from_vft;
-vft_feature* features_from_vft;
+display_bucket_t display_snapshot;
 
-typedef struct _bucket
-{
-	int64_t timestamp;
-	ext_vio_data_t d;
-	int used_pts;
-	int not_used_pts;
-	int q;
-	double cep;
-	double rerr;
-} display_bucket_t;
-static display_bucket_t display_snapshot;
-
-typedef struct _klt_feature_t
-{
-	uint32_t id;               ///< unique ID for feature point
-	int32_t cam_id; ///< ID of camera which the point was seen from (typically first)
-	float pix_loc[2];           ///< pixel location in the last frame
-//    float depth_error_stddev;   ///< depth error in meters
-} klt_feature_t;
-
-typedef struct _ov_status_t
-{
-	uint32_t magic_number; ///< Unique 32-bit number used to signal the beginning of a VIO packet while parsing a data stream.
-	int64_t timestamp_ns; ///< Timestamp in clock_monotonic system time of the provided pose.
-	int32_t quality;
-	float p_dop;
-	float r_dop;
-	int num_features;
-	klt_feature_t features[VIO_MAX_REPORTED_FEATURES];
-} ov_status_t;
-static ov_status_t ov_status;
+ov_status_t ov_status;
 
 std::string log_path = "";
 int is_color = 0; // assume mono
 int is_single = 0;  // assume alway dual
 int config_cam_count = 2;
 
-static RingBuffer *img_ringbuf = new RingBuffer(5);
+RingBuffer *img_ringbuf = new RingBuffer(5);
 
 std::atomic<bool> thread_update_running;
 std::atomic<bool> image_update_running;
 std::atomic<bool> overlay_update_running;
 boost::posix_time::ptime pT1, pT2, cT1, cT2, zeroTimeOut;
 static double ref_zero_alt = -9999.0;
-static double baro_alt = 0.;
-static double d_baro = 0.;
+double baro_alt = 0.;
+double d_baro = 0.;
 
 /////////////////////////
 /////////////////////////
@@ -978,410 +919,6 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 	return;
 }
 
-
-static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
-                       __attribute__((unused)) void* context)
-{
-	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
-	    printf("ERROR parsing vft data from pipe...\n");
-		return;
-	}
-
-	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-
-	static double last_set_time = set_time;
-	static int n_total_features = 0;
-
-	double dt_f = set_time-last_set_time;
-	last_set_time = set_time;
-
-	if (dt_f == 0)
-		return;
-
-	if (is_resetting)
-		return;
-
-	// testing logic
-	int test_offset = 0;
-	if (pause_cam_states[0] || pause_cam_states[1])
-	{
-		if (pause_cam_states[0])
-		{
-			test_offset = feature_packet_from_vft->num_feats[0];
-			feature_packet_from_vft->num_feats[0] = 0;
-		}
-		if (pause_cam_states[1])
-		{
-			feature_packet_from_vft->num_feats[1] = 0;
-		}
-	}
-
-
-	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
-	{
-		n_total_features = 0;
-
-		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
-		{
-			if (!en_vio_always_on)
-				printf(
-					"Detected Takeoff, going to multicamera VINS normal operations\n");
-			use_takeoff_cam = false;
-		}
-
-		int n_cams = feature_packet_from_vft->n_cams;
-
-		for (int i = 0; i < n_cams; i++) {
-			if (use_takeoff_cam && i == takeoff_cam)
-			{
-				n_total_features = 0;
-				n_total_features = feature_packet_from_vft->num_feats[i];
-				break;
-			}
-			else
-			{
-				n_total_features += feature_packet_from_vft->num_feats[i];
-			}
-		}
-
-//		printf("n_cams (%d) ,%d ,%d ,%d ,%d  %d %d\n", n_cams, n_total_features, feature_packet_from_vft->num_feats[0], feature_packet_from_vft->num_feats[1], feature_packet_from_vft->num_feats[2], use_takeoff_cam, takeoff_cam);
-//		int cam_num = 0;
-//		int ctn = 0;
-//		bool has_feats = 0;
-		// not the best but VFT sends the same number for every camera
-//		feat_set.features.resize(n_total_features);
-//		feat_set_zero.features.resize(n_total_features);
-
-		feat_set_zero.features.resize(feature_packet_from_vft->num_feats[0]);
-		std::map<double, int> ts_map;
-
-		{
-			int last_feat_ctn = 0;
-
-			// break out features in to their own feat_set
-			for (int z=0;z<cameras_used;z++)
-			{
-				double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[z] * 1e-9;
-				ts_map[ts_cam] = z;
-
-				feat_set_multi[z].timestamp = ts_cam;
-				feat_set_multi[z].cam_id = 0;
-
-				int cam_total_features = feature_packet_from_vft->num_feats[z];
-				feat_set_multi[z].features.resize(cam_total_features);
-
-
-				for (int x=0;x<cam_total_features;x++)
-				{
-					feat_set_multi[z].features[x].cam_id = z;
-					feat_set_multi[z].features[x].id = features_from_vft[last_feat_ctn].id;
-					feat_set_multi[z].features[x].u = features_from_vft[last_feat_ctn].x;
-					feat_set_multi[z].features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
-					memcpy(feat_set_multi[z].features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
-
-					if (z == takeoff_cam)
-					{
-						feat_set_zero.cam_id = z;
-						feat_set_zero.features[x].cam_id = z;
-						feat_set_zero.features[x].id = features_from_vft[last_feat_ctn].id;
-						feat_set_zero.features[x].u = features_from_vft[last_feat_ctn].x;
-						feat_set_zero.features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
-						memcpy(feat_set_zero.features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
-					}
-					last_feat_ctn++;
-				}
-			}
-
-			int total_feats_ctn = 0;
-			double avg_ts = 0;
-			int num_cams_used = 0;
-			feat_set.features.clear();
-			for (const auto& pair : ts_map)
-			{
-				int cam_num = pair.second;
-				if  (use_takeoff_cam && takeoff_cam >= 0  && cam_num != takeoff_cam)
-				{
-					continue;
-				}
-
-				num_cams_used++;
-				avg_ts += feat_set_multi[cam_num].timestamp;
-				feat_set.features.insert(feat_set.features.end(), feat_set_multi[cam_num].features.begin(), feat_set_multi[cam_num].features.end());
-
-			}
-
-			double cam_time =  avg_ts/num_cams_used;
-//			double cam_time = ts_map.begin()->first;
-
-//			printf("avg time %f cam0 %f cam1 %f\n", cam_time,  feat_set_multi[0].timestamp,feat_set_multi[1].timestamp);
-
-			feat_set.timestamp = cam_time;
-			feat_set_zero.timestamp = cam_time;
-			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-			feature_queue.push_back(feat_set);
-		}
-
-//		else
-//		{
-//	        auto lastElement = ts_map.rbegin();
-//
-////			feat_set.timestamp = lastElement->first;
-////			feat_set_zero.timestamp = lastElement->first;
-////			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-////			feature_queue.push_back(feat_set);
-//
-//			for(const auto& pair : ts_map) {
-//				if ( pair.first != NULL)
-//				{
-//					int idx_num = pair.second;
-//					int idx_num_feats = feature_packet_from_vft->num_feats[idx_num];
-//
-//					feat_set_multi[idx_num].features.resize(n_total_features);
-//					feat_set_zero.features.resize(n_total_features);
-//
-//					feat_set_multi[idx_num].timestamp =  pair.first;
-//					feat_set_zero.timestamp = pair.first;
-//
-//					for (int i=0; i<idx_num_feats; i++)
-//					{
-//						int ofs = idx_num*idx_num_feats+i;
-//
-//						feat_set_multi[idx_num].cam_id = pair.second;
-//						feat_set_multi[idx_num].features[i].cam_id = pair.second;
-//						feat_set_multi[idx_num].features[i].id = features_from_vft[ofs].id;
-//						feat_set_multi[idx_num].features[i].u = features_from_vft[ofs].x;
-//						feat_set_multi[idx_num].features[i].v = features_from_vft[ofs].y;  // TODO subtract from height?
-//						memcpy(feat_set_multi[idx_num].features[i].descriptor, features_from_vft[ofs].descriptor, 32);
-//
-//						if (idx_num == 0)
-//						{
-//							feat_set_zero.cam_id = pair.second;
-//							feat_set_zero.features[i].cam_id = pair.second;
-//							feat_set_zero.features[i].id = features_from_vft[ofs].id;
-//							feat_set_zero.features[i].u = features_from_vft[ofs].x;
-//							feat_set_zero.features[i].v = features_from_vft[ofs].y;  // TODO subtract from height?
-//							memcpy(feat_set_zero.features[i].descriptor, features_from_vft[ofs].descriptor, 32);
-//						}
-//					}
-//					if (idx_num < 2)
-//					{
-//						std::lock_guard < std::mutex > lck(feature_queue_mtx);
-//						feature_queue.push_back(feat_set_multi[idx_num]);
-//					}
-//				}
-//				else
-//				{
-//					printf("PAIR IS NULL\n");
-//				}
-//		    }
-//		}
-	}
-	else
-	{
-		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-		// if idle for a long time, update the zero state by forcing a reset
-		if (cam_time - feat_set_zero.timestamp > 30.0)
-		{
-			printf("Sitting around for a long time, resetting zero state for blind takeoff\n");
-			init_failure_detector_reset_flag = 1;
-		}
-
-		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
-		{
-			feat_set.timestamp = cam_time;
-			feat_set.cam_id = feat_set_zero.cam_id;
-			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
-			feat_set.features[i].id = feat_set_zero.features[i].id;
-			feat_set.features[i].u = feat_set_zero.features[i].u;
-			feat_set.features[i].v = feat_set_zero.features[i].v;
-			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
-		}
-		std::lock_guard < std::mutex > lck(feature_queue_mtx);
-
-		feature_queue.push_back(feat_set);
-	}
-
-	is_cam_connected = true;
-}
-
-#ifdef PROD
-static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
-                       __attribute__((unused)) void* context) 
-{
-	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
-	    printf("ERROR parsing vft data from pipe...\n");
-		return;
-	}
-	
-
-	// reorganize
-
-
-	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-			
-	static double last_set_time = set_time;
-	static int n_total_features = 0;
-
-	double dt_f = set_time-last_set_time;
-	last_set_time = set_time;
-
-	if (dt_f == 0)
-		return;
-
-	if (is_resetting)
-		return;
-	
-	// testing logic
-	int test_offset = 0;
-	if (pause_cam_states[0] || pause_cam_states[1])
-	{
-		if (pause_cam_states[0])
-		{
-			test_offset = feature_packet_from_vft->num_feats[0];
-			feature_packet_from_vft->num_feats[0] = 0;
-		}
-		if (pause_cam_states[1])
-		{
-			feature_packet_from_vft->num_feats[1] = 0;
-		}
-	}
-
-	
-	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
-	{
-		n_total_features = 0;
-		
-		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
-		{
-			if (!en_vio_always_on)
-				printf(
-					"Detected Takeoff, going to multicamera VINS normal operations\n");
-			use_takeoff_cam = false;
-		}			
-		
-		int n_cams = feature_packet_from_vft->n_cams;
-				
-		for (int i = 0; i < n_cams; i++) {
-			if (use_takeoff_cam && i == takeoff_cam)
-			{
-				n_total_features = 0;
-				n_total_features = feature_packet_from_vft->num_feats[i];
-				break;
-			}
-			else
-			{
-				n_total_features += feature_packet_from_vft->num_feats[i];
-			}
-		}
-  
-		int cam_num = 0;
-		int ctn = 0;
-		bool has_feats = 0;
-		
-		feat_set.features.resize(n_total_features);
-		feat_set_zero.features.resize(n_total_features);
-		
-		std::map<double, int> ts_map;
-
-		for (int i = 0; i < n_total_features; i++)
-		{
-			if (use_takeoff_cam && cam_num != takeoff_cam)
-			{
-				continue;
-			}
-
-			if (ctn >= feature_packet_from_vft->num_feats[cam_num])  
-			{
-				ctn = 0;
-				cam_num++;
-			}
-
-			double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
-            ts_map[ts_cam] = cam_num;
-
-			int tmp_offset = test_offset + i;
-//			feat_set.timestamp = cam_time;
-			feat_set.cam_id = cam_num;
-			feat_set.features[i].cam_id = cam_num;
-			feat_set.features[i].id = features_from_vft[tmp_offset].id;
-			feat_set.features[i].u = features_from_vft[tmp_offset].x;
-			feat_set.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
-			memcpy(feat_set.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
-			
-//			feat_set_zero.timestamp = cam_time;
-			feat_set_zero.cam_id = cam_num;
-			feat_set_zero.features[i].cam_id = cam_num;
-			feat_set_zero.features[i].id = features_from_vft[tmp_offset].id;
-			feat_set_zero.features[i].u = features_from_vft[tmp_offset].x;
-			feat_set_zero.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
-			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
-			
-			ctn++;
-		}        
-
-		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-		if (cam_num < 1)
-		{
-			feat_set.timestamp = cam_time;
-			feat_set_zero.timestamp = cam_time;
-			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-			feature_queue.push_back(feat_set);
-		}
-		else
-		{
-
-	        	auto lastElement = ts_map.rbegin();
-//	       		  std::cout << "Last Key: " << lastElement->first << ", Last Value: " << lastElement->second << std::endl;
-
-			feat_set.timestamp = lastElement->first;
-			feat_set_zero.timestamp = lastElement->first;
-			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-			feature_queue.push_back(feat_set);
-
-			printf("ts %f  \t", last_imu_time);
-			for(const auto& pair : ts_map) {
-		        std::cout << "Key: " << pair.first << "(" << pair.first-last_imu_time << ")" << ", Value: " << pair.second << "\t";
-//				feat_set.timestamp = pair.first;
-//				feat_set_zero.timestamp = pair.first;
-//				feature_queue.push_back(feat_set);
-		    }
-
-			std::cout << "\n^^^" << std::endl;
-
-		}
-
-
-	}
-	else
-	{
-		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-
-		// if idle for a long time, update the zero state by forcing a reset
-		if (cam_time - feat_set_zero.timestamp > 30.0)
-		{
-			printf("Sitting around for a long time, resetting zero state for blind takeoff\n");
-			init_failure_detector_reset_flag = 1;
-		}
-		
-		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
-		{
-			
-			feat_set.timestamp = cam_time;							
-			feat_set.cam_id = feat_set_zero.cam_id;
-			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
-			feat_set.features[i].id = feat_set_zero.features[i].id;
-			feat_set.features[i].u = feat_set_zero.features[i].u;
-			feat_set.features[i].v = feat_set_zero.features[i].v;  
-			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
-		}
-		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
-
-		feature_queue.push_back(feat_set);
-	}
-
-	is_cam_connected = true;
-}
-#endif
 
 // helper callback for cams we are using in the system
 static void _cam_helper_cb(__attribute__((unused)) int ch,
@@ -3246,7 +2783,7 @@ Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch, doubl
 }
 
 
-static void _publish_default(double pose_timestamp)
+void _publish_default(double pose_timestamp)
 {
     static Eigen::Matrix3d rot_global_to_imu_frame = Eigen::Matrix3d::Identity();
     static Eigen::Matrix3d rot_global_zero_horizon = Eigen::Matrix3d::Identity();
@@ -4054,22 +3591,6 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	return vio_manager_options;
 }
 
-static void _feat_disconnect_cb(__attribute__((unused)) int ch,
-		__attribute__((unused)) void *context)
-{
-    destroy_vft_memory(&feature_packet_from_vft, &features_from_vft);
-	return;
-}
-
-
-//static void _feat_connect_cb(__attribute__((unused)) int ch,
-//                        __attribute__((unused)) void* context) {
-//    // get some space for the features
-//    create_vft_memory(&feature_packet_from_vft, &features_from_vft);
-//    return;
-//}
-
-// called whenever we disconnect from the server
 
 static void _imu_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
@@ -4568,27 +4089,6 @@ static int read_external_configs(void)
 }
 #endif
 ////////////////////////////////////////////////////////////////
-
-static bool connect_vft_service()
-{
-	// connect to our feature tracker
-	pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
-	pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler,
-			NULL);
-	create_vft_memory(&feature_packet_from_vft, &features_from_vft);
-	
-	if (pipe_client_open(FEATURE_CH, vft_name, PROCESS_NAME, EN_PIPE_CLIENT_SIMPLE_HELPER /*CLIENT_FLAG_EN_SIMPLE_HELPER*/, 
-			sizeof(vft_feature_packet)) != 0)
-	{
-		printf(
-				"pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, .... failed\n");
-		_quit(-1);
-	}
-
-	printf("VFT connected\n");
-
-	return true;
-}
 
 
 static bool connect_mavlink_service()
