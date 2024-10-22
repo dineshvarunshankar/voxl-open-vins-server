@@ -51,8 +51,8 @@
 #define GRID_BLOCKS (GRID_W*GRID_H)
 #define MAX_SCORE_PER_BLOCK (1.0f)
 
-int grid_spacing_x;
-int grid_spacing_y;
+extern int grid_spacing_x;
+extern int grid_spacing_y;
 
 
 

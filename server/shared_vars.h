@@ -38,6 +38,7 @@ extern int offline;
 extern bool bypass_reset_checks;
 extern bool is_thermal;
 extern bool pause_qmin;
+extern bool zero_horizon;
 extern uint16_t resume_processing;
 
 extern double last_imu_time;
@@ -111,6 +112,10 @@ extern RingBuffer *img_ringbuf;
 
 extern std::deque<ov_core::CameraData> camera_queue;
 extern std::mutex camera_queue_mtx;
+
+extern cv::Mat world_correction;
+extern Eigen::Matrix3d world_correction_eigen;
+extern Eigen::Matrix<double, 4, 1> world_correction_q;
 
 typedef struct _bucket
 {
