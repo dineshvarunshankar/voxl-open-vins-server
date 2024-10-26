@@ -148,6 +148,7 @@ bool en_force_init = false;
 bool en_vio_always_on = true;
 bool en_force_ned_2_flu = false;
 
+
 //std::string log_path;
 
 static std::string feat_set_as_string(ov_type::LandmarkRepresentation::Representation feat_representation) {

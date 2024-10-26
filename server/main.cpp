@@ -127,7 +127,6 @@ int en_debug = 0;
 int en_debug_pos = 0;
 int en_debug_timing_cam = 0;
 static int en_debug_timing_imu = 0;
-static int set_tracker_mode = 0;
 int offline = 0;
 bool bypass_reset_checks = false;
 bool is_thermal = false;
@@ -247,7 +246,7 @@ std::mutex camera_queue_mtx;
 // set any error codes here for publishing in the data structure
 uint32_t global_error_codes = 0;
 
-std::vector<camera_info> cam_info_vec;
+
 static char baro_name[CHAR_BUF_SIZE] = "mavlink_onboard";
 
 static size_t num_cams = 0;
@@ -290,9 +289,6 @@ display_bucket_t display_snapshot;
 ov_status_t ov_status;
 
 std::string log_path = "";
-int is_color = 0; // assume mono
-int is_single = 0;  // assume alway dual
-int config_cam_count = 2;
 
 RingBuffer *img_ringbuf = new RingBuffer(5);
 
@@ -313,11 +309,8 @@ volatile float twoKp = twoKpDef;                   // 2 * proportional gain (Kp)
 volatile float twoKi = twoKiDef;                       // 2 * integral gain (Ki)
 volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f; // quaternion of sensor frame relative to auxiliary frame
 volatile float integralFBx = 0.0f, integralFBy = 0.0f, integralFBz = 0.0f; // integral error terms scaled by Ki
-void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay,
-		float az, float *phi, float *theta, float *psi);
-float invSqrt(float x);
-static void dead_reckon_position(double dt, float ax, float ay, float az,
-		float gx, float gy, float gz);
+
+
 static float _odometry_imu[3] =
 { 0 };
 static float _vel_imu[3] =
@@ -343,8 +336,7 @@ static void _print_usage(void)
 This is meant to run in the background as a systemd service, but can be\n\
 run manually with the following debug options\n\
 \n\
--c, --config   [0|1|2|3]  only parse/create the config file and exit, don't run. Options are: \n\t\t\t0=dual mono, 1=dual color,\n\t\t\t2=single mono, 3=single color, 4=qvio replacement\n\
--m, --mode   [0|1|2] type of feature tracking, 0=leave as-is (default), 1=change to internal tracker, 2=change to external tracker\n\
+-c, --config                only parse/create the config file and exit, don't run.\n\
 -d, --debug                 enable debug prints\n\
 -h, --help                  print this help message\n\
 -i, --timing-imu            show timing prints for imu processing\n\
@@ -374,7 +366,7 @@ static bool _parse_opts(int argc, char *argv[])
 	
 	static struct option long_options[] =
 	{
-	{ "config", required_argument, 0, 'c' },
+	{ "config", no_argument, 0, 'c' },
 	{ "mode", required_argument, 0, 'm' },
 	{ "debug", no_argument, 0, 'd' },
 	{ "help", no_argument, 0, 'h' },
@@ -396,7 +388,7 @@ static bool _parse_opts(int argc, char *argv[])
 	while (1)
 	{
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "c:dhil:m:potvx:", long_options,
+		int c = getopt_long(argc, argv, "cdhil:potvx:", long_options,
 				&option_index);
 
 		// Detect the end of the options.
@@ -404,7 +396,7 @@ static bool _parse_opts(int argc, char *argv[])
 		{
 			break;
 		}
-		int camera_setup = 0;
+
 		switch (c)
 		{
 		case 0:
@@ -413,56 +405,8 @@ static bool _parse_opts(int argc, char *argv[])
 				break;
 			break;
 
-		case 'm':
-			set_tracker_mode = static_cast<uint8_t>(std::atoi(optarg));
-			break;
-			
-			
 		case 'c':
-			camera_setup = static_cast<uint8_t>(std::atoi(optarg));
 			en_config_only = 1;
-			
-			if (camera_setup == 0)
-			{
-				is_color = 0;
-				is_single = 0;
-			}
-			else if (camera_setup == 1)
-			{
-				is_color = 1;
-				is_single = 0;
-			}
-			else if (camera_setup == 2)
-			{
-				is_color = 0;
-				is_single = 1;
-			}
-			else if (camera_setup == 3)
-			{
-				is_color = 1;
-				is_single = 1;
-			}
-			else if (camera_setup == 4)   // QVIO replacement
-			{
-				is_color = -1;
-				is_single = -1;
-			}
-			else if (camera_setup == 5)
-			{
-				is_color = 0;
-				is_single = 0;
-				config_cam_count  = 3;
-			}
-			else if (camera_setup == 6)
-			{
-				is_color = 0;
-				is_single = 0;
-				config_cam_count  = 1;
-			}
-
-						
-			printf("[INFO] color camera? %s\n", is_color ? "true" : "false");
-			printf("[INFO] single camera? %s\n", is_single ? "true" : "false");
 			break;
 
 		case 'd':
@@ -491,7 +435,7 @@ static bool _parse_opts(int argc, char *argv[])
 			break;
 
 		case 'o':
-            offline = 1;
+			offline = 1;
 			is_armed = true;
 			throttle_state = 5;
 			break;
@@ -1377,9 +1321,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 
 static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 {
-	sched_param sch_params;
-	sch_params.sched_priority = 19;
-	pthread_setschedparam(pthread_self(), SCHED_OTHER, &sch_params);
+	pipe_set_process_priority(THREAD_PRIORITY_RT_LOW);
 
 	while (main_running)
 	{
@@ -1986,109 +1928,6 @@ static int read_external_configs_from_file(void)
 	return 0;
 }
 
-////////////////////////////////////////////////////////////////
-#ifdef DEPRECATED_SINCE_SDK_1_1_0
-
-static int read_external_configs(void)
-{
-
-	// connect to our feature tracker
-	pipe_client_set_disconnect_cb(FEATURE_CH, _feat_disconnect_cb, NULL);
-	pipe_client_set_simple_helper_cb(FEATURE_CH, _new_feat_data_default_handler,
-			NULL);
-	
-	if (pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME,
-			CLIENT_FLAG_EN_SIMPLE_HELPER, 1280 * 800 * 1) != 0)
-	{
-		printf(
-				"pipe_client_open(FEATURE_CH, FEATURE_LOCATION, PROCESS_NAME, .... failed\n");
-		_quit(-1);
-	}
-	usleep(5000);
-
-	// grab the json from voxl-feature-tracker's info file
-
-	// TODO FIX this as it requires freature tracker to get camera intrinsics/extrinsics
-	cJSON *json = pipe_client_get_info_json(FEATURE_CH);
-
-	int ret = json_fetch_string(json, "imu", imu_name, 128);
-
-	bool is_wrldc_set = false;
-
-	cJSON *cams = cJSON_GetObjectItem(json, "cameras");
-	if (cams == NULL)
-	{
-		fprintf(stderr, "failed to get cameras\n");
-	}
-
-	int i = 0;
-	size_t cam_id = 0;
-	while (ret == 0)
-	{
-
-		cJSON *curr_cam = cJSON_GetArrayItem(cams, cam_id);
-		if (curr_cam == NULL)
-		{
-			// fprintf(stderr, "failed to get curr_cam\n");
-			break;
-		}
-
-		double arr_cam_wrt_imu[7];
-		double arr_cam_calib[10];
-		double arr_world_correction[9];
-		int is_fisheye;
-
-		ret = json_fetch_fixed_vector(curr_cam, "ov_cam_wrt_imu",
-				arr_cam_wrt_imu, 7);
-		ret = json_fetch_fixed_vector(curr_cam, "ov_cam_cal", arr_cam_calib,
-				10);
-		if (!is_wrldc_set)
-			ret = json_fetch_fixed_vector(curr_cam, "ov_world_correction",
-					arr_world_correction, 9);
-		ret = json_fetch_bool(curr_cam, "fisheye", &is_fisheye);
-
-		Eigen::Matrix<double, 7, 1> curr_cam_wrt_imu(arr_cam_wrt_imu);
-		Eigen::Matrix<double, 10, 1> curr_cam_calib_intrinsic(arr_cam_calib);
-
-		if (curr_cam_calib_intrinsic(8, 0) > max_width)
-			max_width = curr_cam_calib_intrinsic(8, 0);
-		if (curr_cam_calib_intrinsic(9, 0) > max_height)
-			max_height = curr_cam_calib_intrinsic(9, 0);
-
-		if (!is_wrldc_set)
-		{
-			world_correction = cv::Mat(3, 3, CV_64F);
-			memcpy(world_correction.data, arr_world_correction,
-					3 * 3 * sizeof(double));
-			is_wrldc_set = true;
-		}
-		// now populate our vector with this information
-		camera_info curr_info;
-		curr_info.is_fisheye = is_fisheye;
-		curr_info.cam_wrt_imu = curr_cam_wrt_imu;
-		curr_info.cam_calib_intrinsic = curr_cam_calib_intrinsic;
-		curr_info.cam_id = cam_id;
-		cam_id++;
-
-		// fetch the name as well directly into this packet
-		ret = json_fetch_string(curr_cam, "cam name", curr_info.name, 128);
-
-		// fetch the mode
-		char mode_buf[128];
-		ret = json_fetch_string(curr_cam, "cam mode", mode_buf, 128);
-		curr_info.mode = string_camera_mode_to_enum(mode_buf);
-
-		cam_info_vec.push_back(curr_info);
-	}
-
-	// free up the json we got
-	free(json);
-
-	return ret;
-}
-#endif
-////////////////////////////////////////////////////////////////
-
 
 static bool connect_mavlink_service()
 {
@@ -2158,7 +1997,7 @@ int main(int argc, char *argv[])
 	config_file_print();
 
 	// read camera multicam setup and configs
-	if (cam_config_file_read(is_color, is_single, set_tracker_mode, config_cam_count) < 0)
+	if (cam_config_file_read() < 0)
 	{
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
@@ -2230,34 +2069,14 @@ int main(int argc, char *argv[])
 	// set this critical process to use FIFO scheduler with high priority
 	////////////////////////////////////////////////////////////////////////////////
 
-	struct sched_param param;
-	memset(&param, 0, sizeof(sched_param));
-	param.sched_priority = 98;
-	// we go with _RR as I want equal time on IMU and camera threads.
-	fprintf(stderr, "setting scheduler\n");
-	int ret = sched_setscheduler(0, SCHED_RR, &param);
-	if (ret == -1)
-	{
-		fprintf(stderr, "WARNING Failed to set priority, errno = %d\n", errno);
-		fprintf(stderr, "This seems to be a problem with ADB, the scheduler\n");
-		fprintf(stderr,
-				"should work properly when this is a background process\n");
-	}
-	// check
-	ret = sched_getscheduler(0);
-	if (ret != SCHED_RR)
-	{
-		fprintf(stderr, "WARNING: failed to set scheduler\n");
-	}
-	else
-	{
-		// even thought this is a success, print to stderr to that it shows up
-		// in the correct order. stdout logs in journalctl are usually out of
-		// sync with stderr
-		fprintf(stderr, "INFO: set FIFO priority successfully!\n");
-	}
-	// The threads created by libmodal_pipe after this should inherit this
-	// priority, TODO validate this
+	// set this critical process to use FIFO scheduler with high priority
+	pipe_set_process_priority(THREAD_PRIORITY_RT_HIGH);
+
+#ifdef BUILD_QRB5165
+	// on qrb5165 keep this process on the larger cores
+	set_cpu_affinity(cpu_set_big_cores_and_gold_core());
+	print_cpu_affinity();
+#endif
 
 	// Create the server pipes
 	printf("create_server_pipes\n");
@@ -2327,226 +2146,10 @@ int main(int argc, char *argv[])
 	pthread_join(health_thread, NULL);
 	pthread_join(overlay_thread, NULL);
 
-	printf("Quiting VIO server\n");
+	printf("Quiting OpenVINS server\n");
 	// Shutdown Nicely
 	_quit(0);
 
 	return 0;
 }
 
-void MahonyAHRSupdateIMU(float gx, float gy, float gz, float ax, float ay,
-		float az, float *phi, float *theta, float *psi)
-{
-	float recipNorm;
-	float halfvx, halfvy, halfvz;
-	float halfex, halfey, halfez;
-	float qa, qb, qc;
-
-	// Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-	if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
-	{
-
-		// Normalise accelerometer measurement
-		recipNorm = invSqrt(ax * ax + ay * ay + az * az);
-		ax *= recipNorm;
-		ay *= recipNorm;
-		az *= recipNorm;
-
-		// Estimated direction of gravity and vector perpendicular to magnetic flux
-		halfvx = q1 * q3 - q0 * q2;
-		halfvy = q0 * q1 + q2 * q3;
-		halfvz = q0 * q0 - 0.5f + q3 * q3;
-
-		// Error is sum of cross product between estimated and measured direction of gravity
-		halfex = (ay * halfvz - az * halfvy);
-		halfey = (az * halfvx - ax * halfvz);
-		halfez = (ax * halfvy - ay * halfvx);
-
-		// Compute and apply integral feedback if enabled
-		if (twoKi > 0.0f)
-		{
-			integralFBx += twoKi * halfex * (1.0f / sampleFreq); // integral error scaled by Ki
-			integralFBy += twoKi * halfey * (1.0f / sampleFreq);
-			integralFBz += twoKi * halfez * (1.0f / sampleFreq);
-			gx += integralFBx;      // apply integral feedback
-			gy += integralFBy;
-			gz += integralFBz;
-		}
-		else
-		{
-			integralFBx = 0.0f;     // prevent integral windup
-			integralFBy = 0.0f;
-			integralFBz = 0.0f;
-		}
-
-		// Apply proportional feedback
-		gx += twoKp * halfex;
-		gy += twoKp * halfey;
-		gz += twoKp * halfez;
-	}
-
-	// Integrate rate of change of quaternion
-	gx *= (0.5f * (1.0f / sampleFreq));           // pre-multiply common factors
-	gy *= (0.5f * (1.0f / sampleFreq));
-	gz *= (0.5f * (1.0f / sampleFreq));
-	qa = q0;
-	qb = q1;
-	qc = q2;
-	q0 += (-qb * gx - qc * gy - q3 * gz);
-	q1 += (qa * gx + qc * gz - q3 * gy);
-	q2 += (qa * gy - qb * gz + q3 * gx);
-	q3 += (qa * gz + qb * gy - qc * gx);
-
-	// Normalise quaternion
-	recipNorm = invSqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3);
-	q0 *= recipNorm;
-	q1 *= recipNorm;
-	q2 *= recipNorm;
-	q3 *= recipNorm;
-
-	*theta = asin(-2 * q1 * q3 + 2 * q0 * q2);       // pitch
-	*phi = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1)
-			+ M_PI; // roll
-	*psi = atan2(2 * (q1 * q2 + q0 * q3),
-			q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3);      //yaw
-
-			//      fprintf(stderr, "r: %6.2f p: %6.2f y: %6.2f\n",
-			//                      *phi*180.0/M_PI, *theta*180.0/M_PI,*psi*180.0/M_PI);
-}
-
-//---------------------------------------------------------------------------------------------------
-// Fast inverse square-root
-// See: http://en.wikipedia.org/wiki/Fast_inverse_square_root
-
-float invSqrt(float x)
-{
-	float halfx = 0.5f * x;
-	float y = x;
-	long i = *(long*) &y;
-	i = 0x5f3759df - (i >> 1);
-	y = *(float*) &i;
-	y = y * (1.5f - (halfx * y * y));
-	return y;
-}
-
-static void dead_reckon_position(double dt, float ax, float ay, float az,
-		float gx, float gy, float gz)
-{
-
-	float phi, theta, psi;
-
-	static bool started = false;
-
-	MahonyAHRSupdateIMU(gx, gy, gz, ax, ay, az, &phi, &theta, &psi);
-
-	if (!started)
-	{
-		float dt_gx = abs(phi - _last_gyro[0]);
-		float dt_gy = abs(theta - _last_gyro[1]);
-		float dt_gz = abs(psi - _last_gyro[2]);
-
-		_last_gyro[0] = phi;
-		_last_gyro[1] = theta;
-		_last_gyro[2] = psi;
-//              printf("%f %f %f\n", dt_gx, dt_gy, dt_gz);
-
-		if (dt_gx <= 0.00001 && dt_gy <= 0.00001 && dt_gz <= 0.00001)
-		{
-			printf("IMU settled and ready\n");
-			started = true;
-			_accel_bias[0] = ax;
-			_accel_bias[1] = ay;
-			_accel_bias[2] = az;
-			_gyro_bias[0] = phi;
-			_gyro_bias[1] = theta;
-			_gyro_bias[2] = psi;
-		}
-	}
-	else
-	{
-		phi -= _gyro_bias[0];
-		theta -= _gyro_bias[1];
-		psi -= _gyro_bias[2];
-
-		float cosPhi = (double) cos(phi);
-		float sinPhi = (double) sin(phi);
-		float cosThe = (double) cos(theta);
-		float sinThe = (double) sin(theta);
-		float cosPsi = (double) cos(psi);
-		float sinPsi = (double) sin(psi);
-
-		float dcm[3][3];
-		dcm[0][0] = cosThe * cosPsi;
-		dcm[0][1] = -cosPhi * sinPsi + sinPhi * sinThe * cosPsi;
-		dcm[0][2] = sinPhi * sinPsi + cosPhi * sinThe * cosPsi;
-
-		dcm[1][0] = cosThe * sinPsi;
-		dcm[1][1] = cosPhi * cosPsi + sinPhi * sinThe * sinPsi;
-		dcm[1][2] = -sinPhi * cosPsi + cosPhi * sinThe * sinPsi;
-
-		dcm[2][0] = -sinThe;
-		dcm[2][1] = sinPhi * cosThe;
-		dcm[2][2] = cosPhi * cosThe;
-
-		float accel_vec[3] =
-		{ ax - _accel_bias[0], ay - _accel_bias[1], (az - _accel_bias[2])
-				+ 9.80665f };
-		float acc_mag = sqrt(
-				accel_vec[0] * accel_vec[0] + accel_vec[1] * accel_vec[1]
-						+ accel_vec[2] * accel_vec[2]);
-
-		//printf("Staionary: %f %f %f - %f\n", accel_vec[0], accel_vec[1], accel_vec[2], acc_mag);
-//            bool stationary = acc_mag < 0.25;
-		bool stationary = 0;
-
-		float local_frame_accel[3] =
-		{ 0, 0, 0 };
-
-		for (int i = 0; i < 3; i++)
-		{
-			for (int j = 0; j < 3; j++)
-			{
-				local_frame_accel[j] += dcm[j][i] * accel_vec[i];
-			}
-		}
-
-		if (stationary)
-		{
-			_vel_imu[0] = 0.;
-			_vel_imu[1] = 0.;
-			_vel_imu[2] = 0.;
-		}
-		else
-		{
-			_vel_imu[0] = _last_vel[0] + local_frame_accel[0] * dt;
-			_vel_imu[1] = _last_vel[1] + local_frame_accel[1] * dt;
-			_vel_imu[2] = _last_vel[2] + local_frame_accel[2] * dt;
-		}
-
-		_last_vel[0] = _vel_imu[0];
-		_last_vel[1] = _vel_imu[1];
-		_last_vel[2] = _vel_imu[2];
-
-		_odometry_imu[0] = _last_odometry_imu[0] + _vel_imu[0] * dt;
-		_odometry_imu[1] = _last_odometry_imu[1] + _vel_imu[1] * dt;
-		_odometry_imu[2] = _last_odometry_imu[2] + _vel_imu[2] * dt;
-		_last_odometry_imu[0] = _odometry_imu[0];
-		_last_odometry_imu[1] = _odometry_imu[1];
-		_last_odometry_imu[2] = _odometry_imu[2];
-
-		static int ctn = 0;
-		if (ctn++ % 10 == 0)
-			fprintf(stderr, "*, %6.2f\t%6.2f\t%6.2f\n", _vel_imu[0],
-					_vel_imu[1], _vel_imu[2]);
-
-//              fprintf(stderr, "*, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f, %6.2f\n",
-//                                                                      _vel_imu[0],
-//                                                                              _vel_imu[1],
-//                                                                              _vel_imu[2],
-//                                                                              accel_vec[0], accel_vec[1], accel_vec[2],
-//                                                                              gx, gy, gz,
-//                                                                              (double)phi*180/M_PI,
-//                                                                              (double)theta*180/M_PI,
-//                                                                              (double)psi*180/M_PI);
-	}
-}

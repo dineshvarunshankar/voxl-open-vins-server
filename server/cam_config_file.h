@@ -61,8 +61,8 @@ typedef struct tracker_input_t {
     tracker_type_t tracker_type;
 } tracker_input_t;
 
-extern std::vector<camera_info_set> cam_info_set_vec;
-extern char tmp_imu_name[CM_CHAR_BUF_SIZE];
+std::vector<camera_info> cam_info_vec;
+
 extern int width;
 extern int height;
 extern bool en_gyro;
@@ -78,23 +78,14 @@ extern int single_cam_in_use;
 extern bool en_ext_feature_tracker;
 
 
-extern bool en_database;
-extern int database_size;
-extern double max_angular_rate_before_blur;
-
 // cv::Mat for openvins world flip
 extern cv::Matx33d tmp_world_correction;
-extern cJSON *cam_json;
 
 // read only our own config file without printing the contents
-int cam_config_file_read(int is_color_cam, int is_single_cam, int force_ext_tracker, int num_cams);
+int cam_config_file_read(void);
 
 // prints the current configuration values to the screen.
 int cam_config_file_print(void);
 
-// load the intrinsics config files per enabled cam
-int cam_load_intrinsics_file();
-int cam_load_extrinsics_file();
-int get_config_as_json();
 
 #endif // CAM_CONFIG_FILE_H

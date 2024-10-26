@@ -7,42 +7,7 @@
 
 int64_t last_cam_time;
 
-#ifdef BUILD_QRB5165
-// for qrb5165 only (right now) set the camera processing thread to run on
-// CPU 7 which is the fastest core
-static void _check_and_set_affinity(void)
-{
-	// only do this once
-	static int has_set = 0;
-	if(has_set) return;
 
-	cpu_set_t cpuset;
-	pthread_t thread;
-	thread = pthread_self();
-
-	/* Set affinity mask to include CPUs 7 only */
-	CPU_ZERO(&cpuset);
-	CPU_SET(7, &cpuset);
-	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
-		perror("pthread_setaffinity_np");
-	}
-
-	/* Check the actual affinity mask assigned to the thread */
-	if(pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
-		perror("pthread_getaffinity_np");
-	}
-	printf("Camera processing thread is now locked to the following cores:");
-	for (int j = 0; j < CPU_SETSIZE; j++){
-		if(CPU_ISSET(j, &cpuset)) printf(" %d", j);
-	}
-	printf("\n");
-
-	// only do this once on start
-	has_set = 1;
-
-	return;
-}
-#endif
 
 // helper callback for cams we are using in the system
 static void _cam_helper_cb(__attribute__((unused)) int ch,
@@ -112,11 +77,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	}
 
 	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
-	
-	// try to lock to bigger cores if we can
-#ifdef BUILD_QRB5165
-    _check_and_set_affinity();
-#endif
 
 	camera_mode *cm = (camera_mode*) context;
 

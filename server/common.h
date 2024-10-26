@@ -42,11 +42,6 @@
 #include <unistd.h>
 
 
-/// magic number for calibration_packets
-#define VOXL_CALIB_MAGIC_NUMBER (0x43414C49)
-/// magic number for param_packets
-#define VOXL_PARAM_MAGIC_NUMBER (0x50415241)
-
 /// arbiitrary str buffer size for names etc
 #define CM_CHAR_BUF_SIZE 64
 
@@ -119,37 +114,6 @@ typedef struct image_data {
 } image_data;
 
 
-/**
- * @struct camera_info
- * internal struct used to parse out intrinsics data of cameras and store useful info
- *
- * @field name          name of the camera pipe
- * @field cam_mode      enum denoting the mode of this camera, to assist with setting up cam properties
- * @field is_fisheye    fisheye flag, parsed from calib
- * @field cam_mat       intrinsic calibrated camera matrix
- * @field dist_coeffs   intrinsic calibrated camera distortion coefficients
- * @field width         image width
- * @field height        image height
- */
-typedef struct camera_info_set {
-    char name[CM_CHAR_BUF_SIZE];
-    camera_mode cam_mode;
-    bool is_fisheye;
-    std::vector<cv::Matx33d> cam_mat;
-    std::vector<cv::Vec4d> dist_coeffs;
-    std::vector<Eigen::Matrix<double, 7, 1>> cam_wrt_imu;
-    std::vector<Eigen::Matrix<double, 10, 1>> cam_calib_intrinsic;
-    std::vector<cv::Mat> cam_wrt_imu_rot;
-    char extrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
-    char extrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
-    char extrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_first[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_second[CM_CHAR_BUF_SIZE] = {0};
-    char intrinsics_extension_third[CM_CHAR_BUF_SIZE] = {0};
-    size_t cam_id;
-} camera_info_set;
-
-
 typedef struct camera_info {
     char name[128];
     camera_mode mode;
@@ -167,155 +131,6 @@ typedef struct camera_info {
 //////////////////////////////////////////////////////////////////////////////
 
 
-
-/// magic number for vft_feature_packet
-#define VOXL_FT_MAGIC_NUMBER (0x54555249)
-#define MAX_CAMERA_GROUPS 4
-#define MAX_CAMERAS_PER_GROUP 4
-#define MAX_OUTPUT_FEATURES MAX_CAMERAS_PER_GROUP * 100
-
-
-#if !defined(BUILD_QRB5165) || BUILD_QRB5165 == 0
-struct __attribute__((packed)) vft_feature {
-    int64_t id;
-    float x;
-    float y;
-    float x_prev;
-    float y_prev;
-    unsigned char descriptor[32] = {0};
-    int32_t age;
-    int8_t score;
-    int8_t pyr_lvl_mask;
-    int8_t cam_id;
-    int8_t reserved_1;
-    uint32_t reserved_2;
-};
-
-
-/**
- * @struct vft_feature_packet
- * voxl-feature-tracker packet, contains an entire "track update"
- * this is essentially our metadata struct
- *
- * @field magic_number      expected to be VOXL_FT_MAGIC_NUMBER
- * @field timestamp_ns      timestamp of the image extracted from
- * @field num_feats         number of vft_feature packets that will follow this message
- *
- * NOTE: 2/14/2024 removed typedef might cause issues
- */
-struct __attribute__((packed)) vft_feature_packet {
-    uint32_t magic_number;
-    int64_t timestamp_ns[4];
-    int32_t num_feats[4];
-    int32_t frame_ids[4];
-    uint8_t reset;
-    uint8_t n_cams;
-    uint8_t reserved_1;
-    uint8_t reserved_2;
-
-    vft_feature_packet() : n_cams(0) {}
-};
-
-
-static void create_vft_memory(vft_feature_packet** p_feature_packet, vft_feature** p_features) {
-    *p_feature_packet = (vft_feature_packet*)malloc(sizeof(vft_feature_packet));
-    *p_features = (vft_feature*)malloc(MAX_OUTPUT_FEATURES * sizeof(vft_feature));
-}
-
-static void destroy_vft_memory(vft_feature_packet** p_feature_packet, vft_feature** p_features) {
-    free(*p_feature_packet);
-    free(*p_features);
-}
-
-static int validate_vft_data(int ch, char* data, int bytes, vft_feature_packet** feature_packet, vft_feature** features) {
-    if(bytes != sizeof(vft_feature_packet)) {
-        printf("n_bytes != feature packet, skipping...\n");
-        return -1;
-    }
-
-    // check against feature packet metadata
-    *feature_packet = (vft_feature_packet*)data;
-    vft_feature_packet* deref_packet = *feature_packet;
-
-    if(deref_packet->magic_number != VOXL_FT_MAGIC_NUMBER) {
-        fprintf(stderr, "\nERROR: invalid metadata, magic number=%d, expected %d\n", deref_packet->magic_number, VOXL_FT_MAGIC_NUMBER);
-        fprintf(stderr, "most likely client fell behind and pipe overflowed\n");
-        pipe_client_flush(ch);
-        return -1;
-    }
-
-    int n_cams = deref_packet->n_cams;
-    int n_total_features = 0;
-    for(int i = 0; i < n_cams; i++) {
-        n_total_features += deref_packet->num_feats[i];
-    }
-
-    // tbd, may want to read into vec of vecs
-    // std::vector<vft_feature> flat_features(n_total_features);
-    int bytes_to_read = n_total_features * sizeof(vft_feature);
-
-    // now read the data, this may take multiple reads as each camera
-    // is published in a list
-    int total_read = 0;
-    int tries = 0;
-    int fd = pipe_client_get_fd(ch);
-    while(tries < 10 && total_read < bytes_to_read) {
-        int bytes_read = read(fd, ((char*)*features)+total_read, bytes_to_read-total_read);
-        if(0 >= bytes_read) {
-            printf("Error reading bytes, returning...\n");
-            return -1;
-        }
-        // keep track of bytes read and how many tries it's taken
-        total_read += bytes_read;
-        tries++;
-    }
-    return 0;
-}
-
-#endif
-
-
-////////////////////////////////////////////////////////////////
-#ifdef DEPRECATED_SINCE_SDK_1_1_0
-/**
- * @struct vft_calib_packet
- * packet to send back to open vins only (for now) containing required setup info about our system
- *
- * @field magic_number              expected to be VOXL_CALIB_MAGIC_NUMBER
- * @field timestamp_ns              timestamp of packet write
- * @field cam_id                    camera id this packet corresponds to
- * @field num_cams                  number of cameras in the overall system
- * @field cam_wrt_imu               quaternion followed by tranlation of camera into the imu frame
- * @field cam_calib_intrinsic       fx, fy, px, py, distortion coefficients (4), w, h
- * @field is_fisheye                    fisheye flag, parsed from calib
- */
-typedef struct vft_calib_packet {
-    uint32_t magic_number;
-    int64_t timestamp_ns;
-    size_t cam_id;
-    size_t num_cams;
-    Eigen::Matrix<double, 7, 1> cam_wrt_imu;
-    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
-    bool is_fisheye;
-} vft_calib_packet;
-
-
-/**
- * @struct vft_param_packet
- * extra parameter packet for any non-standard params that need to be sent to another server
- * as of now, only sent to open-vins to get the last params we setup here
- *
- * @field magic_number              expected to be VOXL_PARAM_MAGIC_NUMBER
- * @field imu_name                  name of the imu we are subscribing to (optional param for voxl-feature-tracker)
- * @field num_features_to_track     number of features we are trying to track frame by frame
- */
-typedef struct vft_param_packet {
-    uint32_t magic_number;
-    char imu_name[CM_CHAR_BUF_SIZE];
-    int num_features_to_track;
-} vft_param_packet;
-
-#endif
 ////////////////////////////////////////////////////////////////
 
 /**
