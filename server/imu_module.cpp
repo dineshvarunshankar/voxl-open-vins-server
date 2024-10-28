@@ -20,10 +20,49 @@ void _imu_disconnect_cb(__attribute__((unused)) int ch,
 	return;
 }
 
+#ifdef BUILD_QRB5165
+// for qrb5165 only (right now) set the camera processing thread to run on
+// CPU 7 which is the fastest core
+static void _check_and_set_affinity(void)
+{
+	// only do this once
+	static int has_set = 0;
+	if(has_set) return;
+
+	cpu_set_t cpuset;
+	pthread_t thread;
+	thread = pthread_self();
+
+	/* Set affinity mask to include CPUs 7 only */
+	CPU_ZERO(&cpuset);
+	CPU_SET(7, &cpuset);
+	if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
+		perror("pthread_setaffinity_np");
+	}
+
+	/* Check the actual affinity mask assigned to the thread */
+	if(pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset)){
+		perror("pthread_getaffinity_np");
+	}
+	printf("Camera processing thread is now locked to the following cores:");
+	for (int j = 0; j < CPU_SETSIZE; j++){
+		if(CPU_ISSET(j, &cpuset)) printf(" %d", j);
+	}
+	printf("\n");
+
+	// only do this once on start
+	has_set = 1;
+
+	return;
+}
+#endif
+
 // imu callback registered to the imu server
 void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		char *data, int bytes, __attribute__((unused)) void *context)
 {	
+
+
 
 	double cam_imu_time_delta = (double) (_apps_time_monotonic_ns()
 			- last_cam_time) * 1e-9;
@@ -47,6 +86,10 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 //	if (en_debug)
 //			printf("_new_imu_data_default_handler entrance: %f\n",  _apps_time_monotonic_ns() * 1e-9);
+
+#ifdef BUILD_QRB5165
+    _check_and_set_affinity();
+#endif
 
 	int n_packets;
 	imu_data_t *data_array = pipe_validate_imu_data_t(data, bytes, &n_packets);
