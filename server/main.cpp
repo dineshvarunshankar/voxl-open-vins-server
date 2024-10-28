@@ -136,6 +136,7 @@ bool zero_horizon = true;
 uint16_t resume_processing = 0;
 static pthread_t health_thread;
 static pthread_t overlay_thread;
+bool overlay_client_connected = false;
 
 static double last_feature_time;
 double last_imu_time;
@@ -253,8 +254,8 @@ static char baro_name[CHAR_BUF_SIZE] = "mavlink_onboard";
 static size_t num_cams = 0;
 static int max_width = 0;
 static int max_height = 0;
-int current_width = 0;
-int current_height = 0;
+int current_width  = 1280;
+int current_height = 800;
 
 uint8_t update_slots = 0;   // 8 cameras max
 
@@ -869,6 +870,7 @@ static void _overlay_connect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
 	printf("client \"%s\" connected to overlay\n", client_name);
+	overlay_client_connected = true;
 	return;
 }
 
@@ -878,6 +880,7 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
 	printf("client \"%s\" disconnected from overlay\n", client_name);
+	overlay_client_connected = false;
 	return;
 }
 
@@ -1385,7 +1388,9 @@ static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 	{
 		double u_freq = (1.0 / publish_frequency) * 1e6;
 		usleep(u_freq);  // run about the same speed as the camera
-		_post_snapshot();
+		if (overlay_client_connected) {
+			_post_snapshot();
+		}
 	}
 
 	return NULL;
@@ -2118,6 +2123,9 @@ static int connect_client_pipes(void)
 		_quit(-1);
 	}
 	fprintf(stderr, "imu pipe name: %s\n", imu_name);
+
+	// set cameras_used here
+	cameras_used = cam_info_vec.size();
 
 	// connect to configured cameras
 	ret = connect_cam_service(cam_info_vec);
