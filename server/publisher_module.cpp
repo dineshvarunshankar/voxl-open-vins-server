@@ -541,8 +541,10 @@ void _publish_default(double pose_timestamp)
 	s.imu_angular_vel[1] = pitchrate;
 	s.imu_angular_vel[2] = yawrate;
 
-	// STATE mgmt
-	alt_z = imu_wrt_wio_holder(gravity_axis);   // TODO FIX
+	// gravtiy vector direction should be negative if the VOXL is upside down.
+	// TODO figure this out by rotating the gravtiiy vector properly with the
+	// world_frame matrix
+	alt_z = gravity_vector_direction * imu_wrt_wio_holder(gravity_axis);
 
 	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
 	// voxl flips it to actual
