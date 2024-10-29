@@ -126,7 +126,7 @@ volatile int perf_limit = 1;
 static int start_idx = 0;
 int cameras_used = 0;
 int camera_pipe_channels[10];
-int gravity_vector_direction = -1;
+int gravity_vector_direction = 1;
 
 static volatile int every_other = 0;
 static volatile double T_uncertainty = 0;
@@ -135,9 +135,11 @@ static volatile double R_uncertainty = 0;
 volatile float alt_z = 0.0;
 volatile bool changed_motion_state = false;
 volatile bool imu_moved = false;
-volatile int throttle_state = 0;
+volatile int throttle_state = 5;
 
-volatile bool is_armed = false;
+// start as true, it will turn false if mavlink gets a message saying so
+volatile bool is_armed = true;
+
 volatile bool is_resetting = false;
 volatile bool use_takeoff_cam  = true;
 volatile bool has_idle_images  = false;
@@ -808,17 +810,11 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 }
 
 
-
-
-#define OVERLAY_RES_W_X 320
-#define OVERLAY_RES_H_Y 240
-
 static void _post_snapshot()
 {
 	static int skip_cnt = 0;
 	static int target_id = -1;
 	static float font_size = 1.0;
-	static float border_scale = 1;
 	static cv::Mat overlay_cp;
 	static char reinit_str[32];
 	static char cam_off_str[32];
@@ -860,7 +856,6 @@ static void _post_snapshot()
 
 			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
 			{
-				font_size = 0.55;
 				if (!en_debug_pos)
 				{
 					cv::Mat img(curr_imgs->metadata.height,
@@ -887,11 +882,7 @@ static void _post_snapshot()
 				}
 
 			}
-			else
-			{
-				font_size = 0.33;
-				border_scale = 2;
-
+			else{
 				if (cameras_used == 1)
 				{
 					cv::Mat img(curr_imgs->metadata.height,
@@ -1046,29 +1037,21 @@ static void _post_snapshot()
 			}
 
 
-			cv::resize(img_set[0], img_set[0],
-					cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
 			overlay_cp = img_set[0];
 
-			if (img_set.size() > 1)
-			{
-				for (unsigned int y=1; y<img_set.size() ; y++)
-				{
-					cv::resize(img_set[y], img_set[y],
-							cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
-					cv::hconcat(overlay_cp, img_set[y], overlay_cp);
+			if(img_set.size() > 1){
+				for(unsigned int y=1; y<img_set.size() ; y++){
+					cv::vconcat(overlay_cp, img_set[y], overlay_cp);
 				}
 			}
 
-			if (overlay_cp.cols <= OVERLAY_RES_W_X)
-			{
-				border_scale = 1;
-			}
+			// if (overlay_cp.cols <= OVERLAY_RES_W_X)
+			// {
+			// 	border_scale = 1;
+			// }
 
 			cv::copyMakeBorder(overlay_cp, overlay_cp,
-			DRAW_BONUS_ROWS_TOP / border_scale,
-			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
-					cv::Scalar(0));
+			DRAW_BONUS_ROWS_TOP, DRAW_BONUS_ROWS_BOT, 0, 0, cv::BORDER_CONSTANT,cv::Scalar(0));
 
 			draw_meta = curr_imgs->metadata;
 			draw_meta.width = overlay_cp.cols;
@@ -1891,14 +1874,13 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
-	if(en_config_only) _quit(-1);
+	if(en_config_only) _quit(0);
 
 	// coordindate system correction OVINS only needed
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
 	
-	if (offline)
-		en_vio_always_on = offline;
+	offline = en_vio_always_on;
 
 	use_takeoff_cam =takeoff_cam >= 0;
 
@@ -1906,11 +1888,12 @@ int main(int argc, char *argv[])
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
 
-	if ((world_correction.at<double>(0, 0) * world_correction.at<double>(1, 1))
-			> 0)
-		gravity_vector_direction = 1;
-	else
-		gravity_vector_direction = -1;
+	// TODO figure this out properly for different drone orientations
+	// if ((world_correction.at<double>(0, 0) * world_correction.at<double>(1, 1))
+	// 		> 0)
+	// 	gravity_vector_direction = 1;
+	// else
+	// 	gravity_vector_direction = -1;
 
 	vio_manager_options.use_klt = !en_ext_feature_tracker;		
 

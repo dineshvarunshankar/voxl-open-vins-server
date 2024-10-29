@@ -392,7 +392,7 @@ int config_file_read(void) {
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
-    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 30);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
     json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);

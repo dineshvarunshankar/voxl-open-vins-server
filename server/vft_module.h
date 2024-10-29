@@ -18,20 +18,6 @@ extern vft_feature_set feat_set;
 extern vft_feature_set feat_set_multi[4];
 extern vft_feature_set feat_set_zero;
 
-/**
- * @brief      callback when disconnected from feature tracking pipe 
- */
-void _vft_disconnect_cb(__attribute__((unused)) int ch,
-						__attribute__((unused)) void *context);
-
-
-/**
- * @brief      callback when there is new data from feature tracking pipe 
- * 
- *             This validates the new vft data 
- */
-void _vft_data_handler_cb(__attribute__((unused)) int ch, char* data, int bytes,
-                          __attribute__((unused)) void* context);
 
 /**
  * @brief      creates vft pipe client and associated callbacks

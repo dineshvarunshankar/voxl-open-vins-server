@@ -8,7 +8,7 @@
 #include "common.h"
 #include "cam_config_file.h"
 
-char vft_name[CHAR_BUF_SIZE] = "tracking_feats";
+char vft_name[CHAR_BUF_SIZE] = "tracked_feats";
 
 vft_feature_packet* feature_packet_from_vft;
 vft_feature* features_from_vft;
@@ -21,14 +21,14 @@ vft_feature_set feat_set_zero;
 
 
 
-void _vft_disconnect_cb(__attribute__((unused)) int ch,
+static void _vft_disconnect_cb(__attribute__((unused)) int ch,
 						__attribute__((unused)) void *context)
 {
     destroy_vft_memory(&feature_packet_from_vft, &features_from_vft);
 	return;
 }
 
-void _vft_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
+static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
                        __attribute__((unused)) void* context)
 {
 
@@ -55,12 +55,10 @@ void _vft_data_default_handler(__attribute__((unused)) int ch, char* data, int b
 		return;
 
 	// testing logic
-	int test_offset = 0;
 	if (pause_cam_states[0] || pause_cam_states[1])
 	{
 		if (pause_cam_states[0])
 		{
-			test_offset = feature_packet_from_vft->num_feats[0];
 			feature_packet_from_vft->num_feats[0] = 0;
 		}
 		if (pause_cam_states[1])
@@ -258,184 +256,6 @@ void _vft_data_default_handler(__attribute__((unused)) int ch, char* data, int b
 }
 
 
-#ifdef PROD
-static void _new_feat_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
-                       __attribute__((unused)) void* context) 
-{
-	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
-	    printf("ERROR parsing vft data from pipe...\n");
-		return;
-	}
-	
-
-	// reorganize
-
-
-	double set_time = (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-			
-	static double last_set_time = set_time;
-	static int n_total_features = 0;
-
-	double dt_f = set_time-last_set_time;
-	last_set_time = set_time;
-
-	if (dt_f == 0)
-		return;
-
-	if (is_resetting)
-		return;
-	
-	// testing logic
-	int test_offset = 0;
-	if (pause_cam_states[0] || pause_cam_states[1])
-	{
-		if (pause_cam_states[0])
-		{
-			test_offset = feature_packet_from_vft->num_feats[0];
-			feature_packet_from_vft->num_feats[0] = 0;
-		}
-		if (pause_cam_states[1])
-		{
-			feature_packet_from_vft->num_feats[1] = 0;
-		}
-	}
-
-	
-	if (!vio_manager->initialized() || imu_moved || en_vio_always_on)
-	{
-		n_total_features = 0;
-		
-		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
-		{
-			if (!en_vio_always_on)
-				printf(
-					"Detected Takeoff, going to multicamera VINS normal operations\n");
-			use_takeoff_cam = false;
-		}			
-		
-		int n_cams = feature_packet_from_vft->n_cams;
-				
-		for (int i = 0; i < n_cams; i++) {
-			if (use_takeoff_cam && i == takeoff_cam)
-			{
-				n_total_features = 0;
-				n_total_features = feature_packet_from_vft->num_feats[i];
-				break;
-			}
-			else
-			{
-				n_total_features += feature_packet_from_vft->num_feats[i];
-			}
-		}
-  
-		int cam_num = 0;
-		int ctn = 0;
-		bool has_feats = 0;
-		
-		feat_set.features.resize(n_total_features);
-		feat_set_zero.features.resize(n_total_features);
-		
-		std::map<double, int> ts_map;
-
-		for (int i = 0; i < n_total_features; i++)
-		{
-			if (use_takeoff_cam && cam_num != takeoff_cam)
-			{
-				continue;
-			}
-
-			if (ctn >= feature_packet_from_vft->num_feats[cam_num])  
-			{
-				ctn = 0;
-				cam_num++;
-			}
-
-			double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[cam_num] * 1e-9;
-            ts_map[ts_cam] = cam_num;
-
-			int tmp_offset = test_offset + i;
-//			feat_set.timestamp = cam_time;
-			feat_set.cam_id = cam_num;
-			feat_set.features[i].cam_id = cam_num;
-			feat_set.features[i].id = features_from_vft[tmp_offset].id;
-			feat_set.features[i].u = features_from_vft[tmp_offset].x;
-			feat_set.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
-			memcpy(feat_set.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
-			
-//			feat_set_zero.timestamp = cam_time;
-			feat_set_zero.cam_id = cam_num;
-			feat_set_zero.features[i].cam_id = cam_num;
-			feat_set_zero.features[i].id = features_from_vft[tmp_offset].id;
-			feat_set_zero.features[i].u = features_from_vft[tmp_offset].x;
-			feat_set_zero.features[i].v = features_from_vft[tmp_offset].y;  // TODO subtract from height?
-			memcpy(feat_set_zero.features[i].descriptor, features_from_vft[tmp_offset].descriptor, 32);
-			
-			ctn++;
-		}        
-
-		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-		if (cam_num < 1)
-		{
-			feat_set.timestamp = cam_time;
-			feat_set_zero.timestamp = cam_time;
-			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-			feature_queue.push_back(feat_set);
-		}
-		else
-		{
-
-	        	auto lastElement = ts_map.rbegin();
-//	       		  std::cout << "Last Key: " << lastElement->first << ", Last Value: " << lastElement->second << std::endl;
-
-			feat_set.timestamp = lastElement->first;
-			feat_set_zero.timestamp = lastElement->first;
-			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-			feature_queue.push_back(feat_set);
-
-			printf("ts %f  \t", last_imu_time);
-			for(const auto& pair : ts_map) {
-		        std::cout << "Key: " << pair.first << "(" << pair.first-last_imu_time << ")" << ", Value: " << pair.second << "\t";
-//				feat_set.timestamp = pair.first;
-//				feat_set_zero.timestamp = pair.first;
-//				feature_queue.push_back(feat_set);
-		    }
-
-			std::cout << "\n^^^" << std::endl;
-
-		}
-
-
-	}
-	else
-	{
-		double cam_time =  (double) feature_packet_from_vft->timestamp_ns[0] * 1e-9;
-
-		// if idle for a long time, update the zero state by forcing a reset
-		if (cam_time - feat_set_zero.timestamp > 30.0)
-		{
-			printf("Sitting around for a long time, resetting zero state for blind takeoff\n");
-			init_failure_detector_reset_flag = 1;
-		}
-		
-		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
-		{
-			
-			feat_set.timestamp = cam_time;							
-			feat_set.cam_id = feat_set_zero.cam_id;
-			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
-			feat_set.features[i].id = feat_set_zero.features[i].id;
-			feat_set.features[i].u = feat_set_zero.features[i].u;
-			feat_set.features[i].v = feat_set_zero.features[i].v;  
-			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
-		}
-		std::lock_guard < std::mutex > lck(feature_queue_mtx);	
-
-		feature_queue.push_back(feat_set);
-	}
-
-	is_cam_connected = true;
-}
-#endif
 
 
 int connect_vft_service(void)
