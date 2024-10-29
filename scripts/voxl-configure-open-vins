@@ -1,6 +1,6 @@
 #!/bin/bash
 ################################################################################
-# Copyright 2022 ModalAI Inc.
+# Copyright 2024 ModalAI Inc.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -36,31 +36,16 @@ NAME="voxl-open-vins-server"
 SERVICE_FILE="${NAME}.service"
 CONFIG_FILE="/etc/modalai/${NAME}.conf"
 USER=$(whoami)
-STANDALONE_CONFIG_FILE="/etc/modalai/voxl-open-vins-standalone.conf"
 
 print_usage () {
 	echo ""
 	echo "voxl-configure-open-vins disable"
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
-	echo "voxl-configure-open-vins tracking_45 (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
-	echo "voxl-configure-open-vins tracking_fd (e.g. starling max/starling v2.5)"
-	echo "voxl-configure-open-vins tracking_lr (e.g. fpv)"
-	echo "voxl-configure-open-vins tracking_45_ext (e.g. legacy, starling/sentinel/seeker/px4 ed with VFT)" 
-	echo "voxl-configure-open-vins tracking_fd_ext (e.g. starling max/starling v2.5 with VFT)"
-	echo "voxl-configure-open-vins tracking_fdr_ext (e.g. starling v2 triple camera tracking)"
-	echo "voxl-configure-open-vins tracking_f_ext (e.g. starling, starlingv2, starling MAX, front single cam)"
-	echo "voxl-configure-open-vins tracking_lr_ext (e.g. left-right custom with VFT)"
-	echo "voxl-configure-open-vins tracking_45_int (e.g. legacy, starling/sentinel/seeker/px4 ed)" 
-	echo "voxl-configure-open-vins tracking_fd_int (e.g. starling, starlingv2, starling MAX, dual cam front down)"
-	echo "voxl-configure-open-vins tracking_lr_int (e.g. left-right custom)"
-	echo "voxl-configure-open-vins tracking_d0008_int (e.g. D0008 vins tracker)"
-	echo "voxl-configure-open-vins tracking_d0008_ext (e.g. D0008 cvp tracker)"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
 	echo ""
-	exit 0
 }
 
 
@@ -117,15 +102,6 @@ reset_config_file_to_default () {
 	${NAME} -c
 }
 
-delete_config_file () {
-	echo "wiping old config file"
-	rm -rf ${CONFIG_FILE}
-}
-
-delete_cam_config_file () {
-	echo "wiping old camera config file"
-	rm -rf ${STANDALONE_CONFIG_FILE}
-}
 
 
 
@@ -144,7 +120,12 @@ arg=$(echo "$1" | tr '[:upper:]' '[:lower:]')
 
 ## parse arguments
 case ${arg} in
-	""|"h"|"-h"|"help"|"--help")
+	"")
+		echo "No argument given"
+		print_usage
+		exit 1
+		;;
+	"h"|"-h"|"help"|"--help")
 		print_usage
 		exit 0
 		;;
@@ -152,157 +133,17 @@ case ${arg} in
 		disable_service_and_exit
 		;;
 	"factory_enable")
-		delete_config_file
+		reset_config_file_to_default
 		enable_service_and_exit
 		;;
 	"enable")
 		enable_service_and_exit
 		;;
-	"tracking_45") #starling m500 sentinel
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 4 --mode 1
-		
-		enable_service_and_exit
-		;;
-	"tracking_fd")
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 0 --mode 1
-		
-		enable_service_and_exit
-		;;
-	"tracking_lr") # fpv etc.
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 1 --mode 1
 
-		enable_service_and_exit
-		;;
-	"tracking_45_int") #starling v2
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 4 --mode 1
-		
-		enable_service_and_exit
-		;;
-	"tracking_fd_int")
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 0 --mode 1
-		
-		enable_service_and_exit
-		;;
-	"tracking_d0008_int") # fpv etc.
-		delete_config_file
-		delete_cam_config_file
-		voxl-configure-cameras 12
-		systemctl disable voxl-feature-tracker
-		sed -i 's/stereo/tracking/g' /etc/modalai/voxl-camera-server.conf
-		voxl-open-vins-server --config 1 --mode 1
-
-		enable_service_and_exit
-		;;
-	"tracking_lr_int") # fpv etc.
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 1 --mode 1
-		systemctl disable voxl-feature-tracker
-
-		enable_service_and_exit
-		;;
-	"tracking_45_ext") #starling v2
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 4 --mode 2
-		
-		enable_service_and_exit
-		;;
-	"tracking_fd_ext")
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 0 --mode 2
-		
-		enable_service_and_exit
-		;;
-	"tracking_fdr_ext")
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 5 --mode 2
-		
-		enable_service_and_exit
-		;;
-	"tracking_f_ext")
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 6 --mode 2
-		
-		enable_service_and_exit
-		;;
-	"tracking_d0008_ext") # fpv etc.
-		delete_config_file
-		delete_cam_config_file
-		voxl-configure-cameras 15
-		systemctl enable voxl-feature-tracker
-		voxl-open-vins-server --config 1 --mode 2
-
-		enable_service_and_exit
-		;;
-	"tracking_lr_ext") # fpv etc.
-		delete_config_file
-		delete_cam_config_file
-		voxl-open-vins-server --config 1 --mode 2
-
-		enable_service_and_exit
-		;;
 	*)
 		echo "invalid option"
 		print_usage
 		exit 1
 esac
 
-
-
-################################################################################
-## no optional arguments, start config wizard prompts
-################################################################################
-
-echo " "
-echo "Do you want to reset the config file to factory defaults?"
-select opt in "yes" "no"; do
-case $opt in
-yes )
-	reset_config_file_to_default
-	break;;
-no )
-	echo "loading and updating config file with ${NAME} -c"
-	${NAME} -c
-	break;;
-*)
-	echo "invalid option"
-	esac
-done
-
-
-# ask if the user wants the service enabled or not
-echo " "
-echo "Do you want to enable the voxl-open-vins-server service to allow"
-echo "visual inertial odometry?"
-select opt in "yes" "no"; do
-case $opt in
-yes )
-	echo " "
-	echo "Now we are going to do a preliminary configuration of ${CONFIG_FILE}"
-	break;;
-no )
-	disable_service_and_exit
-	break;;
-*)
-	echo "invalid option"
-	esac
-done
-
-
-# all done!
-enable_service_and_exit
 

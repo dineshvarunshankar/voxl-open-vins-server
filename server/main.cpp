@@ -1860,12 +1860,11 @@ int main(int argc, char *argv[])
 	}
 
 	// Load the config files
-	printf("Loading our own config file\n");
-	if (config_file_read() < 0)
-	{
+	if(config_file_read() < 0){
 		printf("config_file_read() < 0\n");
 		_quit(-1);
 	}
+	if(en_config_only) _quit(0);
 	config_file_print();
 
 	// read camera multicam setup and configs
@@ -1874,7 +1873,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
-	if(en_config_only) _quit(0);
+
 
 	// coordindate system correction OVINS only needed
 	flu_ned_correction_mat(1, 1) = -1;

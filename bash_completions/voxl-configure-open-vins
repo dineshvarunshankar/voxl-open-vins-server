@@ -1,6 +1,6 @@
 _voxl-configure-open-vins(){
 
-    local OPTS=('disable help factory_enable enable tracking_45 tracking_fd tracking_lr')
+    local OPTS=('disable help factory_enable enable')
 
     COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then
