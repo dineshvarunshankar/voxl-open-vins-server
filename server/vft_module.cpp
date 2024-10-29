@@ -124,20 +124,25 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 
 				for (int x=0;x<cam_total_features;x++)
 				{
-					feat_set_multi[z].features[x].cam_id = z;
-					feat_set_multi[z].features[x].id = features_from_vft[last_feat_ctn].id;
-					feat_set_multi[z].features[x].u = features_from_vft[last_feat_ctn].x;
-					feat_set_multi[z].features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
-					memcpy(feat_set_multi[z].features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+					// printf("cam: %d, age: %d\n", z, features_from_vft[last_feat_ctn].age);
 
-					if (z == takeoff_cam)
-					{
-						feat_set_zero.cam_id = z;
-						feat_set_zero.features[x].cam_id = z;
-						feat_set_zero.features[x].id = features_from_vft[last_feat_ctn].id;
-						feat_set_zero.features[x].u = features_from_vft[last_feat_ctn].x;
-						feat_set_zero.features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
-						memcpy(feat_set_zero.features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+					// set age threshold as deemed appropriate
+					if (features_from_vft[last_feat_ctn].age >= 5) {
+						feat_set_multi[z].features[x].cam_id = z;
+						feat_set_multi[z].features[x].id = features_from_vft[last_feat_ctn].id;
+						feat_set_multi[z].features[x].u = features_from_vft[last_feat_ctn].x;
+						feat_set_multi[z].features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
+						memcpy(feat_set_multi[z].features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+
+						if (z == takeoff_cam)
+						{
+							feat_set_zero.cam_id = z;
+							feat_set_zero.features[x].cam_id = z;
+							feat_set_zero.features[x].id = features_from_vft[last_feat_ctn].id;
+							feat_set_zero.features[x].u = features_from_vft[last_feat_ctn].x;
+							feat_set_zero.features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
+							memcpy(feat_set_zero.features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+						}
 					}
 					last_feat_ctn++;
 				}

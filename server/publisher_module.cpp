@@ -469,8 +469,7 @@ void _publish_default(double pose_timestamp)
 
     if (gravity_axis == 0 && gravity_vector_direction < 0)
     {
-		rot_global_zero_horizon =
-										Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
+		rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
     }
 
     //
