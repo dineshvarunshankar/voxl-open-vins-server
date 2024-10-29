@@ -51,6 +51,7 @@ char imu_name[64];
 Eigen::Matrix3d world_correction_eigen;
 Eigen::Matrix<double, 4, 1> world_correction_q;
 
+int takeoff_cam = -1; // set nonzero when we find a non-obscured cam
 
 static void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R)
 {
@@ -170,6 +171,9 @@ int cam_config_file_read(void)
 		cam.mode = MONO;
 		cam.cam_id = i;
 
+		// check for the first camera that's not obscured
+		if(takeoff_cam<0 && !vio_cams[i].is_occluded_on_ground) takeoff_cam = i;
+
 		// intrinsics
 		// TODO validate the OV radtan model matches opencv pinhole model
 		// it probably don't since we use a 5-coefficicent polynomial
@@ -212,6 +216,11 @@ int cam_config_file_read(void)
 		// add this cam_info to our vector
 		cam_info_vec.push_back(cam);
 	}
+
+	// if for some reason the vio-cams common config was malformed and all cams
+	// were marked as occluded on ground, just default to the first cam for takeoff
+	// this is usually tracking_front
+	if(takeoff_cam<0) takeoff_cam = 0;
 
 	// openvins tries to be clever and rotate the whole local frame around
 	// to align with gravity. So we need to figure out how the imu is mounted

@@ -1052,7 +1052,7 @@ static void _post_snapshot()
 
 			if (img_set.size() > 1)
 			{
-				for (int y=1; y<img_set.size() ; y++)
+				for (unsigned int y=1; y<img_set.size() ; y++)
 				{
 					cv::resize(img_set[y], img_set[y],
 							cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));

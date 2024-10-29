@@ -206,7 +206,6 @@ extern double track_frequency;
 extern int publish_frequency;
 extern bool en_ov_stats;
 extern bool use_baro;
-extern int takeoff_cam;
 extern double takeoff_threshold;
 extern double max_allowable_cep;
 extern bool en_force_init;

@@ -141,7 +141,6 @@ int publish_frequency; //VOXL only
 
 bool en_ov_stats;
 bool use_baro;
-int takeoff_cam;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
 bool en_force_init = false;
@@ -276,7 +275,6 @@ int config_file_print(void) {
     printf("publish_frequency:                  %d\n", publish_frequency);
     printf("imu takeoff accel thresh:                  %6.5f\n", init_imu_thresh_accel);
     printf("force init on takeoff:                  %s\n", en_force_init ? "true" : "false");
-    printf("use takeoff_camera_as:                  %d\n", takeoff_cam);
     printf("takeoff_threshold(m):                  %f\n", takeoff_threshold);
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
@@ -387,7 +385,6 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
     json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.1);
 
-    json_fetch_int_with_default(parent, "takeoff_cam", &takeoff_cam, 0);
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 1.0);
@@ -400,9 +397,6 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
 
-
-    if (takeoff_cam >= 0)
-    	use_mask = true;
     
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

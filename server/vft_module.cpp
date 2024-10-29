@@ -4,13 +4,9 @@
 #include "vft_module.h"
 
 #include <stdio.h>
-
-#if defined(BUILD_QRB5165) && BUILD_QRB5165 == 1
 #include <vft_interface.h>
-#else
 #include "common.h"
-#endif
-
+#include "cam_config_file.h"
 
 char vft_name[CHAR_BUF_SIZE] = "tracking_feats";
 

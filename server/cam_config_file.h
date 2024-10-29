@@ -46,21 +46,9 @@ extern char imu_name[64];
 extern Eigen::Matrix3d world_correction_eigen;
 extern Eigen::Matrix<double, 4, 1> world_correction_q;
 
-
-
-// extern int width;
-// extern int height;
-// extern bool en_gyro;
-// extern bool en_force_ned_2_flu;
-// extern bool en_descriptors;
-// extern int num_features_to_track;
-// extern int grid_x;
-// extern int grid_y;
-// extern int min_pix_dist;
-// extern int pyramid_levels;
-// extern int window_size;
-// extern int single_cam_in_use;
-// extern bool en_ext_feature_tracker;
+// TODO make this a  vector, right now it's just the first camera that's
+// not flagged as obscured on the ground in the common vio_cam config file
+extern int takeoff_cam;
 
 
 // read only our own config file without printing the contents
