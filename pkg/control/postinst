@@ -5,9 +5,11 @@
 # author: james@modalai.com
 ################################################################################
 
-set -e
-
 # try to reload services, but don't fail if it can't
-ldconfig
+set +e
+if [ -f /bin/systemctl ]; then
+	systemctl daemon-reload
+fi
 
-# make sure there is a newline at the end here or opkg will whine
+## always exit 0 to keep opkg happy in voxl-emulator
+exit 0
