@@ -604,18 +604,14 @@ void _publish_default(double pose_timestamp)
 			qualities[z] = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, t_cam_feats, cam_feats);
 		}
 
-		// then as a average
-		int avg_qual = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, d.n_total_features, d.features);
-
+		// pick quality from best camera. If one camera is obscured that's fine
+		// TODO something fancier
 		int max_q = 0;
 		for (int z=0; z<cameras_used;z++)
 		{
 			if (qualities[z] > max_q)
 				max_q = qualities[z];
 		}
-		if (avg_qual > max_q)
-			max_q = avg_qual;
-
 		s.quality = max_q;
 
 	}
