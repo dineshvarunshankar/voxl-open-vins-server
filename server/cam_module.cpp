@@ -13,6 +13,9 @@ int64_t last_cam_time;
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
+	if (en_ext_feature_tracker && !overlay_client_connected) {
+		return;
+	}
 
 	static int idler_ctn = 0;
 
@@ -120,6 +123,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 						meta.size_bytes);			
 
 				img_ringbuf->insert_data(curr_message);
+
+				if (en_ext_feature_tracker) {
+					return;
+				}
 				
 				cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
 					(uint8_t*) curr_message->image_pixels);
@@ -925,7 +932,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 int connect_cam_service(std::vector<camera_info> &cam_info_vec) {
 
 	// connect to all configured cameras
-	cameras_used = cam_info_vec.size();
 	char t_cam_nam[256];
 
 	fprintf(stderr, "Number of Cameras active: %d\n", cameras_used);

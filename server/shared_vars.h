@@ -40,6 +40,7 @@ extern bool is_thermal;
 extern bool pause_qmin;
 extern bool zero_horizon;
 extern uint16_t resume_processing;
+extern bool overlay_client_connected;
 
 extern double last_imu_time;
 extern int64_t last_cam_time;

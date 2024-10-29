@@ -35,6 +35,10 @@ void _vft_disconnect_cb(__attribute__((unused)) int ch,
 void _vft_data_default_handler(__attribute__((unused)) int ch, char* data, int bytes,
                        __attribute__((unused)) void* context)
 {
+
+	// receving feature data, reset errors
+	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
+
 	if (validate_vft_data(ch, data, bytes, &feature_packet_from_vft, &features_from_vft)) {
 	    printf("ERROR parsing vft data from pipe...\n");
 		return;
