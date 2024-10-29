@@ -1889,11 +1889,10 @@ int main(int argc, char *argv[])
 	vio_manager_options = generate_open_vins_manager_options();
 
 	// TODO figure this out properly for different drone orientations
-	// if ((world_correction.at<double>(0, 0) * world_correction.at<double>(1, 1))
-	// 		> 0)
-	// 	gravity_vector_direction = 1;
-	// else
-	// 	gravity_vector_direction = -1;
+	if(world_correction_eigen(2, 2) < 0)
+		gravity_vector_direction = -1;
+	else
+		gravity_vector_direction = 1;
 
 	vio_manager_options.use_klt = !en_ext_feature_tracker;		
 
