@@ -118,7 +118,9 @@ typedef struct camera_info {
     char name[128];
     camera_mode mode;
     Eigen::Matrix<double, 7, 1> cam_wrt_imu;
-    Eigen::Matrix<double, 10, 1> cam_calib_intrinsic;
+    Eigen::Matrix<double, 8, 1> cam_calib_intrinsic;
+    int width;
+    int height;
     bool is_fisheye;
     size_t cam_id;
 } camera_info;

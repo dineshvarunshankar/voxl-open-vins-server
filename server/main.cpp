@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright 2021 ModalAI Inc.
+ * Copyright 2024 ModalAI Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -33,6 +33,7 @@
 
 #include <core/VioManager.h>
 #include <getopt.h>
+#include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
 #include <modal_pipe.h>
 #include <state/Propagator.h>
 #include <state/State.h>
@@ -42,12 +43,9 @@
 #include <modal_json.h>
 #include <stdio.h>
 #include <voxl_common_config.h>
-//#include <Eigen/Dense>
-#if defined(BUILD_QRB5165) && BUILD_QRB5165 == 1
 #include <vft_interface.h>  // TODO need this in common SDK
-#endif
 
-#include <c_library_v2/common/mavlink.h> // include before modal_pipe !!
+
 
 #include <iostream>
 #include <thread>
@@ -87,12 +85,6 @@
 #define OV_STATUS_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_STATUS_NAME "/"
 
 
-#define CAMERA_CH_START_OFFSET 1
-#define IMU_PIPE_MIN_PIPE_SIZE (4 * 640 * 640)  // give ourselves huge buffers
-#define CAM_PIPE_SIZE (30 * 1280 * 800)         // give ourselves huge buffers
-
-#define CPU_PIPE_DIR MODAL_PIPE_DEFAULT_BASE_DIR  "cpu_monitor/"
-
 // after 300ms with no response, the health monitor thread assumes mvVISLAM
 // has locked up while processing a frame and starts sending messages indicating
 // a stall has occured with a failed state
@@ -109,18 +101,6 @@
 // init after  image frames recevoied at start up
 #define INIT_TIMEOUT_FRAMES 30
 
-// not really sure if this will be needed
-#define SILENT_STD(x)                             \
-    {                                             \
-        FILE* silentfd = fopen("/dev/null", "w"); \
-        int savedstdoutfd = dup(STDOUT_FILENO);   \
-        fflush(stdout);                           \
-        x                                         \
-            fflush(stdout);                       \
-        fclose(silentfd);                         \
-        dup2(savedstdoutfd, STDOUT_FILENO);       \
-        close(savedstdoutfd);                     \
-    }
 
 static int en_config_only = 0;
 int en_debug = 0;
@@ -237,8 +217,7 @@ static bool not_displaying = true;
 std::mutex overlay_mutex;
 
 cv::Mat world_correction;
-Eigen::Matrix3d world_correction_eigen;
-Eigen::Matrix<double, 4, 1> world_correction_q;
+
 
 std::deque<ov_core::CameraData> camera_queue;
 std::mutex camera_queue_mtx;
@@ -736,7 +715,7 @@ static int _hard_reset_(bool fast_reset)
 	old_vio_manager.reset();  // delete OLD VINS core instance via mutex releases
 
 
-	printf("Camera queue size after reset: %d\n", camera_queue.size());
+	printf("Camera queue size after reset: %d\n", (int)camera_queue.size());
 
 	return 1;
 }
@@ -972,9 +951,9 @@ static void _post_snapshot()
 //					if (cam_idx >= 2)
 //						continue;
 
-					// OVERRIDE
-					if (single_cam_in_use > 0)
-						cam_idx = single_cam_in_use;
+					// // OVERRIDE
+					// if (single_cam_in_use > 0)
+					// 	cam_idx = single_cam_in_use;
 					
 					if (!en_debug_pos)
 					{
@@ -1470,15 +1449,15 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.featinit_options.max_baseline = max_baseline;
 	vio_manager_options.featinit_options.max_cond_number = max_cond_number;
 
-	vio_manager_options.grid_x = grid_x;
-	vio_manager_options.grid_y = grid_y;
-	vio_manager_options.pyramid_levels = pyramid_levels;
-
+	// internal tracker setup
+	vio_manager_options.grid_x = 5;
+	vio_manager_options.grid_y = 5;
+	vio_manager_options.pyramid_levels = 5;
 	vio_manager_options.downsample_cameras = false; // TBD
 	vio_manager_options.num_opencv_threads = num_opencv_threads;
 	vio_manager_options.num_pts = num_features_to_track;
 	vio_manager_options.fast_threshold = fast_threshold;
-	vio_manager_options.min_px_dist = min_pix_dist;
+	vio_manager_options.min_px_dist = 50;
 
 	vio_manager_options.histogram_method = histogram_method;
 	vio_manager_options.knn_ratio = knn_ratio;
@@ -1495,20 +1474,12 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 		if (cam_info_vec[i].is_fisheye)
 		{
 			std::cout << "OpenVINS using fisheye camera" << std::endl;
-
-			cam_calib_intrinsic =
-					std::make_shared < ov_core::CamEqui
-							> (cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(
-									9, 0));
+			cam_calib_intrinsic = std::make_shared <ov_core::CamEqui>(cam_info_vec[i].width, cam_info_vec[i].height);
 		}
 		else
 		{
 			std::cout << "OpenVINS using plumb-bob camera" << std::endl;
-
-			cam_calib_intrinsic =
-					std::make_shared < ov_core::CamRadtan
-							> (cam_info_vec[i].cam_calib_intrinsic(8, 0), cam_info_vec[i].cam_calib_intrinsic(
-									9, 0));
+			cam_calib_intrinsic = std::make_shared <ov_core::CamRadtan>(cam_info_vec[i].width, cam_info_vec[i].height);
 		}
 		// The camera intrinsics
 		cam_calib_intrinsic->set_value(cam_info_vec[i].cam_calib_intrinsic);
@@ -1661,6 +1632,7 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	}
 }
 
+
 static void _simple_cpu_cb(__attribute__((unused))int ch, char *raw_data,
 		int bytes, __attribute__((unused)) void *context)
 {
@@ -1798,7 +1770,7 @@ static int create_server_pipes(void)
 		OV_VIO_OVERLAY_LOCATION,// location
 		"camera_image_metadata_t",// type
 		PROCESS_NAME,// server_name
-		CAM_PIPE_SIZE,// size_bytes
+		64*1024*1024,// size_bytes
 		0// server_pid
 	};
 
@@ -1836,98 +1808,6 @@ static int create_server_pipes(void)
 	return 0;
 }
 
-static int read_external_configs_from_file(void)
-{
-	fprintf(stderr,
-			"=====> imu to read from: %s\n",
-			imu_name);
-
-	int ret = json_fetch_string(cam_json, "imu", imu_name, 128);
-
-	bool is_wrldc_set = false;
-
-	cJSON *cams = cJSON_GetObjectItem(cam_json, "cameras");
-	if (cams == NULL)
-	{
-		fprintf(stderr, "failed to get cameras\n");
-	}
-
-	int i = 0;
-	size_t cam_id = 0;
-	while (ret == 0)
-	{
-		cJSON *curr_cam = cJSON_GetArrayItem(cams, cam_id);
-		if (curr_cam == NULL)
-		{
-			// fprintf(stderr, "failed to get curr_cam\n");
-			break;
-		}
-
-		double arr_cam_wrt_imu[7];
-		double arr_cam_calib[10];
-		double arr_world_correction[9];
-		int is_fisheye;
-
-		ret = json_fetch_fixed_vector(curr_cam, "ov_cam_wrt_imu",
-				arr_cam_wrt_imu, 7);
-		ret = json_fetch_fixed_vector(curr_cam, "ov_cam_cal", arr_cam_calib,
-				10);
-		if (!is_wrldc_set)
-			ret = json_fetch_fixed_vector(curr_cam, "ov_world_correction",
-					arr_world_correction, 9);
-		ret = json_fetch_bool(curr_cam, "fisheye", &is_fisheye);
-
-		Eigen::Matrix<double, 7, 1> curr_cam_wrt_imu(arr_cam_wrt_imu);
-		Eigen::Matrix<double, 10, 1> curr_cam_calib_intrinsic(arr_cam_calib);
-
-		if (curr_cam_calib_intrinsic(8, 0) > max_width)
-			max_width = curr_cam_calib_intrinsic(8, 0);
-		if (curr_cam_calib_intrinsic(9, 0) > max_height)
-			max_height = curr_cam_calib_intrinsic(9, 0);
-
-		if (!is_wrldc_set)
-		{
-			world_correction = cv::Mat(3, 3, CV_64F);
-			memcpy(world_correction.data, arr_world_correction,
-					3 * 3 * sizeof(double));
-
-		    for (int i = 0; i < 3; ++i) {
-		        for (int j = 0; j < 3; ++j) {
-		        	world_correction_eigen(i, j) = world_correction.at<double>(i, j);
-		        }
-		    }
-
-		    world_correction_q = ov_core::rot_2_quat(world_correction_eigen);
-
-		    printf("WORLD QUATERNION: %f %f %f %f\n", world_correction_q.x(), world_correction_q.y(), world_correction_q.z(), world_correction_q.w());
-
-
-			is_wrldc_set = true;
-		}
-		// now populate our vector with this information
-		camera_info curr_info;
-		curr_info.is_fisheye = is_fisheye;
-		curr_info.cam_wrt_imu = curr_cam_wrt_imu;
-		curr_info.cam_calib_intrinsic = curr_cam_calib_intrinsic;
-		curr_info.cam_id = cam_id;
-		cam_id++;
-
-		// fetch the name as well directly into this packet
-		ret = json_fetch_string(curr_cam, "cam name", curr_info.name, 128);
-
-		// fetch the mode
-		char mode_buf[128];
-		ret = json_fetch_string(curr_cam, "cam mode", mode_buf, 128);
-		curr_info.mode = string_camera_mode_to_enum(mode_buf);
-
-		cam_info_vec.push_back(curr_info);
-	}
-
-	free (cam_json);
-
-	return 0;
-}
-
 
 static bool connect_mavlink_service()
 {
@@ -1936,15 +1816,16 @@ static bool connect_mavlink_service()
 	pipe_client_set_disconnect_cb(BARO_CH, _baro_disconnect_cb, NULL);
 	pipe_client_set_simple_helper_cb(BARO_CH,
 			_new_baro_data_default_handler, NULL);
-	if (pipe_client_open(BARO_CH, baro_name, PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER,
-			IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+	if (pipe_client_open(BARO_CH, "mavlink_onboard", PROCESS_NAME, CLIENT_FLAG_EN_SIMPLE_HELPER,
+			MAVLINK_MESSAGE_T_RECOMMENDED_READ_BUF_SIZE) != 0)
 	{
-		fprintf(stderr, "failed to open MAVLINK and Baro\n");
+		fprintf(stderr, "failed to open mavlink_onboard pipe\n");
 		_quit(-1);
 	}
 
 	return true;
 }
+
 
 static int connect_client_pipes(void)
 {
@@ -2002,20 +1883,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
-	cam_config_file_print();
+	if(en_config_only) _quit(-1);
 
-	// load external info
-	printf("Loading external config file\n");
-	if (read_external_configs_from_file() < 0)
-	{
-		printf ("read_external_configs_from_file() < 0\n");
-		_quit(-1);
-	}
-	
-	if (en_config_only)
-	{
-		_quit(-1);
-	}
 	// coordindate system correction OVINS only needed
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
@@ -2072,11 +1941,9 @@ int main(int argc, char *argv[])
 	// set this critical process to use FIFO scheduler with high priority
 	pipe_set_process_priority(THREAD_PRIORITY_RT_HIGH);
 
-#ifdef BUILD_QRB5165
 	// on qrb5165 keep this process on the larger cores
 	set_cpu_affinity(cpu_set_big_cores_and_gold_core());
 	print_cpu_affinity();
-#endif
 
 	// Create the server pipes
 	printf("create_server_pipes\n");
@@ -2128,12 +1995,8 @@ int main(int argc, char *argv[])
 	int flags = EN_PIPE_CLIENT_SIMPLE_HELPER;
 	// init connection to server. In auto-reconnect mode this will "succeed"
 	// even if the server is offline, but it will connect later on automatically
-	ret = pipe_client_open(CPU_CH, CPU_PIPE_DIR, PROCESS_NAME, flags, CPU_STATS_RECOMMENDED_READ_BUF_SIZE);
-	// check for success
-	if (ret)
-	{
-		fprintf(stderr, "ERROR opening CPU channel:\n");
-		pipe_print_error(ret);
+	if(pipe_client_open(CPU_CH, "cpu_monitor", PROCESS_NAME, flags, CPU_STATS_RECOMMENDED_READ_BUF_SIZE)){
+		fprintf(stderr, "ERROR opening CPU pipe\n");
 		return -1;
 	}
 	//////////////////////////

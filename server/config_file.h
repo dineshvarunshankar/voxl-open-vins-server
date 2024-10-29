@@ -212,6 +212,8 @@ extern double max_allowable_cep;
 extern bool en_force_init;
 extern bool en_vio_always_on;
 extern bool en_force_ned_2_flu;
+extern int en_ext_feature_tracker;
+extern int num_features_to_track;
 
 // read only our own config file without printing the contents
 int config_file_read(void);

@@ -662,10 +662,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				img_ringbuf->insert_data(curr_message);
 				
 				int offset = 0;
-				if (single_cam_in_use == 1)
-				{
-					offset = meta.size_bytes / 2;
-				}				
+				// if (single_cam_in_use == 1)
+				// {
+				// 	offset = meta.size_bytes / 2;
+				// }
 				cv::Mat internal_img(meta.height, meta.width, CV_8UC1,
 						(uint8_t*) curr_message->image_pixels + offset);
 				

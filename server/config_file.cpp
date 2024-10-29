@@ -147,6 +147,8 @@ double max_allowable_cep;
 bool en_force_init = false;
 bool en_vio_always_on = true;
 bool en_force_ned_2_flu = false;
+int en_ext_feature_tracker = 1;
+int num_features_to_track;
 
 
 //std::string log_path;
@@ -280,7 +282,8 @@ int config_file_print(void) {
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
     printf("force FLU to NED transform:                  %s\n", en_force_ned_2_flu ? "true" : "false");
     printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
-
+    printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
+    printf("num_features_to_track:              %d\n", num_features_to_track);
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -394,8 +397,10 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 3);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
+    json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
+    json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
 
-    
+
     if (takeoff_cam >= 0)
     	use_mask = true;
     

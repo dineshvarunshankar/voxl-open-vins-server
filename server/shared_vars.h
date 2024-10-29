@@ -102,7 +102,8 @@ extern int current_width;
 extern int current_height;
 extern uint8_t update_slots;
 
-extern void _publish_default(double pose_timestamp);
+// TODO move this function declaration to publisher_module.hpp
+void _publish_default(double pose_timestamp);
 
 extern ext_vio_data_t d;  // complete "extended" vio MPA packet
 extern vio_data_t s;      // simplified vio packet
@@ -114,8 +115,7 @@ extern std::deque<ov_core::CameraData> camera_queue;
 extern std::mutex camera_queue_mtx;
 
 extern cv::Mat world_correction;
-extern Eigen::Matrix3d world_correction_eigen;
-extern Eigen::Matrix<double, 4, 1> world_correction_q;
+
 
 typedef struct _bucket
 {

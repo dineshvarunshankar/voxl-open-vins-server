@@ -38,54 +38,34 @@
 
 #define MAX_CAMERAS 4
 
-#define CAM_CONFIG_FILE "/etc/modalai/voxl-open-vins-standalone.conf"
-#define CAM_CONFIG_FILE_HEADER \
-    "\
-/**\n\
- * This file contains configuration that's specific to voxl-open-vins-server. It is a duplicate of that used by voxl-feature-tracker.\n\
- * \n\
- */\n"
-
-// TODO need a lib to extract global camera data instead of pull from VFT
-typedef enum {
-    TRACKER_OCV  = 0,    // run the original OpenCV feature tracker
-    TRACKER_CVP  = 1,    // run the custom CVP feature tracker
-    TRACKER_BOTH = 2     // run both of the above
-} tracker_type_t;
-
-typedef struct tracker_input_t {
-    char input_pipe[CM_CHAR_BUF_SIZE];
-    char output_pipe[CM_CHAR_BUF_SIZE];
-    char overlay_pipe[CM_CHAR_BUF_SIZE];
-    int num_features;
-    tracker_type_t tracker_type;
-} tracker_input_t;
-
-std::vector<camera_info> cam_info_vec;
-
-extern int width;
-extern int height;
-extern bool en_gyro;
-extern bool en_force_ned_2_flu;
-extern bool en_descriptors;
-extern int num_features_to_track;
-extern int grid_x;
-extern int grid_y;
-extern int min_pix_dist;
-extern int pyramid_levels;
-extern int window_size;
-extern int single_cam_in_use;
-extern bool en_ext_feature_tracker;
 
 
-// cv::Mat for openvins world flip
-extern cv::Matx33d tmp_world_correction;
+
+extern std::vector<camera_info> cam_info_vec;
+extern char imu_name[64];
+extern Eigen::Matrix3d world_correction_eigen;
+extern Eigen::Matrix<double, 4, 1> world_correction_q;
+
+
+
+// extern int width;
+// extern int height;
+// extern bool en_gyro;
+// extern bool en_force_ned_2_flu;
+// extern bool en_descriptors;
+// extern int num_features_to_track;
+// extern int grid_x;
+// extern int grid_y;
+// extern int min_pix_dist;
+// extern int pyramid_levels;
+// extern int window_size;
+// extern int single_cam_in_use;
+// extern bool en_ext_feature_tracker;
+
 
 // read only our own config file without printing the contents
 int cam_config_file_read(void);
 
-// prints the current configuration values to the screen.
-int cam_config_file_print(void);
 
 
 #endif // CAM_CONFIG_FILE_H

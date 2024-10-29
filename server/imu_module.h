@@ -5,7 +5,6 @@
 #include "config_file.h"
 #include "vft_module.h"
 
-extern char imu_name[CHAR_BUF_SIZE];
 
 extern std::mutex imu_lock_mutex;
 

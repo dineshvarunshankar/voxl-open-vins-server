@@ -8,9 +8,6 @@
 #include <stdio.h>
 
 
-char imu_name[CHAR_BUF_SIZE] = "imu";
-
-
 std::mutex imu_lock_mutex;
 
 void _imu_disconnect_cb(__attribute__((unused)) int ch,

@@ -2,15 +2,14 @@
 #include "config_file.h"
 #include "quality.h"
 #include "common.h"
+#include "cam_config_file.h"
 
 
 int grid_spacing_x;
 int grid_spacing_y;
 
-void _publish_default(double pose_timestamp);
 
-
-double map_double(double x, double in_min, double in_max, double out_min,
+static double map_double(double x, double in_min, double in_max, double out_min,
 		double out_max)
 {
 	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -119,7 +118,7 @@ static bool stable_features(int cur_feats, bool bypass = false)
 	return is_bad;
 }
 
-Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch, double yaw) {
+static Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch, double yaw) {
     double cy = cos(yaw / 2);
     double sy = sin(yaw / 2);
     double cp = cos(pitch / 2);
@@ -140,7 +139,6 @@ Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch, doubl
 
 void _publish_default(double pose_timestamp)
 {
-    static Eigen::Matrix3d rot_global_to_imu_frame = Eigen::Matrix3d::Identity();
     static Eigen::Matrix3d rot_global_zero_horizon = Eigen::Matrix3d::Identity();
 	static double nullpoint = 1;
 	static double flipframe = 1;
