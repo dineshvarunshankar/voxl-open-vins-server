@@ -469,8 +469,7 @@ void _publish_default(double pose_timestamp)
 
     if (gravity_axis == 0 && gravity_vector_direction < 0)
     {
-		rot_global_zero_horizon =
-										Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
+		rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
     }
 
     //
@@ -605,7 +604,7 @@ void _publish_default(double pose_timestamp)
 		}
 
 		// then as a average
-		int avg_qual = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, d.n_total_features, d.features);
+		// int avg_qual = calc_quality(s.state, s.velocity_covariance, current_width,	current_height, d.n_total_features, d.features);
 
 		int max_q = 0;
 		for (int z=0; z<cameras_used;z++)
@@ -613,8 +612,8 @@ void _publish_default(double pose_timestamp)
 			if (qualities[z] > max_q)
 				max_q = qualities[z];
 		}
-		if (avg_qual > max_q)
-			max_q = avg_qual;
+		// if (avg_qual > max_q)
+		// 	max_q = avg_qual;
 
 		s.quality = max_q;
 
