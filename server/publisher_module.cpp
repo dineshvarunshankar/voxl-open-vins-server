@@ -477,7 +477,7 @@ void _publish_default(double pose_timestamp)
 	//
 	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
 	imu_wrt_wio_holder = rot_global_zero_horizon * imu_wrt_wio_holder;
-	imu_wrt_wio_holder = world_correction_eigen.inverse() * imu_wrt_wio_holder;
+	//imu_wrt_wio_holder = world_correction_eigen.inverse() * imu_wrt_wio_holder;
 	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
 
 	//
@@ -485,7 +485,7 @@ void _publish_default(double pose_timestamp)
 	//
 	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
 	vel_imu_wrt_vio_holder =rot_global_zero_horizon * vel_imu_wrt_vio_holder;
-	vel_imu_wrt_vio_holder = world_correction_eigen.inverse()  * vel_imu_wrt_vio_holder;
+	//vel_imu_wrt_vio_holder = world_correction_eigen.inverse()  * vel_imu_wrt_vio_holder;
 	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
 
