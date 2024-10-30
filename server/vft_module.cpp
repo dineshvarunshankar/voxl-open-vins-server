@@ -74,9 +74,7 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 
 		if (use_takeoff_cam && (is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 		{
-			if (!en_vio_always_on)
-				printf(
-					"Detected Takeoff, going to multicamera VINS normal operations\n");
+			printf("Detected Takeoff, going to multicamera VINS normal operations\n");
 			use_takeoff_cam = false;
 		}
 

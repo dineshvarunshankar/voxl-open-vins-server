@@ -180,8 +180,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					message.masks.push_back(use_mask);
 					if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
-						printf(
-								"Detected Takeoff, going to VINS normal operations\n");
+						//printf("Detected Takeoff, going to VINS normal operations\n");
 						use_takeoff_cam = false;
 	
 						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -412,8 +411,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 						if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 						{
-							printf(
-									"Detected Takeoff, going to multicamera VINS normal operations\n");
+							//printf("Detected Takeoff, going to multicamera VINS normal operations\n");
 							use_takeoff_cam = false;
 
 							// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -640,8 +638,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 					if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
-						printf(
-								"Detected Takeoff, going to multicamera VINS normal operations\n");
+						//printf("Detected Takeoff, going to multicamera VINS normal operations\n");
 						use_takeoff_cam = false;
 
 						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -726,8 +723,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					message.masks.push_back(use_mask);
 					if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 					{
-						printf(
-								"Detected Takeoff, going to multicamera VINS normal operations\n");
+						//printf("Detected Takeoff, going to multicamera VINS normal operations\n");
 						use_takeoff_cam = false;
 
 						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -811,8 +807,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				message.masks.push_back(use_mask);
 				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 				{
-					printf(
-							"Detected Takeoff, going to VINS normal operations\n");
+					//printf("Detected Takeoff, going to VINS normal operations\n");
 					use_takeoff_cam = false;
 
 					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -890,8 +885,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				message.masks.push_back(use_mask);
 				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 				{
-					printf(
-							"Detected Takeoff, going to VINS normal operations\n");
+					//printf("Detected Takeoff, going to VINS normal operations\n");
 					use_takeoff_cam = false;
 
 					// if we're disarmed, and running load  throttling, turn off and go fullt throttle

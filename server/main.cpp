@@ -1609,8 +1609,8 @@ static void _new_baro_data_default_handler(__attribute__((unused)) int ch,
  	// TODO make more elegant, this is a bad indication using non-throttle  autonomous modes
  	if (en_ext_feature_tracker  && !is_armed && throttle_state == 0)
  	{
- 		if (takeoff_cam >= 0)
- 			use_takeoff_cam = true;
+ 		// if (takeoff_cam >= 0)
+ 		// 	use_takeoff_cam = true;
  		ext_blind_take_off_force = true;
  	}	
  	else
