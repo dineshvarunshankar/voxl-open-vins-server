@@ -323,9 +323,9 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 25);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 25);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 1000);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 1000);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
