@@ -91,11 +91,11 @@ static bool stable_features(int cur_feats, bool bypass = false)
 
 	int min_good_feat_thresh = auto_reset_min_features;
 	
-	if (!offline && ext_blind_take_off_force && !is_armed)
-	{
-		min_good_feat_thresh = max_slam_in_update;
-		cur_feats = min_good_feat_thresh - 1;
-	}	
+	// if (!offline && ext_blind_take_off_force && !is_armed)
+	// {
+	// 	min_good_feat_thresh = max_slam_in_update;
+	// 	cur_feats = min_good_feat_thresh - 1;
+	// }
 	
 	if (bypass)
 		ts_threshold = auto_reset_min_feature_timeout_s -1;

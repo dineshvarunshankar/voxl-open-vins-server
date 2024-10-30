@@ -1878,10 +1878,8 @@ int main(int argc, char *argv[])
 	// coordindate system correction OVINS only needed
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
-	
-	offline = en_vio_always_on;
 
-	use_takeoff_cam =takeoff_cam >= 0;
+	use_takeoff_cam = takeoff_cam >= 0;
 
 
 	// Create the VIO Manager -- Core OpenVINS state
