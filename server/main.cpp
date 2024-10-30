@@ -1925,8 +1925,9 @@ int main(int argc, char *argv[])
 	// set this critical process to use FIFO scheduler with high priority
 	////////////////////////////////////////////////////////////////////////////////
 
-	// set this critical process to use FIFO scheduler with high priority
-	pipe_set_process_priority(THREAD_PRIORITY_RT_HIGH);
+	// This is a heavy multithreaded process, set to medium priority so we don't
+	// starve more time sensitive things like drivers and VFC
+	pipe_set_process_priority(THREAD_PRIORITY_RT_MED);
 
 	// on qrb5165 keep this process on the larger cores
 	set_cpu_affinity(cpu_set_big_cores_and_gold_core());

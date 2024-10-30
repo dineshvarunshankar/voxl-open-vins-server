@@ -330,7 +330,7 @@ int config_file_read(void) {
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
 
-    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.0015);
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.0);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
@@ -374,8 +374,8 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
     
-    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);    
-    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 9);
+    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 1);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
     int tmp_hist = 0;
