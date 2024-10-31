@@ -323,14 +323,14 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features,40);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 25);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 25);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 25);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 1000);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 1000);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
 
-    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.0015);
+    json_fetch_double_with_default(parent, "cam_imu_time_offset", &cam_imu_time_offset, 0.0);
     json_fetch_double_with_default(parent, "slam_delay", &slam_delay, 1.0);
 
     json_fetch_double_with_default(parent, "gravity_mag", &gravity_mag, 9.80665);
@@ -343,19 +343,20 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "imu_sigma_ab", &imu_sigma_ab, 5.538346201712153e-05);
 
     json_fetch_double_with_default(parent, "msckf_chi2_multiplier", &msckf_chi2_multiplier, 1.);
-    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.);
-
     json_fetch_double_with_default(parent, "slam_chi2_multiplier", &slam_chi2_multiplier, 40.0);
-    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.8);
-
     json_fetch_double_with_default(parent, "zupt_chi2_multiplier", &zupt_chi2_multiplier, 1);
-    json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
+
+    // ovins default is 1 for sigma_px, but with VFT we extract features on multiple downscaled
+    // image levels so some features are noisier, increase sigma to 4
+    json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 4.0);
+    json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 4.0);
+    json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 4.0);
 
     json_fetch_bool_with_default(parent, "try_zupt", (int *)&try_zupt, 1);
     json_fetch_double_with_default(parent, "zupt_max_velocity", &zupt_max_velocity, 0.03);
     json_fetch_bool_with_default(parent, "zupt_only_at_beginning", (int *)&zupt_only_at_beginning, 1);
     json_fetch_double_with_default(parent, "zupt_noise_multiplier", &zupt_noise_multiplier, 1.0);
-    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 3);
+    json_fetch_double_with_default(parent, "zupt_max_disparity", &zupt_max_disparity, 8);
     json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
@@ -374,8 +375,8 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "use_mask", (int *)&use_mask, 0);
     json_fetch_bool_with_default(parent, "use_stereo", (int *)&use_stereo, 0);
     
-    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);    
-    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 9);
+    json_fetch_bool_with_default(parent, "use_baro", (int *)&use_baro, 0);
+    json_fetch_int_with_default(parent, "num_opencv_threads", &num_opencv_threads, 4);
     json_fetch_int_with_default(parent, "fast_threshold", &fast_threshold, 15);
 
     int tmp_hist = 0;
@@ -383,7 +384,7 @@ int config_file_read(void) {
     histogram_method = int_to_hist_method(tmp_hist);
 
     json_fetch_double_with_default(parent, "knn_ratio", &knn_ratio, 0.7);
-    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.1);
+    json_fetch_double_with_default(parent, "takeoff_accel_threshold", &init_imu_thresh_accel, 0.5);
 
     json_fetch_double_with_default(parent, "takeoff_threshold", &takeoff_threshold, -0.1);
     json_fetch_bool_with_default(parent, "use_stats", (int *)&en_ov_stats, 0);

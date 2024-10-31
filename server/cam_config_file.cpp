@@ -164,6 +164,7 @@ int cam_config_file_read(void)
 	// loop through all the cameras and put the common info into the local camera_info format
 	// which mimics very closely the openvins lib formaty for intrinsics and extrinsics
 	// for easy copying in main()
+	int is_there_an_occlluded_cam = 0;
 	for(int i=0; i<n_cams; i++){
 
 		camera_info cam;
@@ -173,6 +174,7 @@ int cam_config_file_read(void)
 
 		// check for the first camera that's not obscured
 		if(takeoff_cam<0 && !vio_cams[i].is_occluded_on_ground) takeoff_cam = i;
+		if(vio_cams[i].is_occluded_on_ground) is_there_an_occlluded_cam = 1;
 
 		// intrinsics
 		// TODO validate the OV radtan model matches opencv pinhole model
@@ -221,6 +223,9 @@ int cam_config_file_read(void)
 	// were marked as occluded on ground, just default to the first cam for takeoff
 	// this is usually tracking_front
 	if(takeoff_cam<0) takeoff_cam = 0;
+
+	// if no cams were occluded, we can disable the blind takeoff feature
+	if(!is_there_an_occlluded_cam) takeoff_cam = -1;
 
 	// openvins tries to be clever and rotate the whole local frame around
 	// to align with gravity. So we need to figure out how the imu is mounted
