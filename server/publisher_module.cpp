@@ -405,10 +405,14 @@ void _publish_default(double pose_timestamp)
 
 	static double yaw_offset = 0;
 
-	if (gravity_vector_direction  < 0)
+	if (gravity_vector_direction  <= 0)
 	{
-		if (gravity_axis == 0)
+		if (gravity_axis == 0) // X AXIS
 		{
+
+			// This is different from other axes as X bounds +-M_PI and ovins
+			// by design will rotate the global frame  due to its gravity calculation
+			// TODO look into fixing this in ovins api
 			new_rot = ov_core::quat_multiply(world_correction_q, new_rot);
 
 			Eigen::Matrix<double, 3, 3> rot_new_rot = ov_core::quat_2_Rot(new_rot);
@@ -440,13 +444,13 @@ void _publish_default(double pose_timestamp)
 			rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
 
 		}
-		else  if (gravity_axis == 1)
+		else  if (gravity_axis == 1)   //Y AXIS  aka voxl-cam
 		{
-			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_y(M_PI ) * ov_core::rot_z(M_PI).inverse();
-			new_rot = ov_core::quat_multiply(-new_rot, ov_core::rot_2_quat(roll_offset_rot));
-			rot_global_zero_horizon = Eigen::Matrix3d::Identity();
+			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_x(M_PI/2);
+			new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(roll_offset_rot));
+			rot_global_zero_horizon = Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitZ());
 		}
-		else  if (gravity_axis == 2)
+		else  if (gravity_axis == 2)  //Z AXIS, normal, typical
 		{
 			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_y(M_PI ) * ov_core::rot_z(M_PI).inverse();
 			new_rot = ov_core::quat_multiply(-new_rot, ov_core::rot_2_quat(roll_offset_rot));
