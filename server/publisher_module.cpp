@@ -269,6 +269,7 @@ void _publish_default(double pose_timestamp)
 	V_uncertainty += cov_varis(7, 7) * cov_varis(7, 7);
 	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
 	V_uncertainty = sqrt(V_uncertainty);
+	// printf("T_uncertainty: %.5f, R_uncertainty: %.5f, V_uncertainty: %.5f\n", T_uncertainty, R_uncertainty, V_uncertainty);
 
 //	if (en_debug)
 //		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
@@ -578,6 +579,7 @@ void _publish_default(double pose_timestamp)
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
+	double v_cov_quality = map_double(V_uncertainty, 0.0, auto_reset_max_v_cov_instant, 100, 0);
 
 	if (!is_armed || !is_initialized)
 	{
@@ -611,8 +613,12 @@ void _publish_default(double pose_timestamp)
 			if (qualities[z] > max_q)
 				max_q = qualities[z];
 		}
-		s.quality = max_q;
 
+		if (v_cov_quality < max_q) {
+			max_q = v_cov_quality;
+		}
+
+		s.quality = max_q;
 	}
 
 	if (s.quality > 100)
