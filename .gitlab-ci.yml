@@ -6,8 +6,6 @@ include:
   - project: 'voxl-public/voxl-sdk/ci-tools'
     file: '/pipeline-configs/cross-qrb5165.yml'
   - project: 'voxl-public/voxl-sdk/ci-tools'
-    file: '/pipeline-configs/cross-apq8096.yml'
-  - project: 'voxl-public/voxl-sdk/ci-tools'
     file: '/pipeline-configs/common.yml'
 
 variables:
