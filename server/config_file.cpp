@@ -323,9 +323,9 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "cam_imu_ts_refinement", (int *)&cam_imu_ts_refinement, 1);
 
     json_fetch_int_with_default(parent, "max_clone_size", &max_clone_size, 8);
-    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 25);
-    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 1000);
-    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 1000);
+    json_fetch_int_with_default(parent, "max_slam_features", &max_slam_features, 35);
+    json_fetch_int_with_default(parent, "max_slam_in_update", &max_slam_in_update, 10);
+    json_fetch_int_with_default(parent, "max_msckf_in_update", &max_msckf_in_update, 10);
 
     json_fetch_int_with_default(parent, "feat_rep_msckf", (int *)&feat_rep_msckf, 4);
     json_fetch_int_with_default(parent, "feat_rep_slam", (int *)&feat_rep_slam, 4);
@@ -393,7 +393,7 @@ int config_file_read(void) {
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
-    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 30);
+    json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
     json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
