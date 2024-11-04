@@ -1874,22 +1874,8 @@ int main(int argc, char *argv[])
 		_quit(-1);
 	}
 
-
-	// coordindate system correction OVINS only needed
-	flu_ned_correction_mat(1, 1) = -1;
-	flu_ned_correction_mat(2, 2) = -1;
-
-	use_takeoff_cam = takeoff_cam >= 0;
-
-
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
-
-	// TODO figure this out properly for different drone orientations
-	if(world_correction_eigen(2, 2) < 0)
-		gravity_vector_direction = -1;
-	else
-		gravity_vector_direction = 1;
 
 	vio_manager_options.use_klt = !en_ext_feature_tracker;		
 
@@ -1989,6 +1975,19 @@ int main(int argc, char *argv[])
 	}
 	//////////////////////////
 
+	usleep(100000); // 100ms
+
+	flu_ned_correction_mat(1, 1) = -1;
+	flu_ned_correction_mat(2, 2) = -1;
+	use_takeoff_cam = takeoff_cam >= 0;
+	if ( world_correction_eigen(0, 0)  * world_correction_eigen(1, 1) >= 1)
+		gravity_vector_direction = 1;
+	else
+		gravity_vector_direction = -1;
+
+	printf("[INFO] world : %f %f  (%d)\n", world_correction_eigen(0, 0) , world_correction_eigen(1, 1), gravity_axis);
+
+\
 	while (main_running)
 	{
 		usleep(1e6);

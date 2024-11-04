@@ -139,7 +139,8 @@ static Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch
 
 void _publish_default(double pose_timestamp)
 {
-    static Eigen::Matrix3d rot_global_zero_horizon = Eigen::Matrix3d::Identity();
+    static Eigen::Matrix3d rot_global_zero_horizon = world_correction_eigen; //Eigen::Matrix3d::Identity();
+
 	static double nullpoint = 1;
 	static double flipframe = 1;
 
@@ -269,6 +270,7 @@ void _publish_default(double pose_timestamp)
 	V_uncertainty += cov_varis(7, 7) * cov_varis(7, 7);
 	V_uncertainty += cov_varis(8, 8) * cov_varis(8, 8);
 	V_uncertainty = sqrt(V_uncertainty);
+	// printf("T_uncertainty: %.5f, R_uncertainty: %.5f, V_uncertainty: %.5f\n", T_uncertainty, R_uncertainty, V_uncertainty);
 
 //	if (en_debug)
 //		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
@@ -404,44 +406,58 @@ void _publish_default(double pose_timestamp)
 
 	static double yaw_offset = 0;
 
-    if (gravity_axis == 0 && gravity_vector_direction < 0) // TODO maynot need gravity_vector_direction eval
+	if (gravity_vector_direction  <= 0)
 	{
-    	new_rot = ov_core::quat_multiply(world_correction_q, new_rot);
+		if (gravity_axis == 0) // X AXIS
+		{
 
-    	Eigen::Matrix<double, 3, 3> rot_new_rot = ov_core::quat_2_Rot(new_rot);
-		Eigen::Matrix<double, 3, 1> rpy  =ov_core:: rot2rpy(rot_new_rot);
+			// This is different from other axes as X bounds +-M_PI and ovins
+			// by design will rotate the global frame  due to its gravity calculation
+			// TODO look into fixing this in ovins api
+			new_rot = ov_core::quat_multiply(world_correction_q, new_rot);
 
-    	if (zero_horizon)
-    	{
- 		   double angle_q = std::acos(default_level_horizon.dot(ned_q));
-		   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
-		   {
-			   yaw_offset = rpy(2);
-		   }
+			Eigen::Matrix<double, 3, 3> rot_new_rot = ov_core::quat_2_Rot(new_rot);
+			Eigen::Matrix<double, 3, 1> rpy  =ov_core:: rot2rpy(rot_new_rot);
 
-	    	// one shot
-			zero_horizon = false;
-	    	printf("NULL FACTOR from yaw->roll: %f\n", yaw_offset*180.0 / M_PI);
-    	}
+			if (zero_horizon)
+			{
+				double angle_q = std::acos(default_level_horizon.dot(ned_q));
+				if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
+				{
+					yaw_offset = rpy(2);
+				}
 
-    	Eigen::Matrix<double, 3, 3> yaw_offset_rot = ov_core::rot_z(-yaw_offset);
-    	new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(yaw_offset_rot));
-		rpy  =ov_core:: rot2rpy(ov_core::quat_2_Rot(new_rot));
+				// one shot
+				zero_horizon = false;
+				printf("NULL FACTOR from yaw->roll: %f\n", yaw_offset*180.0 / M_PI);
+			}
 
-		// WARNING!!!
-    	// TODO FIX THIS AS A ROTATION AND NOT SWAPPING
-    	// THIS NEEDS TO SUPPORT  INVERSE OF WORLD COORINATES
-    	// ONLY A HACK FOR VERTICALLY MOUNTED VOXLs
-		new_rot = euler_to_quaternion(gravity_vector_direction*rpy(2), rpy(0), rpy(1));
+			Eigen::Matrix<double, 3, 3> yaw_offset_rot = ov_core::rot_z(-yaw_offset);
+			new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(yaw_offset_rot));
+			rpy  =ov_core:: rot2rpy(ov_core::quat_2_Rot(new_rot));
 
+			// WARNING!!!
+			// TODO FIX THIS AS A ROTATION AND NOT SWAPPING
+			// THIS NEEDS TO SUPPORT  INVERSE OF WORLD COORINATES
+			// ONLY A HACK FOR VERTICALLY MOUNTED VOXLs
+			new_rot = euler_to_quaternion(gravity_vector_direction*rpy(2), rpy(0), rpy(1));
+
+			rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
+
+		}
+		else  if (gravity_axis == 1)   //Y AXIS  aka voxl-cam
+		{
+			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_x(M_PI/2);
+			new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(roll_offset_rot));
+			rot_global_zero_horizon = Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitZ());
+		}
+		else  if (gravity_axis == 2)  //Z AXIS, normal, typical
+		{
+			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_y(M_PI ) * ov_core::rot_z(M_PI).inverse();
+			new_rot = ov_core::quat_multiply(-new_rot, ov_core::rot_2_quat(roll_offset_rot));
+			rot_global_zero_horizon = Eigen::Matrix3d::Identity();
+		}
 	}
-    else  if (gravity_axis == 2 && gravity_vector_direction  < 0)
-	{
-    	Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_x(M_PI);
-    	new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(roll_offset_rot));
-	}
-
-    // support other rotation here!
 
 	Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
@@ -466,18 +482,12 @@ void _publish_default(double pose_timestamp)
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
 			cam_out.cast<float>();
 
-
-    if (gravity_axis == 0 && gravity_vector_direction < 0)
-    {
-		rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
-    }
-
     //
 	// Translation x y z
 	//
 	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
 	imu_wrt_wio_holder = rot_global_zero_horizon * imu_wrt_wio_holder;
-	//imu_wrt_wio_holder = world_correction_eigen.inverse() * imu_wrt_wio_holder;
+	imu_wrt_wio_holder = world_correction_eigen.inverse() * imu_wrt_wio_holder;
 	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
 
 	//
@@ -485,9 +495,8 @@ void _publish_default(double pose_timestamp)
 	//
 	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
 	vel_imu_wrt_vio_holder =rot_global_zero_horizon * vel_imu_wrt_vio_holder;
-	//vel_imu_wrt_vio_holder = world_correction_eigen.inverse()  * vel_imu_wrt_vio_holder;
+	vel_imu_wrt_vio_holder = world_correction_eigen.inverse()  * vel_imu_wrt_vio_holder;
 	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
-
 
 	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat().transpose())
@@ -578,6 +587,7 @@ void _publish_default(double pose_timestamp)
 	memcpy(d.features, curr_pixel_locs.data(),
 			d.n_total_features * sizeof(vio_feature_t));
 
+	double v_cov_quality = map_double(V_uncertainty, 0.0, auto_reset_max_v_cov_instant, 100, 0);
 
 	if (!is_armed || !is_initialized)
 	{
@@ -611,8 +621,12 @@ void _publish_default(double pose_timestamp)
 			if (qualities[z] > max_q)
 				max_q = qualities[z];
 		}
-		s.quality = max_q;
 
+		if (v_cov_quality < max_q) {
+			max_q = v_cov_quality;
+		}
+
+		s.quality = max_q;
 	}
 
 	if (s.quality > 100)
