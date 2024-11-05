@@ -3,7 +3,7 @@
 #include "config_file.h"
 #include "cam_config_file.h"
 #include "common.h"
-
+#include <state/StateHelper.h>
 
 #include <stdio.h>
 
@@ -96,15 +96,15 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		// So on average use every other packet.
 		if (!vio_manager->is_moving())
 		{
-			perf_limit = 1; //6
+		perf_limit = 5; //6
 		}
 		else
 		{
 
 			if (n_packets > 100)
-				perf_limit = 1;  //3
+			perf_limit = 10;  //3
 			else if (n_packets > 15)
-				perf_limit = 1;
+			perf_limit = 3;
 			else
 				perf_limit = 1;
 
@@ -124,23 +124,17 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 		last_perf_limit = perf_limit;
 
-		for (int i = 0; i < n_packets; i += perf_limit)
-		{
-
-//			auto rT0_1 = boost::posix_time::microsec_clock::local_time();
+	for (int i = 0; i < n_packets; i += perf_limit) {
 
 			int64_t  dt_long =  (data_array[i].timestamp_ns-last_imu_timestamp_ns);
 			double dt = (double) dt_long * 1e-09;
 
 			// check if we somehow got an out-of-order imu sample and reject it
-			if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns)
-			{
-				fprintf(stderr,
-						"WARNING out-of-order imu %fms before previous\n", dt);
+		if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns) {
+			fprintf(stderr, "WARNING out-of-order imu %fms before previous\n", dt);
 				continue;
 			}
-			else
-			{
+		else {
 
 				// Create the data struct that we will use for ingesting data into the vio manager
 				ov_core::ImuData vio_manager_data;
@@ -208,6 +202,7 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 //////////////////////////////////////////////////////////////////
 
 			}
+
 								
 				// NED to FLU systems as per VINS.
 				t_wm = flu_ned_correction_mat * t_wm;
@@ -235,13 +230,10 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(
 								0);
 
-//				 boost::posix_time::ptime rT1 = boost::posix_time::microsec_clock::local_time();
-//				 if (feature_queue.size() > 3)
-//				 {
-//					 feature_queue.clear();
-//					 printf("feat queue overflow\n");
-//
-//				 }
+				if (feature_queue.size() > 10)
+				{
+					printf("[WARN]: VFT data overflow (>1 sec) \n");
+				}
 
 				std::thread thread ([&]
 				{
@@ -260,6 +252,10 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 								vio_manager->feed_measurement_feature(fst.timestamp,fst.features);
 								_publish_default(last_imu_time);
 								feature_queue.pop_front();
+
+							Eigen::MatrixXd covariance_mat = ov_msckf::StateHelper::get_full_covariance(vio_manager->get_state());
+							// std::cout << "Matrix rows: " << covariance_mat.rows() << ", cols: " << covariance_mat.cols() << "\n";
+
 							}
 						}
 						else
@@ -278,22 +274,11 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 					}
 
 					thread_update_running = false;
-				}
-				);
+			});
 				thread.join();
 
-//				boost::posix_time::ptime rT2 = boost::posix_time::microsec_clock::local_time();
-//				  double time_total = (rT2 - rT1).total_microseconds() * 1e-4;
-//				 printf("%.4f\n", time_total);
-
 			}
-
-//			auto rT0_2 = boost::posix_time::microsec_clock::local_time();
-//			double time_total = (rT0_2 - rT0_1).total_microseconds() * 1e-6;
-
 		}
-
-
 }
 
 

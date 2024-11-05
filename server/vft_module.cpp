@@ -13,7 +13,7 @@ char vft_name[CHAR_BUF_SIZE] = "tracked_feats";
 vft_feature_packet* feature_packet_from_vft;
 vft_feature* features_from_vft;
 
-std::deque<vft_feature_set> feature_queue;
+ std::deque<vft_feature_set> feature_queue;
 std::mutex feature_queue_mtx;
 vft_feature_set feat_set;
 vft_feature_set feat_set_multi[4];
@@ -111,7 +111,15 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			for (int z=0;z<cameras_used;z++)
 			{
 				double ts_cam =  (double) feature_packet_from_vft->timestamp_ns[z] * 1e-9;
-				ts_map[ts_cam] = z;
+			    auto it = ts_map.find(ts_cam);
+			    if (it != ts_map.end())
+			    {
+			    	ts_map[ts_cam+0.0000001] = z;
+			    }
+			    else
+			    {
+			    	ts_map[ts_cam] = z;
+			    }
 
 				feat_set_multi[z].timestamp = ts_cam;
 				feat_set_multi[z].cam_id = 0;
@@ -119,11 +127,8 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 				int cam_total_features = feature_packet_from_vft->num_feats[z];
 				feat_set_multi[z].features.resize(cam_total_features);
 
-
 				for (int x=0;x<cam_total_features;x++)
 				{
-					// printf("cam: %d, age: %d\n", z, features_from_vft[last_feat_ctn].age);
-
 					// set age threshold as deemed appropriate
 					if (features_from_vft[last_feat_ctn].age >= 5) {
 						feat_set_multi[z].features[x].cam_id = z;

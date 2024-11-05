@@ -23,7 +23,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		return;
 
 	if (!en_ext_feature_tracker)
-	is_cam_connected = true;
+		is_cam_connected = true;
 
 	// camera working, reset errors
 	global_error_codes &= ~ERROR_CODE_CAM_MISSING;
