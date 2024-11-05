@@ -159,7 +159,7 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 				t_am(2, 0) = data_array[i].accl_ms2[2];
 				t_am(1, 0) = data_array[i].accl_ms2[1];
 				t_am(0, 0) = data_array[i].accl_ms2[0];
-				
+
 				if (!imu_moved && dt <0.01)
 				{
 					static int ramp = 0;
@@ -175,14 +175,14 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 					{
 						double d_accel = accel_mag-base_accel;
 						d_accel  = (0.8 * d_accel) - (0.2 * prev_accel);
-						prev_accel = d_accel; 		
+						prev_accel = d_accel;
 						if (d_accel > init_imu_thresh_accel && (throttle_state > 1 || en_vio_always_on))
 						{
 
 							if (ramp < 258)
 								printf("[INFO] IMU has moved, JERK detected\n");
-							
-							
+
+
 							imu_moved = true;
 							vio_manager->force_moving();
 						}
