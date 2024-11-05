@@ -100,10 +100,6 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		}
 		else
 		{
-			// TODO
-			// if (!en_ext_feature_tracker) {
-			// no need for perf data dropping!!!!
-			//
 
 			if (n_packets > 100)
 				perf_limit = 1;  //3
@@ -213,7 +209,6 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 			}
 								
-								
 				// NED to FLU systems as per VINS.
 				t_wm = flu_ned_correction_mat * t_wm;
 				t_am = flu_ned_correction_mat * t_am;
@@ -239,7 +234,14 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 				double timestamp_imu_inC = vio_manager_data.timestamp
 						- vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(
 								0);
+
 //				 boost::posix_time::ptime rT1 = boost::posix_time::microsec_clock::local_time();
+//				 if (feature_queue.size() > 3)
+//				 {
+//					 feature_queue.clear();
+//					 printf("feat queue overflow\n");
+//
+//				 }
 
 				std::thread thread ([&]
 				{
@@ -279,6 +281,7 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 				}
 				);
 				thread.join();
+
 //				boost::posix_time::ptime rT2 = boost::posix_time::microsec_clock::local_time();
 //				  double time_total = (rT2 - rT1).total_microseconds() * 1e-4;
 //				 printf("%.4f\n", time_total);
