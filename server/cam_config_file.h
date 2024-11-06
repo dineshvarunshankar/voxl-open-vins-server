@@ -49,6 +49,8 @@ extern Eigen::Matrix<double, 4, 1> world_correction_q;
 // TODO make this a  vector, right now it's just the first camera that's
 // not flagged as obscured on the ground in the common vio_cam config file
 extern int takeoff_cam;
+extern int en_takeoff_cam;
+extern std::vector<int> takeoff_cams;
 
 
 // read only our own config file without printing the contents

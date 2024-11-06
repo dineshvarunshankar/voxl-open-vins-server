@@ -587,7 +587,7 @@ void reset_states()
 	alt_z = 0.0;
 	changed_motion_state = false;
 	imu_moved = false;
-	if (takeoff_cam >= 0 && !is_armed)
+	if (!takeoff_cams.empty() >= 0 && !is_armed)
 		use_takeoff_cam  = true;
 	has_idle_images  = false;
 	last_imu_timestamp_ns = 0;
@@ -1979,7 +1979,7 @@ int main(int argc, char *argv[])
 
 	flu_ned_correction_mat(1, 1) = -1;
 	flu_ned_correction_mat(2, 2) = -1;
-	use_takeoff_cam = takeoff_cam >= 0;
+	use_takeoff_cam = !takeoff_cams.empty();
 	if ( world_correction_eigen(0, 0)  * world_correction_eigen(1, 1) >= 1)
 		gravity_vector_direction = 1;
 	else
@@ -1987,7 +1987,7 @@ int main(int argc, char *argv[])
 
 	printf("[INFO] world : %f %f  (%d)\n", world_correction_eigen(0, 0) , world_correction_eigen(1, 1), gravity_axis);
 
-\
+
 	while (main_running)
 	{
 		usleep(1e6);

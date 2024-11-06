@@ -18,6 +18,7 @@ std::mutex feature_queue_mtx;
 vft_feature_set feat_set;
 vft_feature_set feat_set_multi[4];
 vft_feature_set feat_set_zero;
+std::vector<vft_feature_set> feat_set_zero_multi;
 
 
 
@@ -93,6 +94,22 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			}
 		}
 
+		std::vector<int> cams_used_for_takeoff;
+		for (int i = 0; i < n_cams; i++) {
+			auto it = std::find(takeoff_cams.begin(), takeoff_cams.end(), i);
+			if (it != takeoff_cams.end()) {
+				cams_used_for_takeoff.push_back(1);
+			} else {
+				cams_used_for_takeoff.push_back(0);
+			}
+		}
+
+		
+
+		if (use_takeoff_cam) {
+			feat_set_zero_multi.resize(takeoff_cams.size());
+		}
+
 //		printf("n_cams (%d) ,%d ,%d ,%d ,%d  %d %d\n", n_cams, n_total_features, feature_packet_from_vft->num_feats[0], feature_packet_from_vft->num_feats[1], feature_packet_from_vft->num_feats[2], use_takeoff_cam, takeoff_cam);
 //		int cam_num = 0;
 //		int ctn = 0;
@@ -106,6 +123,7 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 
 		{
 			int last_feat_ctn = 0;
+			int takeoff_cam_ctn = 0;
 
 			// break out features in to their own feat_set
 			for (int z=0;z<cameras_used;z++)
@@ -118,19 +136,31 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 
 				int cam_total_features = feature_packet_from_vft->num_feats[z];
 				feat_set_multi[z].features.resize(cam_total_features);
+				
+				if (cams_used_for_takeoff[z] > 0) {
+					feat_set_zero_multi[takeoff_cam_ctn].features.resize(cam_total_features);
+				}
 
 
 				for (int x=0;x<cam_total_features;x++)
 				{
-					// printf("cam: %d, age: %d\n", z, features_from_vft[last_feat_ctn].age);
-
 					// set age threshold as deemed appropriate
-					if (features_from_vft[last_feat_ctn].age >= 5) {
+					if (features_from_vft[last_feat_ctn].age >= 20) {
 						feat_set_multi[z].features[x].cam_id = z;
 						feat_set_multi[z].features[x].id = features_from_vft[last_feat_ctn].id;
 						feat_set_multi[z].features[x].u = features_from_vft[last_feat_ctn].x;
 						feat_set_multi[z].features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
 						memcpy(feat_set_multi[z].features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+
+						if (cams_used_for_takeoff[z] > 0)
+						{
+							feat_set_zero_multi[takeoff_cam_ctn].cam_id = z;
+							feat_set_zero_multi[takeoff_cam_ctn].features[x].cam_id = z;
+							feat_set_zero_multi[takeoff_cam_ctn].features[x].id = features_from_vft[last_feat_ctn].id;
+							feat_set_zero_multi[takeoff_cam_ctn].features[x].u = features_from_vft[last_feat_ctn].x;
+							feat_set_zero_multi[takeoff_cam_ctn].features[x].v = features_from_vft[last_feat_ctn].y;  // TODO subtract from height?
+							memcpy(feat_set_zero_multi[takeoff_cam_ctn].features[x].descriptor, features_from_vft[last_feat_ctn].descriptor, 32);
+						}
 
 						if (z == takeoff_cam)
 						{
@@ -144,6 +174,10 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 					}
 					last_feat_ctn++;
 				}
+
+				if (cams_used_for_takeoff[z] > 0) {
+					takeoff_cam_ctn++;
+				}
 			}
 
 			int total_feats_ctn = 0;
@@ -153,7 +187,8 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			for (const auto& pair : ts_map)
 			{
 				int cam_num = pair.second;
-				if  (use_takeoff_cam && takeoff_cam >= 0  && cam_num != takeoff_cam)
+
+				if  (use_takeoff_cam && takeoff_cams.size() > 0  && cams_used_for_takeoff[cam_num] == 0)
 				{
 					continue;
 				}
@@ -167,68 +202,11 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			double cam_time =  avg_ts/num_cams_used;
 //			double cam_time = ts_map.begin()->first;
 
-//			printf("avg time %f cam0 %f cam1 %f\n", cam_time,  feat_set_multi[0].timestamp,feat_set_multi[1].timestamp);
-
 			feat_set.timestamp = cam_time;
 			feat_set_zero.timestamp = cam_time;
 			std::lock_guard < std::mutex > lck(feature_queue_mtx);
 			feature_queue.push_back(feat_set);
 		}
-
-//		else
-//		{
-//	        auto lastElement = ts_map.rbegin();
-//
-////			feat_set.timestamp = lastElement->first;
-////			feat_set_zero.timestamp = lastElement->first;
-////			std::lock_guard < std::mutex > lck(feature_queue_mtx);
-////			feature_queue.push_back(feat_set);
-//
-//			for(const auto& pair : ts_map) {
-//				if ( pair.first != NULL)
-//				{
-//					int idx_num = pair.second;
-//					int idx_num_feats = feature_packet_from_vft->num_feats[idx_num];
-//
-//					feat_set_multi[idx_num].features.resize(n_total_features);
-//					feat_set_zero.features.resize(n_total_features);
-//
-//					feat_set_multi[idx_num].timestamp =  pair.first;
-//					feat_set_zero.timestamp = pair.first;
-//
-//					for (int i=0; i<idx_num_feats; i++)
-//					{
-//						int ofs = idx_num*idx_num_feats+i;
-//
-//						feat_set_multi[idx_num].cam_id = pair.second;
-//						feat_set_multi[idx_num].features[i].cam_id = pair.second;
-//						feat_set_multi[idx_num].features[i].id = features_from_vft[ofs].id;
-//						feat_set_multi[idx_num].features[i].u = features_from_vft[ofs].x;
-//						feat_set_multi[idx_num].features[i].v = features_from_vft[ofs].y;  // TODO subtract from height?
-//						memcpy(feat_set_multi[idx_num].features[i].descriptor, features_from_vft[ofs].descriptor, 32);
-//
-//						if (idx_num == 0)
-//						{
-//							feat_set_zero.cam_id = pair.second;
-//							feat_set_zero.features[i].cam_id = pair.second;
-//							feat_set_zero.features[i].id = features_from_vft[ofs].id;
-//							feat_set_zero.features[i].u = features_from_vft[ofs].x;
-//							feat_set_zero.features[i].v = features_from_vft[ofs].y;  // TODO subtract from height?
-//							memcpy(feat_set_zero.features[i].descriptor, features_from_vft[ofs].descriptor, 32);
-//						}
-//					}
-//					if (idx_num < 2)
-//					{
-//						std::lock_guard < std::mutex > lck(feature_queue_mtx);
-//						feature_queue.push_back(feat_set_multi[idx_num]);
-//					}
-//				}
-//				else
-//				{
-//					printf("PAIR IS NULL\n");
-//				}
-//		    }
-//		}
 	}
 	else
 	{
@@ -240,16 +218,14 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			init_failure_detector_reset_flag = 1;
 		}
 
-		for (int i = 0; i < (int) feat_set_zero.features.size(); i++)
-		{
-			feat_set.timestamp = cam_time;
-			feat_set.cam_id = feat_set_zero.cam_id;
-			feat_set.features[i].cam_id = feat_set_zero.features[i].cam_id;
-			feat_set.features[i].id = feat_set_zero.features[i].id;
-			feat_set.features[i].u = feat_set_zero.features[i].u;
-			feat_set.features[i].v = feat_set_zero.features[i].v;
-			memcpy(feat_set.features[i].descriptor, feat_set_zero.features[i].descriptor, 32);
+		feat_set.timestamp = cam_time;
+
+
+		feat_set.features.clear();
+		for (int i = 0; i < feat_set_zero_multi.size(); i++) {
+			feat_set.features.insert(feat_set.features.end(), feat_set_zero_multi[i].features.begin(), feat_set_zero_multi[i].features.end());
 		}
+
 		std::lock_guard < std::mutex > lck(feature_queue_mtx);
 
 		feature_queue.push_back(feat_set);

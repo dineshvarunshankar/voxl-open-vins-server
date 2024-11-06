@@ -52,6 +52,8 @@ Eigen::Matrix3d world_correction_eigen;
 Eigen::Matrix<double, 4, 1> world_correction_q;
 
 int takeoff_cam = -1; // set nonzero when we find a non-obscured cam
+int en_takeoff_cam = 0;
+std::vector<int> takeoff_cams; 	// holds non-obscured cams
 
 static void quat_2_rot(Eigen::Matrix<double, 4, 1> quaternion, Eigen::Matrix<double,3,3>  &R)
 {
@@ -173,7 +175,13 @@ int cam_config_file_read(void)
 		cam.cam_id = i;
 
 		// check for the first camera that's not obscured
-		if(takeoff_cam<0 && !vio_cams[i].is_occluded_on_ground) takeoff_cam = i;
+		if(takeoff_cam<0 && !vio_cams[i].is_occluded_on_ground) {
+			takeoff_cam = i;
+		}
+		printf("vio cam: %d is occluded: %d\n", i, vio_cams[i].is_occluded_on_ground);
+		if (!vio_cams[i].is_occluded_on_ground) {
+			takeoff_cams.push_back(i);
+		}
 		if(vio_cams[i].is_occluded_on_ground) is_there_an_occlluded_cam = 1;
 
 		// intrinsics
@@ -223,9 +231,13 @@ int cam_config_file_read(void)
 	// were marked as occluded on ground, just default to the first cam for takeoff
 	// this is usually tracking_front
 	if(takeoff_cam<0) takeoff_cam = 0;
+	if(takeoff_cams.empty()) takeoff_cams.push_back(0);
 
 	// if no cams were occluded, we can disable the blind takeoff feature
-	if(!is_there_an_occlluded_cam) takeoff_cam = -1;
+	if(!is_there_an_occlluded_cam) {
+		takeoff_cam = -1;
+		takeoff_cams.clear();
+	} 
 
 	// openvins tries to be clever and rotate the whole local frame around
 	// to align with gravity. So we need to figure out how the imu is mounted
