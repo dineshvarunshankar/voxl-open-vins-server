@@ -46,8 +46,7 @@ extern char imu_name[64];
 extern Eigen::Matrix3d world_correction_eigen;
 extern Eigen::Matrix<double, 4, 1> world_correction_q;
 
-// TODO make this a  vector, right now it's just the first camera that's
-// not flagged as obscured on the ground in the common vio_cam config file
+// TODO clean up "takeoff_cam" usage in cam_callback
 extern int takeoff_cam;
 extern int en_takeoff_cam;
 extern std::vector<int> takeoff_cams;

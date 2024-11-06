@@ -247,10 +247,6 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 							vio_manager->feed_measurement_feature(fst.timestamp,fst.features);
 							_publish_default(last_imu_time);
 							feature_queue.pop_front();
-
-							Eigen::MatrixXd covariance_mat = ov_msckf::StateHelper::get_full_covariance(vio_manager->get_state());
-							// std::cout << "Matrix rows: " << covariance_mat.rows() << ", cols: " << covariance_mat.cols() << "\n";
-
 						}
 					}
 					else

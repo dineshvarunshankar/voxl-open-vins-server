@@ -587,7 +587,7 @@ void reset_states()
 	alt_z = 0.0;
 	changed_motion_state = false;
 	imu_moved = false;
-	if (!takeoff_cams.empty() >= 0 && !is_armed)
+	if (!takeoff_cams.empty() && !is_armed)
 		use_takeoff_cam  = true;
 	has_idle_images  = false;
 	last_imu_timestamp_ns = 0;

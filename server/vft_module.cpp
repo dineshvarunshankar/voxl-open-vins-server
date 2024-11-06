@@ -110,13 +110,6 @@ static void _vft_data_default_handler(__attribute__((unused)) int ch, char* data
 			feat_set_zero_multi.resize(takeoff_cams.size());
 		}
 
-//		printf("n_cams (%d) ,%d ,%d ,%d ,%d  %d %d\n", n_cams, n_total_features, feature_packet_from_vft->num_feats[0], feature_packet_from_vft->num_feats[1], feature_packet_from_vft->num_feats[2], use_takeoff_cam, takeoff_cam);
-//		int cam_num = 0;
-//		int ctn = 0;
-//		bool has_feats = 0;
-		// not the best but VFT sends the same number for every camera
-//		feat_set.features.resize(n_total_features);
-//		feat_set_zero.features.resize(n_total_features);
 
 		feat_set_zero.features.resize(feature_packet_from_vft->num_feats[0]);
 		std::map<double, int> ts_map;
