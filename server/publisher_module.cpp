@@ -3,7 +3,9 @@
 #include "quality.h"
 #include "common.h"
 #include "cam_config_file.h"
-
+#include <iostream>
+using namespace std;
+using namespace Eigen;
 
 int grid_spacing_x;
 int grid_spacing_y;
@@ -519,35 +521,33 @@ void _publish_default(double pose_timestamp)
 	s.velocity_covariance[6] = (float) cov_varis(7, 7);
 	s.velocity_covariance[11] = (float) cov_varis(8, 8);
 
-	// open vins does not estimate this, but reports it
-//	Eigen::Matrix<double, 3, 1> imu_vel = current_state->_imu->vel();
-//	double imu_angular_vel[3];
-//	imu_angular_vel[0] = imu_vel(0);
-//	imu_angular_vel[1] = imu_vel(1);
-//	imu_angular_vel[2] = imu_vel(2);
-//
-//	Eigen::Matrix<double, 3, 1> imu_angular_vel_holder(imu_angular_vel);
-//	imu_angular_vel_holder = flu_ned_correction_mat * imu_angular_vel_holder;
 
-// NO 	//imu_angular_vel_holder = world_correction_mat * imu_angular_vel_holder;
-//	s.imu_angular_vel[0] = imu_angular_vel_holder(0);
-//	s.imu_angular_vel[1] = imu_angular_vel_holder(1);
-//	s.imu_angular_vel[2] = imu_angular_vel_holder(2);
+	// keep track of the last rotation and find the difference between last and
+	// current rotation to estimate angular rate.
+	// TODO test this with other imu orientations other than standard
+	// TODO go by timestamp instead
+	static Matrix<double, 3, 3> last_Rot;
+	Matrix<double, 3, 3> rot_since_last_state_flu = last_Rot * current_state->_imu->Rot().transpose();
+	Matrix<double, 3, 3> rot_since_last_state_ned = flu_ned_correction_mat   \
+															* world_correction_eigen \
+															* rot_since_last_state_flu \
+															* world_correction_eigen.transpose() \
+															* flu_ned_correction_mat.transpose();
+	last_Rot = current_state->_imu->Rot();
+	Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(rot_since_last_state_ned);
 
-	static Eigen::Matrix<double, 3, 1> last_rpy;
-
-    Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
-    double delta_yaw =  last_rpy(2) - rpy(2);
-    double yawrate =  delta_yaw / run_rate_s;
-    double delta_roll =  last_rpy(0) - rpy(0);
-    double rollrate =  delta_roll / run_rate_s;
-    double delta_pitch =  last_rpy(1) - rpy(1);
-    double pitchrate =  delta_pitch / run_rate_s;
-    last_rpy = rpy;
-
+	double rollrate  =  rpy(0) / run_rate_s;
+	double pitchrate =  rpy(1) / run_rate_s;
+	double yawrate   =  rpy(2) / run_rate_s;
 	s.imu_angular_vel[0] = rollrate;
 	s.imu_angular_vel[1] = pitchrate;
 	s.imu_angular_vel[2] = yawrate;
+
+	// debug for above angular rate calc
+	// Eigen::Matrix<double, 3, 1>  rpy2 =  ov_core::rot2rpy(current_state->_imu->Rot().transpose());
+	// printf("%6.2f %6.2f %6.2f  ", rpy2(0), rpy2(1), rpy2(2));
+	// printf("%6.2f %6.2f %6.2f\n", rollrate, pitchrate, yawrate);
+
 
 	// gravtiy vector direction should be negative if the VOXL is upside down.
 	// TODO figure this out by rotating the gravtiiy vector properly with the
