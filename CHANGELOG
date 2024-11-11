@@ -1,3 +1,7 @@
+0.2.81
+    * orientation changes
+0.2.80
+    * fix flight twitch
 0.2.79
     * refactoring callbacks to make more modular
 0.2.78
