@@ -65,10 +65,15 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 	if (!is_cam_connected || !main_running)
 	{
+		s.magic_number = VIO_MAGIC_NUMBER;
+		d.v.magic_number = VIO_MAGIC_NUMBER;
+
 		std::shared_ptr < ov_msckf::State > current_state =
 				vio_manager->get_state(); // contains a few extra pieces we need
+		
 		s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 		s.error_code |= ERROR_CODE_CAM_MISSING;
+		d.v.error_code |= ERROR_CODE_CAM_MISSING;
 
 		memcpy(&d.v, &s, sizeof(vio_data_t));
 
