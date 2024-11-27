@@ -1213,7 +1213,7 @@ static void* _health_thread_func(__attribute__((unused)) void *ctx)
 		{
 			last_stable_time = _apps_time_monotonic_ns();
 
-			uint64_t last_max_vel_check  = (current_time - last_max_vel_check_time)*1e-9;
+			double last_max_vel_check  = (current_time - last_max_vel_check_time)*1e-9;
 
 			if (last_max_vel_check >= 0.2)
 			{
