@@ -938,7 +938,7 @@ int connect_cam_service(std::vector<camera_info> &cam_info_vec) {
 
 		fprintf(stderr, "Camera merge --- > ch: %d to cam id: %d\n", ch, i);
 
-		sprintf(t_cam_nam, "%s", cam_info_vec[i].name);
+		sprintf(t_cam_nam, "%s", cam_info_vec[i].tracking_name);
 
 		if (std::find(tmp_camera_pipe_names.begin(),
 				tmp_camera_pipe_names.end(), t_cam_nam)
@@ -951,13 +951,13 @@ int connect_cam_service(std::vector<camera_info> &cam_info_vec) {
 					1280 * 800 * 15);
 			if (ret)
 			{
-				fprintf(stderr, "failed to open %s\n", cam_info_vec[i].name);
+				fprintf(stderr, "failed to open %s\n", cam_info_vec[i].tracking_name);
 				return -1;
 			}
 			else
 			{
 				fprintf(stderr, "Opening camera pipe: %s\n",
-						cam_info_vec[i].name);
+						cam_info_vec[i].tracking_name);
 			}
 
 			fprintf(stderr, "tmp_camera_pipe_names.push_back(): %s\n",

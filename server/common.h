@@ -116,6 +116,8 @@ typedef struct image_data {
 
 typedef struct camera_info {
     char name[128];
+    char tracking_name[128];
+    char preview_name[128];
     camera_mode mode;
     Eigen::Matrix<double, 7, 1> cam_wrt_imu;
     Eigen::Matrix<double, 8, 1> cam_calib_intrinsic;

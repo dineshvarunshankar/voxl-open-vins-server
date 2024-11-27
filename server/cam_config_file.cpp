@@ -171,6 +171,8 @@ int cam_config_file_read(void)
 
 		camera_info cam;
 		strcpy(cam.name, vio_cams[i].name);
+		strcpy(cam.tracking_name, vio_cams[i].pipe_for_tracking);
+		strcpy(cam.preview_name, vio_cams[i].pipe_for_preview);
 		cam.mode = MONO;
 		cam.cam_id = i;
 
