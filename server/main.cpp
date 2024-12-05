@@ -825,7 +825,9 @@ static void _post_snapshot()
 	{
 		not_displaying = false;
 		{
-			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
+			static img_ringbuf_packet curr_imgs_static;
+			img_ringbuf_packet *curr_imgs = &curr_imgs_static;
+//			img_ringbuf_packet *curr_imgs = new img_ringbuf_packet;
 
 //			feat_ts_mutex.lock();
 			// TODO May not exists, then what
@@ -1139,7 +1141,7 @@ static void _post_snapshot()
 			// draw out to pipe
 			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
 					(char*) overlay_cp.data);
-			delete curr_imgs;
+//			delete curr_imgs;
 		}
 
 		not_displaying = true;
