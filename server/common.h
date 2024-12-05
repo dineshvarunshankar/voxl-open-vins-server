@@ -207,5 +207,47 @@ static cv::Mat euler2rot(double heading, double attitude, double bank)
     return m;
 }
 
+static double sign(double x) {
+    return x > 0 ? 1.0 : (x < 0 ? -1.0 : 0.0);
+}
+
+
+static long getValueFromStatus(const std::string& fieldName) {
+     std::ifstream status("/proc/self/status");
+     std::string line;
+     while (std::getline(status, line)) {
+         if (line.find(fieldName) == 0) {
+             long value;
+             char unit[3];
+             sscanf(line.c_str(), "%*s %ld %s", &value, unit);
+             // Convert to bytes based on unit
+             if (strcmp(unit, "kB") == 0)
+                 value *= 1024;
+             return value;
+         }
+     }
+     return 0;
+ }
+
+
+
+static void printMemoryUsage(const std::string& label) {
+    const double mb = 1024.0 * 1024.0;
+
+    long vmSize = getValueFromStatus("VmSize:");
+    long vmRSS = getValueFromStatus("VmRSS:");
+    long vmData = getValueFromStatus("VmData:");
+    long vmStk = getValueFromStatus("VmStk:");
+
+    std::cout << "\n=== " << label << " ===\n"
+              << std::fixed << std::setprecision(2)
+              << "Virtual Memory Size: " << vmSize / mb << " MB\n"
+              << "Resident Set Size: " << vmRSS / mb << " MB\n"
+              << "Data Segment Size: " << vmData / mb << " MB\n"
+              << "Stack Size: " << vmStk / mb << " MB\n"
+              << std::endl;
+}
+
+
 
 #endif // VFT_COMMON_H

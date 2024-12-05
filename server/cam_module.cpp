@@ -13,6 +13,12 @@ int64_t last_cam_time;
 static void _cam_helper_cb(__attribute__((unused)) int ch,
 		camera_image_metadata_t meta, char *frame, void *context)
 {
+
+	// MPA sends in async mode when connected to multiple camera pipes
+	// this will hold state per image until it is added to
+	// the vio stack.
+	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
+
 	if (en_ext_feature_tracker && !overlay_client_connected) {
 		return;
 	}
@@ -20,7 +26,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	static int idler_ctn = 0;
 
 	if (is_resetting)
+	{
 		return;
+	}
 
 	if (!en_ext_feature_tracker)
 		is_cam_connected = true;
@@ -62,6 +70,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			
 			resume_processing = 0;
 		}
+
 		return;
 	}
 
@@ -79,11 +88,12 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 		}
 	}
 
-	std::lock_guard < std::mutex > cam_lg(cam_lock_mutex);
 
 	camera_mode *cm = (camera_mode*) context;
 
-	img_ringbuf_packet *curr_message = new img_ringbuf_packet;
+	static img_ringbuf_packet curr_message_static;
+	img_ringbuf_packet *curr_message = &curr_message_static;
+//	img_ringbuf_packet *curr_message = new img_ringbuf_packet;
 	curr_message->camid = ch;
 	curr_message->metadata = meta;
 	
@@ -121,7 +131,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			{
 				memcpy(curr_message->image_pixels, (uint8_t*) frame,
 						meta.size_bytes);			
-
 				img_ringbuf->insert_data(curr_message);
 
 				if (en_ext_feature_tracker) {
@@ -908,7 +917,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 		last_cam_time = _apps_time_monotonic_ns();
 
-	} catch (const std::out_of_range &e)
+	}
+	catch (const std::out_of_range &e)
 	{
 		fprintf(stderr, "CAM Process error!\n");
 	}
@@ -919,7 +929,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 	current_height = meta.height;
 	current_width = meta.width;
 
-	delete curr_message;
+//	delete curr_message;
 }
 
 
@@ -970,6 +980,7 @@ int connect_cam_service(std::vector<camera_info> &cam_info_vec) {
 			fprintf(stderr,
 					"Note: found camera pipe callback already exists, likely a stereo camera setup\n");
 		}
+		pipe_client_flush(ch);
 
 	}
 

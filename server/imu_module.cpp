@@ -302,5 +302,7 @@ int connect_imu_service(void) {
 		return -1;
 	}
 
+	pipe_client_flush(IMU_CH);
+
     return 0;
 }
