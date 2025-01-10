@@ -1879,7 +1879,9 @@ int main(int argc, char *argv[])
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = generate_open_vins_manager_options();
 
-	vio_manager_options.use_klt = !en_ext_feature_tracker;		
+	vio_manager_options.use_klt = !en_ext_feature_tracker;
+	vio_manager_options.use_gpu = en_gpu_for_tracking;	
+
 
 	vio_manager = std::unique_ptr < ov_msckf::VioManager
 			> (new ov_msckf::VioManager(vio_manager_options));
