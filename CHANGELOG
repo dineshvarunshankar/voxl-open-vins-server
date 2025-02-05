@@ -1,3 +1,5 @@
+0.2.85
+    * bump version to fix build
 0.2.84
     * options to enable gpu tracking
 0.2.83
