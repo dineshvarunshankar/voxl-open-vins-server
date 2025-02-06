@@ -810,7 +810,363 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 }
 
 
+
+#define OVERLAY_RES_W_X 320
+#define OVERLAY_RES_H_Y 240
+
 static void _post_snapshot()
+{
+	static int skip_cnt = 0;
+	static int target_id = -1;
+	static float font_size = 1.0;
+	static float border_scale = 1;
+	static cv::Mat overlay_cp;
+	static char reinit_str[32];
+	static char cam_off_str[32];
+	static int reinit_time = 0;
+	static int reinit_disp_time = 0;
+
+	if (pipe_server_get_num_clients(OVERLAY_CH) > 0) // publish
+	{
+		not_displaying = false;
+		{
+			static img_ringbuf_packet curr_imgs_static;
+			img_ringbuf_packet *curr_imgs = &curr_imgs_static;
+
+//			feat_ts_mutex.lock();
+			// TODO May not exists, then what
+			//double target_time = pose_timestamp*1e9;
+			int ret = img_ringbuf->get_data_at_position(0, curr_imgs);
+			//int ret = img_ringbuf->get_data_at_time((int64_t)display_snapshot.timestamp, curr_imgs);
+
+			if (ret < 0)
+			{
+//				feat_ts_mutex.unlock();
+				fprintf(stderr,
+						"FAILED TO FETCH IMG RINGBUF at time %ld %ld %ld %ld %ld %ld\n",
+						display_snapshot.timestamp,
+						img_ringbuf->get_timestamp_at_position(0),
+						img_ringbuf->get_timestamp_at_position(1),
+						img_ringbuf->get_timestamp_at_position(2),
+						img_ringbuf->get_timestamp_at_position(3),
+						img_ringbuf->get_timestamp_at_position(4));
+				return;
+			}
+//			else if (en_debug)
+//			{
+//				printf("Time Delta: %f\n", (display_snapshot.timestamp - img_ringbuf->get_timestamp_at_position(0))*1e-9);
+//			}
+
+			// now, construct some cv::Mats with our images (we know them to be greyscale)
+			std::vector < cv::Mat > img_set;
+
+			if (curr_imgs->metadata.format == IMAGE_FORMAT_STEREO_RAW8)
+			{
+				font_size = 0.55;
+				if (!en_debug_pos)
+				{
+					cv::Mat img(curr_imgs->metadata.height,
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels);
+					cv::Mat img2(curr_imgs->metadata.height,
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels
+									+ (curr_imgs->metadata.width
+											* curr_imgs->metadata.height));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+				else
+				{
+					cv::Mat img(
+							cv::Mat::zeros(curr_imgs->metadata.height,
+									curr_imgs->metadata.width, CV_8UC1));
+					cv::Mat img2(
+							cv::Mat::zeros(curr_imgs->metadata.height,
+									curr_imgs->metadata.width, CV_8UC1));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+				}
+
+			}
+			else
+			{
+				font_size = 0.33;
+				border_scale = 2;
+
+				if (cameras_used == 1)
+				{
+					cv::Mat img(curr_imgs->metadata.height,
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels);
+					img_set.push_back(img);
+				}
+				else
+				{
+
+					cv::Mat img(curr_imgs->metadata.height,
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels);
+					cv::Mat img2(curr_imgs->metadata.height,
+							curr_imgs->metadata.width, CV_8UC1,
+							curr_imgs->image_pixels
+									+ (curr_imgs->metadata.width
+											* curr_imgs->metadata.height));
+					img_set.push_back(img);
+					img_set.push_back(img2);
+
+					if (cameras_used == 3)
+					{
+						cv::Mat img3(curr_imgs->metadata.height,
+									curr_imgs->metadata.width, CV_8UC1,
+									curr_imgs->image_pixels
+											+ 2 *((curr_imgs->metadata.width
+													* curr_imgs->metadata.height)));
+
+						img_set.push_back(img3);
+					}
+
+				}
+			}
+
+//			feat_ts_mutex.unlock();
+
+			static int16_t trk_id = -1;
+			static std::vector<float> trk_history_x;
+			static std::vector<float> trk_history_y;
+
+			if (trk_history_x.size() > 100)
+			{
+				trk_history_x.clear();
+				trk_history_y.clear();
+			}
+
+			if (trk_id < 0 && display_snapshot.d.n_total_features > 0)
+			{
+				trk_id = display_snapshot.d.features[0].id;
+				if (en_debug)
+					printf("Monitoring id: %d\n", trk_id);
+			}
+
+			{
+				for (size_t i = 0; i < display_snapshot.d.n_total_features; i++)
+				{
+					int cam_idx = display_snapshot.d.features[i].cam_id;
+
+//					if (cam_idx >= 2)
+//						continue;
+
+					// OVERRIDE
+//					if (single_cam_in_use > 0)
+//						cam_idx = single_cam_in_use;
+
+					if (!en_debug_pos)
+					{
+						if (display_snapshot.d.features[i].point_quality
+								== (int) OV_RE_HIGH)
+						{
+							cv::drawMarker(
+									img_set[cam_idx],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(245), cv::MARKER_SQUARE, 8, 2);
+						}
+						// slam landmark
+						else if (display_snapshot.d.features[i].point_quality
+								== (int) OV_HIGH)
+						{
+							cv::drawMarker(
+									img_set[cam_idx],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(255), cv::MARKER_SQUARE, 20, 2);
+
+						}
+						// tracked feature
+						else if (display_snapshot.d.features[i].point_quality
+								== (int) OV_MEDIUM)
+						{
+							cv::drawMarker(
+									img_set[cam_idx],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(190), cv::MARKER_SQUARE, 12, 2);
+						}
+						else if (show_extra_points_on_overlay)
+						{
+							cv::drawMarker(
+									img_set[cam_idx],
+									cv::Point2f(
+											display_snapshot.d.features[i].pix_loc[0],
+											display_snapshot.d.features[i].pix_loc[1]),
+									cv::Scalar(100), cv::MARKER_SQUARE, 12, 2);
+						}
+					}
+					else
+					{
+						if (trk_id >= 0
+								&& display_snapshot.d.features[i].id
+										== (uint16_t) trk_id)
+						{
+							trk_history_x.push_back(
+									display_snapshot.d.features[i].pix_loc[0]);
+							trk_history_y.push_back(
+									display_snapshot.d.features[i].pix_loc[1]);
+
+							for (size_t z = 0; z < trk_history_x.size(); z++)
+							{
+								cv::drawMarker(
+										img_set[cam_idx],
+										cv::Point2f(trk_history_x[z],
+												trk_history_y[z]),
+										cv::Scalar(255), cv::MARKER_DIAMOND, 24,
+										2);
+							}
+						}
+					}
+				}
+
+//				for (size_t i = 0; i < vft_features.size(); i++)
+//				{
+//					int cam_idx = display_snapshot.d.features[i].cam_id;
+//
+//					// OVERRIDE
+//					if (single_cam_in_use > 0)
+//						cam_idx = single_cam_in_use;
+//
+//					cv::drawMarker(
+//							img_set[cam_idx],
+//							cv::Point2f(
+//									vft_features[i].x,
+//									vft_features[i].y),
+//							cv::Scalar(200), cv::MARKER_DIAMOND, 10, 2);
+//				}
+
+			}
+
+
+			cv::resize(img_set[0], img_set[0],
+					cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+			overlay_cp = img_set[0];
+
+			if (img_set.size() > 1)
+			{
+				for (unsigned y=1; y<img_set.size() ; y++)
+				{
+					cv::resize(img_set[y], img_set[y],
+							cv::Size(OVERLAY_RES_W_X, OVERLAY_RES_H_Y));
+					cv::hconcat(overlay_cp, img_set[y], overlay_cp);
+				}
+			}
+
+			if (overlay_cp.cols <= OVERLAY_RES_W_X)
+			{
+				border_scale = 1;
+			}
+
+			cv::copyMakeBorder(overlay_cp, overlay_cp,
+			DRAW_BONUS_ROWS_TOP / border_scale,
+			DRAW_BONUS_ROWS_BOT / border_scale, 0, 0, cv::BORDER_CONSTANT,
+					cv::Scalar(0));
+
+			draw_meta = curr_imgs->metadata;
+			draw_meta.width = overlay_cp.cols;
+			draw_meta.height = overlay_cp.rows;
+			draw_meta.size_bytes = draw_meta.width * draw_meta.height;
+			draw_meta.format = IMAGE_FORMAT_RAW8;
+
+			char str[256];
+			sprintf(str, "XYZ: %6.2lf %6.2lf %6.2lf  CEP: %3.3f  Rerr: %3.2f",
+					(double) s.T_imu_wrt_vio[0], (double) s.T_imu_wrt_vio[1],
+					(double) s.T_imu_wrt_vio[2], display_snapshot.cep,
+					display_snapshot.rerr * 180 / M_PI);
+			int baseline = 0;
+			cv::Size text_size = cv::getTextSize(str, cv::FONT_HERSHEY_COMPLEX,
+					font_size, font_size, &baseline);
+
+			cv::putText(
+					overlay_cp, //target image
+					str, //text
+					cv::Point((overlay_cp.cols - text_size.width) / 2,
+							text_size.height * 3 / 2), //top-left position
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
+					font_size, cv::LINE_AA);
+
+			char oos_pts_string[96];
+
+			if (show_extra_points_on_overlay)
+				sprintf(oos_pts_string, "#pts: %2d  (%2d)",
+						display_snapshot.used_pts,
+						display_snapshot.not_used_pts);
+			else
+				oos_pts_string[0] = 0;
+
+			sprintf(str, "Q: %3d %s  %s  ex(ms): %6.1f Gain: %5d", s.quality,
+					(s.state == VIO_STATE_OK ? "OK" : "INIT"), oos_pts_string,
+					draw_meta.exposure_ns / 1000000.0, draw_meta.gain);
+
+			cv::putText(
+					overlay_cp, //target image
+					str, //text
+					cv::Point((overlay_cp.cols - text_size.width) / 2,
+							overlay_cp.rows - text_size.height / 2 + 2), //top-left position
+					cv::FONT_HERSHEY_COMPLEX, font_size,
+					cv::Scalar(255, 255, 255), //font color
+					font_size, cv::LINE_AA);
+
+			if (init_failure_detector_reset_flag && !is_initialized)
+			{
+				reinit_disp_time++;
+				sprintf(reinit_str, "RE-INITIALIZING [%d] ", reinit_disp_time);
+				cv::putText(
+						overlay_cp, //target image
+						reinit_str, //text
+						cv::Point((overlay_cp.cols * 0.1),
+								overlay_cp.rows * 0.5), //top-left position
+						cv::FONT_HERSHEY_COMPLEX, 1.0,
+						cv::Scalar(255, 255, 255), //font color
+						1.5, cv::LINE_AA);
+			}
+
+			if (pause_cam_states[0] || pause_cam_states[1] || pause_cam_states[2])
+			{
+				strcpy(cam_off_str, "Cameras OFF:");
+
+				if (pause_cam_states[0])
+					strcat(cam_off_str, "   1 ");
+				if (pause_cam_states[1])
+					strcat(cam_off_str, "  2 ");
+				if (pause_cam_states[2])
+					strcat(cam_off_str, "  3 ");
+
+				cv::putText(
+						overlay_cp, //target image
+						cam_off_str, //text
+						cv::Point((overlay_cp.cols * 0.4),
+								overlay_cp.rows * 0.94), //top-left position
+						cv::FONT_HERSHEY_COMPLEX, 0.3,
+						cv::Scalar(255, 255, 255), //font color
+						1.5, cv::LINE_AA);
+			}
+
+
+
+			// draw out to pipe
+			pipe_server_write_camera_frame(OVERLAY_CH, draw_meta,
+					(char*) overlay_cp.data);
+		}
+
+		not_displaying = true;
+
+	}
+
+}
+
+static void _post_snapshot_working()
 {
 	static int skip_cnt = 0;
 	static int target_id = -1;
@@ -1047,10 +1403,10 @@ static void _post_snapshot()
 				}
 			}
 
-			// if (overlay_cp.cols <= OVERLAY_RES_W_X)
-			// {
-			// 	border_scale = 1;
-			// }
+//			if (overlay_cp.cols <= OVERLAY_RES_W_X)
+//			{
+//				border_scale = 1;
+//			}
 
 			cv::copyMakeBorder(overlay_cp, overlay_cp,
 			DRAW_BONUS_ROWS_TOP, DRAW_BONUS_ROWS_BOT, 0, 0, cv::BORDER_CONSTANT,cv::Scalar(0));

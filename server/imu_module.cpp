@@ -25,20 +25,20 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 	double cam_imu_time_delta = (double) (_apps_time_monotonic_ns()
 			- last_cam_time) * 1e-9;
 
-	if (is_initialized && idler_limit <= 0)
-	{
-		if (!bypass_reset_checks && cam_imu_time_delta > 0.3)
-		{
-			printf("-----------> UNSTABLE [THERMAL?] %1.2f <----------------\n", cam_imu_time_delta);
-			bypass_reset_checks = true;
-		}
-		else if (bypass_reset_checks && cam_imu_time_delta < 0.25)
-		{
-			printf("-----------> STABLE [THERMAL?] %1.2f  <----------------\n", cam_imu_time_delta);
-			bypass_reset_checks = false;
-			resume_processing = 1;
-		}
-	}
+//	if (is_initialized && idler_limit <= 0)
+//	{
+//		if (!bypass_reset_checks && cam_imu_time_delta > 0.3)
+//		{
+//			printf("-----------> UNSTABLE [THERMAL?] %1.2f <----------------\n", cam_imu_time_delta);
+//			bypass_reset_checks = true;
+//		}
+//		else if (bypass_reset_checks && cam_imu_time_delta < 0.25)
+//		{
+//			printf("-----------> STABLE [THERMAL?] %1.2f  <----------------\n", cam_imu_time_delta);
+//			bypass_reset_checks = false;
+//			resume_processing = 1;
+//		}
+//	}
 
 	std::lock_guard < std::mutex > imu_lg(imu_lock_mutex);
 

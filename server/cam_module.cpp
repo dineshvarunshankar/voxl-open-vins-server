@@ -459,82 +459,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			is_thermal = false;
 			
 		}
-
-
-#ifdef LEPTON
-		else if (meta.format == IMAGE_FORMAT_RAW16)
-		{
-
-			cv::Mat internal_img(meta.height, meta.width, CV_16UC1,
-					(uint8_t*) frame);
-
-			/////////////////////// THERMAL ONLY ////////////////////////
-			cv::Mat img_8;
-
-			//need to convert 16 bit image to 8 bit
-			double min_pixel, max_pixel;
-			cv::minMaxLoc(internal_img, &min_pixel, &max_pixel);
-
-			bool use_last = false;  // TODO make a param
-
-			if (use_last && !last_img.empty())
-			{
-				//also consider the previous image when determining the conversion
-				double last_min_pixel, last_max_pixel;
-				cv::minMaxLoc(last_img, &last_min_pixel, &last_max_pixel);
-
-				max_pixel = std::max(max_pixel, last_max_pixel);
-				min_pixel = std::min(min_pixel, last_min_pixel);
-			}
-
-			double min_temp_delta = 400.0;
-			double pixel_diff = std::max(max_pixel - min_pixel,
-					(double) min_temp_delta);
-
-			double alpha_convert = 255.0 / pixel_diff;
-			double beta_convert = -min_pixel * alpha_convert;
-
-			internal_img.convertTo(img_8, CV_8UC1, alpha_convert, beta_convert);
-			internal_img = img_8;
-
-			threshold(internal_img, internal_img, thresh_level, 0,
-					cv::THRESH_TOZERO);
-
-//        cv::Mat mask = cv::Mat(internal_img.size(), CV_8UC1);
-//        threshold(internal_img, mask, thresh_level, 255, cv::THRESH_BINARY);
-
-			if (use_last && !last_img.empty())
-			{
-				last_img.convertTo(last_img8, CV_8UC1, alpha_convert,
-						beta_convert);
-			}
-
-			/////////////////////// THERMAL ONLY ////////////////////////
-			memcpy(curr_message->image_pixels, (uint8_t*) internal_img.data,
-					internal_img.total() * internal_img.elemSize());
-
-			img_ringbuf->insert_data(curr_message);
-			
-			ov_core::CameraData message;
-			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-			message.sensor_ids.push_back(0);
-
-			message.images.push_back(internal_img.clone());
-			message.masks.push_back(
-					cv::Mat::zeros(internal_img.rows, internal_img.cols,
-							CV_8UC1));
-///		message.masks.push_back(mask.clone());
-
-			std::lock_guard < std::mutex > lck(camera_queue_mtx);
-			camera_queue.push_back(message);
-
-			is_thermal = true;
-
-			std::sort(camera_queue.begin(), camera_queue.end());
-
-		}
-#endif
-
 		else if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
 		{
 			if (*cm == STEREO)
@@ -753,18 +677,196 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			}
 		}
 
-///////////////////////////////////////////////////////////////////////////////////
-	// SPECIAL MODE
-	// SPECIAL MODE  SEEK BOSON
-	// SPECIAL MODE  SEEK BOSON
-	// SPECIAL MODE
-        else if (meta.format == IMAGE_FORMAT_NV12)
-        {
-            cv::Mat internal_img(meta.height, meta.width, CV_8UC1, (uchar*)frame);
+
+		///////////////////////////////////////////////////////////////////////////////////
+		// SPECIAL MODE
+		// SPECIAL MODE  SEEK + BOSON
+		// SPECIAL MODE  SEEK + BOSON
+		// SPECIAL MODE
+        else if (cameras_used == 1 && meta.format == IMAGE_FORMAT_NV12)  // boson
+		{
+			static int zz = 0;
+			if (zz++ % 2 == 0)
+				return;
+
+			cv::Mat internal_img(meta.height, meta.width, CV_8UC1, (uchar*)frame);
+
+		//			static double minVal, maxVal;
+		//            if (!is_armed)
+		//            {
+		//            	if (zz < INIT_TIMEOUT_FRAMES)
+		//            		minMaxLoc(internal_img, &minVal, &maxVal);
+		//            }
+		//
+		//            if (en_debug)
+		//            {
+		//				printf("Max: %f Min: %f\n", maxVal, minVal);
+		//            }
+		//
+		//			internal_img.setTo(0, internal_img < minVal/2);
+
+			if (thermal_brightness_bos != 1.00)
+			{
+				internal_img.convertTo(internal_img, CV_16UC1, thermal_brightness_bos);
+				cv::threshold(internal_img, internal_img, 255, 255, cv::THRESH_TRUNC);
+			}
+
+			if (en_thermal_enhance)
+			{
+
+				static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+						-1,  -0,  1,
+						-0,   0,  0,
+						 1,   0,  1);
+
+				cv::Mat embossed;
+				cv::filter2D(internal_img, embossed, -1, kernel);
+		//				cv::filter2D(internal_img, embossed, CV_32F, kernel);
+
+				// Normalize the result to 8-bit for display
+				cv::normalize(embossed, embossed, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+				//embossed.convertTo(internal_img, CV_8UC1);
+				internal_img = embossed;
+			}
+
+
+			memcpy(curr_message->image_pixels, internal_img.data,
+					internal_img.total() * internal_img.elemSize());
+
+			img_ringbuf->insert_data(curr_message);
+
+			ov_core::CameraData message;
+			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+			message.sensor_ids.push_back(0);
+
+
+			//TODO handling exception!
+			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+			static cv::Mat ignore_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(255));
+			static cv::Mat use_mask(internal_img.rows,
+					internal_img.cols, CV_8UC1, cv::Scalar(0));
+
+			if (zero_image.rows != internal_img.rows)
+				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
+
+			if (!vio_manager->initialized())
+			{
+				if (en_debug)
+					printf("Initializing\n");
+
+				message.images.push_back(zero_image);
+			}
+			else
+			{
+				if (!imu_moved)
+				{
+					if (en_debug)
+						printf("Idling\n");
+
+					if (!has_idle_images)
+					{
+						if (en_debug)
+							printf("Capture new idle images\n");
+						idle_image1 = internal_img.clone();
+						has_idle_images = true;
+					}
+
+					message.images.push_back(idle_image1);
+				}
+				else
+				{
+					message.images.push_back(internal_img.clone());
+				}
+			}
+
+			if (use_takeoff_cam)
+			{
+				message.masks.push_back(use_mask);
+				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+				{
+					printf(
+							"Detected Takeoff, going to VINS normal operations\n");
+					use_takeoff_cam = false;
+
+					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+					idler_limit = -1;
+				}
+			}
+			else
+			{
+				message.masks.push_back(use_mask);
+			}
+
+			std::lock_guard < std::mutex > lck(camera_queue_mtx);
+			camera_queue.push_back(message);
+			std::sort(camera_queue.begin(), camera_queue.end());
+			is_thermal = false;
+
+		}
+        else if (cameras_used == 1 && meta.format == IMAGE_FORMAT_RAW16)  // seek
+		{
+			cv::Mat internal_img;
+
+			cv::Mat raw16Image(meta.height, meta.width, CV_16UC1, (uint8_t*) frame);
+
+			if (thermal_brightness != 1.00)
+			{
+				raw16Image.convertTo(raw16Image, CV_16UC1, thermal_brightness);
+				cv::threshold(raw16Image, raw16Image, 65535, 65535, cv::THRESH_TRUNC);
+			}
+
+			if (en_thermal_enhance)
+			{
+
+		//            	static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+		//                      -4, -2, 1,
+		//                      -2,  1, 3,
+		//                       1,  3, 4);
+
+		//            	static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+		//            			-3,  -1,  0,
+		//            			-1,   1,  1,
+		//            			 0,   1,  3);
+
+				static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+						-3,  -1,  3,
+						-1,   1,  1,
+						 3,   1,  3);
+
+
+				// Apply the filter
+				cv::Mat embossed;
+				cv::filter2D(raw16Image, embossed, CV_32F, kernel);
+
+				// Normalize the result to 8-bit for display
+				cv::normalize(embossed, embossed, 0, 255, cv::NORM_MINMAX);
+				embossed.convertTo(internal_img, CV_8UC1);
+
+		//				internal_img = ~internal_img;
+		//				static double minVal, maxVal;
+		//	            if (!is_armed)
+		//	            {
+		//	            	if (zz++ < INIT_TIMEOUT_FRAMES)
+		//	            		minMaxLoc(internal_img, &minVal, &maxVal);
+		//	            }
+		//
+		//	            if (en_debug)
+		//	            {
+		//					printf("Max: %f Min: %f\n", maxVal, minVal);
+		//	            }
+		//
+		//
+		//	            internal_img.setTo(0, internal_img < 8);
+			}
+			else
+			{
+				raw16Image.convertTo(internal_img, CV_8UC1, 1.0 / 256.0); // Scaling to fit into 8-bit
+			}
+
 
 			memcpy(curr_message->image_pixels, internal_img.data,
 									internal_img.total() * internal_img.elemSize());
-
 			img_ringbuf->insert_data(curr_message);
 
 			ov_core::CameraData message;
@@ -816,7 +918,8 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 				message.masks.push_back(use_mask);
 				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 				{
-					//printf("Detected Takeoff, going to VINS normal operations\n");
+					printf(
+							"Detected Takeoff, going to VINS normal operations\n");
 					use_takeoff_cam = false;
 
 					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
@@ -831,87 +934,326 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			std::lock_guard < std::mutex > lck(camera_queue_mtx);
 			camera_queue.push_back(message);
 			std::sort(camera_queue.begin(), camera_queue.end());
+			is_thermal = false;
 
-        }
-        else if (meta.format == IMAGE_FORMAT_RAW16)
-        {
-		    cv::Mat internal_img;
-		    cv::Mat raw16Image(meta.height, meta.width, CV_16UC1, (uint8_t*) frame);
-		    // Normalize and convert to RAW8 grayscale
-		    raw16Image.convertTo(internal_img, CV_8UC1, 1.0 / 256.0); // Scaling to fit into 8-bit
+		}
+		else if (cameras_used == 2 && (meta.format == IMAGE_FORMAT_NV12 || meta.format == IMAGE_FORMAT_RAW16))  // boson+seek
+		{
 
-			memcpy(curr_message->image_pixels, internal_img.data,
-									internal_img.total() * internal_img.elemSize());
+			static std::vector<double> ts_cam_vec(cameras_used);
+			cv::Mat internal_img;
 
-			img_ringbuf->insert_data(curr_message);
-
-			ov_core::CameraData message;
-			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
-			message.sensor_ids.push_back(0);
-
-			//TODO handling exception!
-			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
-			static cv::Mat ignore_mask(internal_img.rows,
-					internal_img.cols, CV_8UC1, cv::Scalar(255));
-			static cv::Mat use_mask(internal_img.rows,
-					internal_img.cols, CV_8UC1, cv::Scalar(0));
-
-			if (zero_image.rows != internal_img.rows)
-				resize(zero_image, zero_image, cv::Size(internal_img.cols, internal_img.rows), cv::INTER_NEAREST);
-
-			if (!vio_manager->initialized())
+			if (meta.format == IMAGE_FORMAT_NV12)
 			{
-				if (en_debug)
-					printf("Initializing\n");
+				static int zz = 0;
+				if (zz++ % 2 == 0)
+					return;
 
-				message.images.push_back(zero_image);
-			}
-			else
-			{
-				if (!imu_moved)
+				cv::Mat internal_img_i(meta.height, meta.width, CV_8UC1, (uchar*)frame);
+
+				if (thermal_brightness_bos != 1.00)
 				{
-					if (en_debug)
-						printf("Idling\n");
+					internal_img_i.convertTo(internal_img_i, CV_16UC1, thermal_brightness_bos);
+					cv::threshold(internal_img_i, internal_img_i, 255, 255, cv::THRESH_TRUNC);
+				}
 
-					if (!has_idle_images)
-					{
-						if (en_debug)
-							printf("Capture new idle images\n");
-						idle_image1 = internal_img.clone();
-						has_idle_images = true;
-					}
+				if (en_thermal_enhance)
+				{
+					static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+							-1,  -0,  1,
+							-0,   0,  0,
+							 1,   0,  1);
 
-					message.images.push_back(idle_image1);
+					cv::Mat embossed;
+					cv::filter2D(internal_img_i, embossed, -1, kernel);
+					cv::normalize(embossed, embossed, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+					internal_img_i = embossed;
+				}
+
+				// 640 rez
+				//internal_img = internal_img_i.clone();
+
+			    // Resize the image to 320x240
+			    cv::resize(internal_img_i, internal_img, cv::Size(320, 240), cv::INTER_NEAREST);
+
+	            size_t byteSize = internal_img.total() * internal_img.elemSize();
+	            meta.height = 240;
+	            meta.width = 320;
+	            meta.size_bytes = byteSize;
+	        	curr_message->metadata = meta;
+
+			}
+			else if (meta.format == IMAGE_FORMAT_RAW16)
+			{
+				cv::Mat internal_img_i;
+				cv::Mat raw16Image(meta.height, meta.width, CV_16UC1, (uint8_t*) frame);
+
+				if (thermal_brightness != 1.00)
+				{
+					raw16Image.convertTo(raw16Image, CV_16UC1, thermal_brightness);
+					cv::threshold(raw16Image, raw16Image, 65535, 65535, cv::THRESH_TRUNC);
+				}
+
+				if (en_thermal_enhance)
+				{
+					static cv::Mat kernel = (cv::Mat_<float>(3, 3) <<
+							-3,  -1,  3,
+							-1,   1,  1,
+							 3,   1,  3);
+
+					cv::Mat embossed;
+					cv::filter2D(raw16Image, embossed, CV_32F, kernel);
+					cv::normalize(embossed, embossed, 0, 255, cv::NORM_MINMAX);
+					embossed.convertTo(internal_img_i, CV_8UC1);
 				}
 				else
 				{
-					message.images.push_back(internal_img.clone());
+					raw16Image.convertTo(internal_img_i, CV_8UC1, 1.0 / 255.0); // Scaling to fit into 8-bit
 				}
+
+				internal_img = internal_img_i.clone();
 			}
 
-			if (use_takeoff_cam)
+
+			size_t byteSize = internal_img.total() * internal_img.elemSize();
+			meta.size_bytes = byteSize;
+
+			// combine and sim multi camera
+			if (curr_message->camid == 1)
 			{
-				message.masks.push_back(use_mask);
-				if (is_armed && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+				memcpy(slot_image_pixels, (uint8_t*) internal_img.data,
+						meta.size_bytes);
+			    update_slots |= (1 << 7);
+			    ts_cam_vec[0] = curr_message->metadata.timestamp_ns * 1e-09;
+			}
+			else if (curr_message->camid == 2)
+			{
+				memcpy(slot_image_pixels + meta.size_bytes,
+						(uint8_t*) internal_img.data,
+						meta.size_bytes);
+			    update_slots |= (1 << 6);
+			    ts_cam_vec[1] = curr_message->metadata.timestamp_ns * 1e-09;
+			}
+			else if (curr_message->camid == 3)
+			{
+				memcpy(slot_image_pixels + (2 * meta.size_bytes),
+						(uint8_t*) internal_img.data,
+						meta.size_bytes);
+			    update_slots |= (1 << 5);
+			    ts_cam_vec[2] = curr_message->metadata.timestamp_ns * 1e-09;
+			}
+
+
+//				if (((update_slots >> 7) & 1) && ((update_slots >> 6) & 1))
+			// cam 2 combos
+			bool two_cam = (update_slots == 192) || (update_slots == 160) ||  (update_slots == 96);
+
+			if ((cameras_used == 2 && two_cam) || (cameras_used == 3 && update_slots == 224))
+			{
+
+				if (!en_ext_feature_tracker)
 				{
-					//printf("Detected Takeoff, going to VINS normal operations\n");
-					use_takeoff_cam = false;
-
-					// if we're disarmed, and running load  throttling, turn off and go fullt throttle
-					idler_limit = -1;
+					if (idler_limit > 0 && idler_ctn++ < idler_limit)
+					{
+						last_cam_time = _apps_time_monotonic_ns();
+						return;
+					}
+					else
+					{
+						idler_ctn = 0;
+					}
 				}
+
+				curr_message->camid = ch;
+				curr_message->metadata = meta;
+				memcpy(curr_message->image_pixels, (uint8_t*) slot_image_pixels,
+						meta.size_bytes*cameras_used);
+				update_slots = 0;
+				img_ringbuf->insert_data(curr_message);
+
+				double avg_time = 0;
+				for (const auto& _ts : ts_cam_vec)
+				{
+					avg_time += _ts;
+				}
+				avg_time /= cameras_used;
+
+//					double avg_time = 0;
+//					for (const auto& _ts : ts_cam_vec)
+//					{
+//						if (_ts > avg_time)
+//						avg_time = _ts;
+//					}
+
+				ov_core::CameraData message;
+				message.timestamp = avg_time;
+//					message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
+				message.sensor_ids.push_back(0);
+
+				cv::Mat internal_img_1(meta.height, meta.width, CV_8UC1,
+						(uint8_t*) slot_image_pixels);
+				cv::Mat internal_img_2;
+				cv::Mat internal_img_3;
+
+				if (cameras_used >= 2)
+				{
+					message.sensor_ids.push_back(1);
+					cv::Mat internal_img_tmp(meta.height, meta.width, CV_8UC1,
+						(uint8_t*) slot_image_pixels + meta.size_bytes);
+					internal_img_tmp.copyTo(internal_img_2);
+
+				}
+
+				if (cameras_used == 3)
+				{
+					message.sensor_ids.push_back(2);
+					cv::Mat internal_img_tmp(meta.height, meta.width, CV_8UC1,
+							(uint8_t*) slot_image_pixels + (2 * meta.size_bytes));
+					internal_img_tmp.copyTo(internal_img_3);
+				}
+
+
+				//TODO handling exception!
+				static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
+				if (zero_image.rows != internal_img_1.rows)
+					resize(zero_image, zero_image, cv::Size(internal_img_1.cols, internal_img_1.rows), cv::INTER_NEAREST);
+
+
+				// these static things are bad cause they are typically the same, but just in care we start using completely different
+				// cameras and mixing and matching, this will set up the framework.
+				static cv::Mat ignore_mask1(internal_img_1.rows,
+						internal_img_1.cols, CV_8UC1, cv::Scalar(255));
+				static cv::Mat ignore_mask2(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(255));
+				static cv::Mat ignore_mask3(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(255));
+
+				static cv::Mat use_mask1(internal_img_1.rows,
+						internal_img_1.cols, CV_8UC1, cv::Scalar(0));
+				static cv::Mat use_mask2(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(0));
+				static cv::Mat use_mask3(internal_img_2.rows,
+						internal_img_2.cols, CV_8UC1, cv::Scalar(0));
+
+				if (!vio_manager->initialized())
+				{
+					if (en_debug)
+						printf("Initializing\n");
+					message.images.push_back(zero_image);
+					message.images.push_back(zero_image);
+					if (cameras_used == 3)
+						message.images.push_back(zero_image);
+				}
+				else
+				{
+					if (!imu_moved)
+					{
+						if (en_debug)
+							printf("Idling\n");
+
+						if (!has_idle_images)
+						{
+							if (en_debug)
+								printf("Capture new idle images\n");
+							idle_image1 = internal_img_1.clone();
+							idle_image2 = internal_img_2.clone();
+							if (cameras_used ==  3)
+								idle_image3 = internal_img_3.clone();
+
+							has_idle_images = true;
+						}
+
+						message.images.push_back(idle_image1);
+						message.images.push_back(idle_image2);
+						if (cameras_used == 3)
+							message.images.push_back(idle_image3);
+					}
+					else
+					{
+						// use real time raw imagery
+						message.images.push_back(internal_img_1.clone());
+						message.images.push_back(internal_img_2.clone());
+						if (cameras_used == 3)
+							message.images.push_back(internal_img_3.clone());
+					}
+				}
+
+				if (use_takeoff_cam)
+				{
+					if (takeoff_cam == 0)
+					{
+						if (en_debug)
+							printf("in takeoff %f\n", (double)alt_z);
+						message.masks.push_back(use_mask1);
+						message.masks.push_back(ignore_mask1);
+						if (cameras_used == 3)
+							message.masks.push_back(ignore_mask1);
+
+					}
+					else if (takeoff_cam == 1)
+					{
+						if (en_debug)
+							printf("in takeoff %f\n", (double)alt_z);
+						message.masks.push_back(ignore_mask1);
+						message.masks.push_back(use_mask1);
+						if (cameras_used == 3)
+							message.masks.push_back(ignore_mask1);
+
+					}
+					else
+					{
+						message.masks.push_back(use_mask1);
+						message.masks.push_back(use_mask1);
+						if (cameras_used == 3)
+							message.masks.push_back(use_mask1);
+
+					}
+
+					if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
+					{
+						//printf("Detected Takeoff, going to multicamera VINS normal operations\n");
+						use_takeoff_cam = false;
+
+						// if we're disarmed, and running load  throttling, turn off and go fullt throttle
+						idler_limit = -1;
+					}
+				}
+				else
+				{
+					if (pause_cam_states[0])
+						message.masks.push_back(ignore_mask1);
+					else
+						message.masks.push_back(use_mask1);
+
+					if (pause_cam_states[1])
+						message.masks.push_back(ignore_mask1);
+					else
+						message.masks.push_back(use_mask1);
+
+					if (cameras_used == 3)
+					{
+						if (pause_cam_states[2])
+							message.masks.push_back(ignore_mask1);
+						else
+							message.masks.push_back(use_mask1);
+
+					}
+				}
+
+				std::lock_guard < std::mutex > lck(camera_queue_mtx);
+				camera_queue.push_back(message);
+				std::sort(camera_queue.begin(), camera_queue.end());
+
 			}
-			else
-			{
-				message.masks.push_back(use_mask);
-			}
 
-			std::lock_guard < std::mutex > lck(camera_queue_mtx);
-			camera_queue.push_back(message);
-			std::sort(camera_queue.begin(), camera_queue.end());
+			is_thermal = false;
+		}
 
-        }
 
+		// SPECIAL MODE
+		// SPECIAL MODE  SEEK + BOSON
+		// SPECIAL MODE  SEEK + BOSON
+		// SPECIAL MODE
 ///////////////////////////////////////////////////////////////////////////////////
 
 

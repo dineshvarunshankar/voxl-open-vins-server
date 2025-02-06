@@ -148,7 +148,9 @@ bool en_vio_always_on = true;
 bool en_force_ned_2_flu = false;
 int en_ext_feature_tracker = 1;
 int num_features_to_track;
-
+bool en_thermal_enhance = false;
+double thermal_brightness = 1.0;
+double thermal_brightness_bos = 1.0;
 
 //std::string log_path;
 
@@ -282,6 +284,9 @@ int config_file_print(void) {
     printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
     printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
     printf("num_features_to_track:              %d\n", num_features_to_track);
+    printf("Enable Thermal Enhance:                  %s\n", en_thermal_enhance ? "true" : "false");
+    printf("Thermal Brightness:                  %6.5f\n", thermal_brightness);
+    printf("Thermal Brightness BOSON:                  %6.5f\n", thermal_brightness_bos);
     printf("=================================================================\n");
     printf("=================================================================\n");
     return 0;
@@ -398,7 +403,10 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
 
-    
+    json_fetch_bool_with_default(parent, "en_thermal_enhance", (int*) &en_thermal_enhance,  0);
+    json_fetch_double_with_default(parent, "thermal_brightness", &thermal_brightness, 1.0);
+    json_fetch_double_with_default(parent, "thermal_brightness_bos", &thermal_brightness_bos, 1.0);
+
     if (json_get_parse_error_flag()) {
         fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
         cJSON_Delete(parent);
