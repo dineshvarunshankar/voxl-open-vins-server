@@ -49,6 +49,10 @@ add_executable(${TARGET} voxl-log-vins.cpp)
 list(APPEND ALL_TARGETS ${TARGET})
 target_link_libraries(${TARGET} ${MODAL_JSON_LIBRARY} ${MODAL_PIPE_LIBRARY} )
 
+set(TARGET voxl-reset-vins)
+add_executable(${TARGET} voxl-reset-vins.c)
+include_directories(../common)
+list(APPEND ALL_TARGETS ${TARGET})
 
 
 install(

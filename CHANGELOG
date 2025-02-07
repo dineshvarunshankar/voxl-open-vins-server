@@ -1,3 +1,9 @@
+0.3.0
+    * swap to GPU feature tracker by default
+    * remove unnecessary memcopy when overlay is not running
+    * return to original pixel noise for GPU tracker
+    * fix voxl-inspect-vins errors
+    * add voxl-reset-vins tool (not perfect yet)
 0.2.85
     * bump version to fix build
 0.2.84
