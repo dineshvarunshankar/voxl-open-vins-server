@@ -274,8 +274,8 @@ void _publish_default(double pose_timestamp)
 	V_uncertainty = sqrt(V_uncertainty);
 	// printf("T_uncertainty: %.5f, R_uncertainty: %.5f, V_uncertainty: %.5f\n", T_uncertainty, R_uncertainty, V_uncertainty);
 
-//	if (en_debug)
-//		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
+	if (en_debug)
+		printf("Uncertainty in the robot's pose: xyz: %f R:%f V: %f\n", T_uncertainty, R_uncertainty, V_uncertainty);
 
 #ifdef MONTE
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenSolver(covariance_posori);
@@ -322,6 +322,8 @@ void _publish_default(double pose_timestamp)
 			if (curr_pixel_locs[d].point_quality == OV_HIGH)
 			{
 				n_good_points++;
+				if (en_debug)
+					printf("GOOD POINT: %d\n", n_good_points);
 			}
 			else if (curr_pixel_locs[d].point_quality == OV_MEDIUM)
 			{
@@ -399,7 +401,7 @@ void _publish_default(double pose_timestamp)
 		   }
     }
 #endif
-
+is_armed = true;
 	Eigen::Matrix<double, 4, 1> new_rot = ov_core::quat_multiply(ned_q, rot_corrected);
 
    // Convert to NED of quat
@@ -476,7 +478,6 @@ void _publish_default(double pose_timestamp)
                     imu_wrt_wio_holder(1),
                     imu_wrt_wio_holder(2));
     }
-
 	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
 	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
@@ -625,9 +626,16 @@ void _publish_default(double pose_timestamp)
 		if (v_cov_quality < max_q) {
 			max_q = v_cov_quality;
 		}
+		// if (max_q < prev_quality) {
+        // //DROP IMMEDIATELY
+        // prev_quality = max_q;
+    	// } else {
+        // 	prev_quality += static_cast<int>((max_q - prev_quality) * quality_rise_factor);
+    	// }
 
-		s.quality = max_q;
+		s.quality = max_q;//prev_quality;
 	}
+
 
 	if (s.quality > 100)
 		s.quality = 100;

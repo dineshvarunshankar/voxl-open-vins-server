@@ -1438,6 +1438,10 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 	vio_manager_options.featinit_options.max_dist = max_dist;
 	vio_manager_options.featinit_options.max_baseline = max_baseline;
 	vio_manager_options.featinit_options.max_cond_number = max_cond_number;
+	vio_manager_options.featinit_options.raansac_gn = raansac_gn;
+	vio_manager_options.featinit_options.raansac_tri = raansac_tri;
+
+
 
 	// internal tracker setup
 	vio_manager_options.grid_x = 5;

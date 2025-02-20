@@ -149,6 +149,9 @@ bool en_force_ned_2_flu = false;
 int en_ext_feature_tracker = 1;
 int en_gpu_for_tracking = 0;
 int num_features_to_track;
+bool raansac_gn;
+bool raansac_tri;
+
 
 
 //std::string log_path;
@@ -246,7 +249,12 @@ int config_file_print(void) {
     printf("zupt sigma px:                    %6.5f\n", zupt_sigma_px);
     printf("=================================================================\n");
     printf("=============================ZUPT================================\n");
+    printf("refine features:                  %s\n", refine_features ? "true" : "false");
     printf("try zupt:                         %s\n", try_zupt ? "true" : "false");
+    printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
+    printf("en_gpu_for_tracking:                %d\n", en_gpu_for_tracking);
+    printf("raansac_gn:                       %s\n", raansac_gn ? "true" : "false");
+    printf("raansac_tri:                      %s\n", raansac_tri ? "true" : "false");
     printf("zupt max velocity:                %6.5f\n", zupt_max_velocity);
     printf("zupt only at beginning:           %s\n", zupt_only_at_beginning ? "true" : "false");
     printf("zupt noise multiplier:            %6.5f\n", zupt_noise_multiplier);
@@ -258,7 +266,6 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("========================FEATURE INITIALIZER======================\n");
     printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
-    printf("refine features:                  %s\n", refine_features ? "true" : "false");
     printf("max runs:                         %d\n", max_runs);
     printf("init lamda:                       %6.5f\n", init_lamda);
     printf("max lamda:                        %6.5f\n", max_lamda);
@@ -281,8 +288,6 @@ int config_file_print(void) {
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
     printf("force FLU to NED transform:                  %s\n", en_force_ned_2_flu ? "true" : "false");
     printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
-    printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
-    printf("en_gpu_for_tracking:                %d\n", en_gpu_for_tracking);
     printf("num_features_to_track:              %d\n", num_features_to_track);
     printf("=================================================================\n");
     printf("=================================================================\n");
@@ -351,6 +356,8 @@ int config_file_read(void) {
     // ovins default is 1 for sigma_px, but with VFT we extract features on multiple downscaled
     // image levels so some features are noisier, increase sigma to 4
     // gpu feature tracker is still lki to use ovins defaults
+    json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
+
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.8);
     json_fetch_double_with_default(parent, "zupt_sigma_px", &zupt_sigma_px, 1.0);
@@ -363,7 +370,6 @@ int config_file_read(void) {
     json_fetch_bool_with_default(parent, "init_dyn_use", (int *)&init_dyn_use, 0);
 
     json_fetch_bool_with_default(parent, "triangulate_1d", (int *)&triangulate_1d, 0);
-    json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
     json_fetch_int_with_default(parent, "max_runs", &max_runs, 5);
     json_fetch_double_with_default(parent, "init_lamda", &init_lamda, 1e-3);
     json_fetch_double_with_default(parent, "max_lamda", &max_lamda, 1e10);
@@ -398,9 +404,11 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
-    json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 0);
-    json_fetch_bool_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 1);
+    json_fetch_int_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
+    json_fetch_int_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 0);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
+    json_fetch_bool_with_default(parent, "raansac_gn", (int *)&raansac_gn, 0);
+    json_fetch_bool_with_default(parent, "raansac_tri", (int *)&raansac_tri, 0);
 
     
     if (json_get_parse_error_flag()) {

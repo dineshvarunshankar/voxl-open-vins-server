@@ -214,6 +214,8 @@ extern bool en_force_ned_2_flu;
 extern int en_ext_feature_tracker;
 extern int en_gpu_for_tracking;
 extern int num_features_to_track;
+extern bool raansac_gn;
+extern bool raansac_tri;
 
 // read only our own config file without printing the contents
 int config_file_read(void);
