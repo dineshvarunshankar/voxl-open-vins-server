@@ -166,6 +166,7 @@ volatile int is_cam_connected = 0;
 volatile int is_init = 0;
 static volatile int init_pass_frames = 0;
 volatile int gravity_axis = 2; // 0=x,1=y,2=z
+BodyFrameInfo body_frame_info;
 
 // flag set to 1 on reset to indicate to the blowup detector not to check
 // for blowups until after VIO actually initializes
@@ -2168,6 +2169,8 @@ static bool connect_mavlink_service()
 		fprintf(stderr, "failed to open mavlink_onboard pipe\n");
 		_quit(-1);
 	}
+
+	pipe_client_flush(BARO_CH);
 
 	return true;
 }

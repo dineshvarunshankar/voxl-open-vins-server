@@ -49,7 +49,7 @@
 #define likely(x)	__builtin_expect (!!(x), 1)
 #endif
 
-#define MAX_IMAGE_SIZE  4147200
+#define MAX_IMAGE_SIZE  4147200*2
 
 ////////////////////////////////////////////////////////////////////////////////
 // image ringbuffer

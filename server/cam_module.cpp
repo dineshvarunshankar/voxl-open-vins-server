@@ -707,7 +707,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 			if (thermal_brightness_bos != 1.00)
 			{
-				internal_img.convertTo(internal_img, CV_16UC1, thermal_brightness_bos);
+				internal_img.convertTo(internal_img, CV_8UC1, thermal_brightness_bos);
 				cv::threshold(internal_img, internal_img, 255, 255, cv::THRESH_TRUNC);
 			}
 
@@ -803,6 +803,9 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			std::sort(camera_queue.begin(), camera_queue.end());
 			is_thermal = false;
 
+			last_cam_time = _apps_time_monotonic_ns();
+
+
 		}
         else if (cameras_used == 1 && meta.format == IMAGE_FORMAT_RAW16)  // seek
 		{
@@ -873,6 +876,10 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			message.timestamp = curr_message->metadata.timestamp_ns * 1e-09;
 			message.sensor_ids.push_back(0);
 
+//			static double last_ts = message.timestamp;
+//			printf("ts:%f\n", (double) 1/(message.timestamp-last_ts));
+//			last_ts = message.timestamp;
+
 			//TODO handling exception!
 			static cv::Mat zero_image = imread("/data/modalai/ov/zero_ref.jpg", cv::IMREAD_GRAYSCALE);
 			static cv::Mat ignore_mask(internal_img.rows,
@@ -936,10 +943,15 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			std::sort(camera_queue.begin(), camera_queue.end());
 			is_thermal = false;
 
+			last_cam_time = _apps_time_monotonic_ns();
+
 		}
 		else if (cameras_used == 2 && (meta.format == IMAGE_FORMAT_NV12 || meta.format == IMAGE_FORMAT_RAW16))  // boson+seek
 		{
 
+#warning "USING 320x240 scaling"
+#define UPSCALE 1
+//#warning "USING 640x512 scaling"
 			static std::vector<double> ts_cam_vec(cameras_used);
 			cv::Mat internal_img;
 
@@ -953,7 +965,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 				if (thermal_brightness_bos != 1.00)
 				{
-					internal_img_i.convertTo(internal_img_i, CV_16UC1, thermal_brightness_bos);
+					internal_img_i.convertTo(internal_img_i, CV_8UC1, thermal_brightness_bos);
 					cv::threshold(internal_img_i, internal_img_i, 255, 255, cv::THRESH_TRUNC);
 				}
 
@@ -970,17 +982,21 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					internal_img_i = embossed;
 				}
 
-				// 640 rez
-				//internal_img = internal_img_i.clone();
-
+#ifdef UPSCALE
+				//320x240
 			    // Resize the image to 320x240
 			    cv::resize(internal_img_i, internal_img, cv::Size(320, 240), cv::INTER_NEAREST);
-
 	            size_t byteSize = internal_img.total() * internal_img.elemSize();
 	            meta.height = 240;
 	            meta.width = 320;
 	            meta.size_bytes = byteSize;
-	        	curr_message->metadata = meta;
+#else
+				// 640x512
+				internal_img = internal_img_i.clone();
+				size_t byteSize = internal_img.total() * internal_img.elemSize();
+#endif
+				meta.size_bytes = byteSize;
+				curr_message->metadata = meta;
 
 			}
 			else if (meta.format == IMAGE_FORMAT_RAW16)
@@ -1011,12 +1027,31 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					raw16Image.convertTo(internal_img_i, CV_8UC1, 1.0 / 255.0); // Scaling to fit into 8-bit
 				}
 
+
+#ifdef UPSCALE
 				internal_img = internal_img_i.clone();
+				size_t byteSize = internal_img.total() * internal_img.elemSize();
+
+
+#else
+				// 640x512
+				// Resize the image to 320x240
+				cv::resize(internal_img_i, internal_img, cv::Size(620, 512), cv::INTER_NEAREST);
+				size_t byteSize = internal_img.total() * internal_img.elemSize();
+				meta.height = 512;
+				meta.width = 640;
+				meta.size_bytes = byteSize;
+#endif
+
+				meta.size_bytes = byteSize;
+				curr_message->metadata = meta;
+
+
 			}
 
-
-			size_t byteSize = internal_img.total() * internal_img.elemSize();
-			meta.size_bytes = byteSize;
+//			// 320x240
+//			size_t byteSize = internal_img.total() * internal_img.elemSize();
+//			meta.size_bytes = byteSize;
 
 			// combine and sim multi camera
 			if (curr_message->camid == 1)

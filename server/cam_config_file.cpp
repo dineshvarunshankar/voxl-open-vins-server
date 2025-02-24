@@ -111,15 +111,15 @@ static void extrinsicsNEDtoFLU(Eigen::Matrix<double,3,3>  &R, Eigen::Matrix<doub
 	{
 		r = eulerAngles(0);
 		p = M_PI - eulerAngles(1);
-		y = eulerAngles(2) - M_PI;
+		y = (eulerAngles(2) - M_PI);
 	}
 		
 	  
-	printf("[INFO] Camera: %d -- converted extrinsics *in FLU* are: Roll: %f, Pitch %f, Yaw %f\n", 
+	printf("[INFO] Camera: %d -- converted extrinsics *in FLU* are: Roll: %f, Pitch %f, Yaw %f (%f)\n",
 			camera_ctn++,
 			r/M_PI*180,
 			p/M_PI*180,
-			y/M_PI*180);
+			y/M_PI*180, y);
 
 	double c1 = cos( r / 2 );
 	double c2 = cos( p / 2 );

@@ -146,6 +146,8 @@ double max_allowable_cep;
 bool en_force_init = false;
 bool en_vio_always_on = true;
 bool en_force_ned_2_flu = false;
+bool en_imu_frame_output = false;
+
 int en_ext_feature_tracker = 1;
 int num_features_to_track;
 bool en_thermal_enhance = false;
@@ -281,6 +283,7 @@ int config_file_print(void) {
     printf("publish stats:                  %s\n", en_ov_stats ? "true" : "false");
     printf("max_allowable_cep:                  %6.5f\n", max_allowable_cep);
     printf("force FLU to NED transform:                  %s\n", en_force_ned_2_flu ? "true" : "false");
+    printf("publish IMU frame:                  %s\n", en_imu_frame_output ? "true" : "false");
     printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
     printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
     printf("num_features_to_track:              %d\n", num_features_to_track);
@@ -396,6 +399,7 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 1.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
+	json_fetch_bool_with_default(parent, "en_imu_frame_output", (int*) &en_imu_frame_output,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);

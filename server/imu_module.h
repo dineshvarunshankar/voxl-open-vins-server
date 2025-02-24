@@ -15,7 +15,7 @@ void _imu_disconnect_cb(__attribute__((unused)) int ch,
 void _imu_data_handler_cb(__attribute__((unused)) int ch, char *data, int bytes, 
                           __attribute__((unused)) void *context);
 
-
+void set_frd_to_imu(imu_data_t *data_array, int i);
 
 /**
  * @brief      creates imu pipe client and associated callbacks

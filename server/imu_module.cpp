@@ -10,6 +10,101 @@
 
 std::mutex imu_lock_mutex;
 
+
+// Resolve OVINS FRD BODY frame to IMU frame
+// OVINS looks at the gravity vector w.r.t. the IMU and transforms into a body frame FLU where
+// we need to convert it to FRD and then to imu frame NED
+//
+void set_frd_to_imu(imu_data_t *data_array, int i)
+{
+	// we only need to do this at powerup up
+	//
+	// TODO: look at when power up is moving or some awkward angle type edge cases
+	if (body_frame_info.is_initialized)
+		return;
+
+
+	// Determine physical IMU axis that gravity vector resides
+	body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[0]);
+	printf("[INFO] FRD to IMU NED configuration done. g direction: %d\n", body_frame_info.gravity_dir);
+
+	for (int k = 0; k<3; ++k)
+	{
+		if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[body_frame_info.gravity_axis]))
+		{
+			body_frame_info.gravity_axis = k;
+			body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[k]);
+		}
+	}
+
+
+	if (en_debug)
+	{
+		printf("[INFO] Body Frame Stats: %d %d %f\n",
+									body_frame_info.gravity_axis,
+									body_frame_info.gravity_dir,
+									data_array[i].accl_ms2[body_frame_info.gravity_axis]);
+	}
+
+	switch (body_frame_info.gravity_axis)
+	{
+		case X_AXIS:
+			// OVINS on the X axis has a quirk when transforming what the forward direction is
+			// since it detect g on the x axis of the imu, the body frame has Z imu in the range at +-M_PI
+			// and not 0. With their implementation of fej euler rotations
+			// that results in gimbal lock.
+			// In publishing we convert everything to quats and resolve that problem
+			// Therefore we monitor the sign flip based on it the IMU. Hence at
+			// power up if the IMU Z (g is on the IMU_X) maybe either positive or negative and
+			// as a result FLIPS the forward direction 180 degrees based on what that initial value is.
+			// We need to detect that and act accordingly
+			//
+
+			if (en_imu_frame_output)
+			{
+				// X in body frame is pointed upward from VOXL2 chip
+				if (data_array[i].accl_ms2[2] < 0) // Z axis tilted negative
+				{
+					body_frame_info.body_correction_mat =
+						Eigen::AngleAxisd(body_frame_info.gravity_dir * M_PI/2, Eigen::Vector3d::UnitY()).toRotationMatrix();
+				}
+				else // Z axis tilted positive
+				{
+					body_frame_info.body_correction_mat =
+							Eigen::AngleAxisd(-body_frame_info.gravity_dir * M_PI/2, Eigen::Vector3d::UnitY()).toRotationMatrix() *
+							Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+				}
+			}
+			break;
+
+		case Y_AXIS:
+			if (en_imu_frame_output)
+			{
+				// either cause just rotate 90 in direction of gravity
+				body_frame_info.body_correction_mat =
+						Eigen::AngleAxisd(body_frame_info.gravity_dir*M_PI/2, Eigen::Vector3d::UnitX()).toRotationMatrix();
+			}
+
+			break;
+
+		case Z_AXIS:
+			if (en_imu_frame_output)
+			{
+				// just rotate Z back to FRD when upside down
+				if (body_frame_info.gravity_dir > 0)
+				{
+					body_frame_info.body_correction_mat = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+				}
+			}
+			break;
+	}
+
+	printf("[INFO] gravity direction : %d\n", body_frame_info.gravity_dir);
+
+	body_frame_info.is_initialized = true;
+
+}
+
 void _imu_disconnect_cb(__attribute__((unused)) int ch,
 		__attribute__((unused)) void *context)
 {
@@ -25,20 +120,31 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 	double cam_imu_time_delta = (double) (_apps_time_monotonic_ns()
 			- last_cam_time) * 1e-9;
 
-//	if (is_initialized && idler_limit <= 0)
-//	{
-//		if (!bypass_reset_checks && cam_imu_time_delta > 0.3)
-//		{
-//			printf("-----------> UNSTABLE [THERMAL?] %1.2f <----------------\n", cam_imu_time_delta);
-//			bypass_reset_checks = true;
-//		}
-//		else if (bypass_reset_checks && cam_imu_time_delta < 0.25)
-//		{
-//			printf("-----------> STABLE [THERMAL?] %1.2f  <----------------\n", cam_imu_time_delta);
-//			bypass_reset_checks = false;
+	if (is_initialized && idler_limit <= 0)
+	{
+		// anything under 3Hz is going to wreck havoc to the state estimator as it tries to catch up.
+		if (!bypass_reset_checks && cam_imu_time_delta >= 0.25)
+		{
+			printf("-----------> UNSTABLE [THERMAL?] %1.2f <----------------\n", cam_imu_time_delta);
+			bypass_reset_checks = true;
+
+			// here we want to flush the camera data to get it to the current visual state
+			// and throw out old data.
+			// imu is fast enough to be current. and the state estimator will smooth into the
+			// current state vs jump.
+			while (!camera_queue.empty())
+			{
+				camera_queue.pop_front();
+			}
+			return;
+		}
+		else if (bypass_reset_checks && cam_imu_time_delta < 0.2)
+		{
+			printf("-----------> STABLE [THERMAL?] %1.2f  <----------------\n", cam_imu_time_delta);
+			bypass_reset_checks = false;
 //			resume_processing = 1;
-//		}
-//	}
+		}
+	}
 
 	std::lock_guard < std::mutex > imu_lg(imu_lock_mutex);
 
@@ -88,6 +194,8 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		return;
 	}
 
+
+
 		is_init = vio_manager->initialized();
 
 		// time this in debug mode
@@ -105,7 +213,6 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		}
 		else
 		{
-
 			if (n_packets > 100)
 			perf_limit = 10;  //3
 			else if (n_packets > 15)
@@ -129,17 +236,18 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 		last_perf_limit = perf_limit;
 
-	for (int i = 0; i < n_packets; i += perf_limit) {
+		for (int i = 0; i < n_packets; i += perf_limit) {
 
 			int64_t  dt_long =  (data_array[i].timestamp_ns-last_imu_timestamp_ns);
 			double dt = (double) dt_long * 1e-09;
 
 			// check if we somehow got an out-of-order imu sample and reject it
-		if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns) {
-			fprintf(stderr, "WARNING out-of-order imu %fms before previous\n", dt);
-				continue;
+			if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns) {
+				fprintf(stderr, "WARNING out-of-order imu %fms before previous\n", dt);
+					continue;
 			}
-		else {
+			else
+			{
 
 				// Create the data struct that we will use for ingesting data into the vio manager
 				ov_core::ImuData vio_manager_data;
@@ -154,6 +262,8 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 				t_am(2, 0) = data_array[i].accl_ms2[2];
 				t_am(1, 0) = data_array[i].accl_ms2[1];
 				t_am(0, 0) = data_array[i].accl_ms2[0];
+
+//				printf("IMU gyro stability: %f\n", t_wm.norm());
 
 				if (!imu_moved && dt <0.01)
 				{
@@ -183,30 +293,25 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 						}
 					}
 
-//////////////////////////////////////////////////////////////////
-// TODO -- why was this added
-//					if (is_initialized)
-//					{
-//////////////////////////////////////////////////////////////////
-
-					for (int k = 0; k<3; ++k)
+					// TODO check am numbers if IMU calibration is WAY OFF
+					if (t_wm.norm() < 0.015 && fabs(t_am.norm()-gravity_mag) < 0.15)
 					{
-						if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[gravity_axis]))
-						{
-							gravity_axis = k;
-						}
+						// Configure FRD to IMU frame transform
+						set_frd_to_imu(data_array, i);
 					}
+					else if (!body_frame_info.is_initialized)
+					{
+//						static int nagmeter = 0;
+//						if (nagmeter++ % 500 == 0)
+//						{
+						printf("[WARN] (%f and %f) Cannot initialize FRD to IMU transform--too much drift: your IMU may need to be recalibrated or is OVERHEATED!\n",
+									t_wm.norm(), fabs(t_am.norm()-gravity_mag) );
+//						}
 
-//////////////////////////////////////////////////////////////////
-// TODO -- why was this added
-//					}
-//					else
-//					{
-//						gravity_axis = 2;
-//					}
-//////////////////////////////////////////////////////////////////
-
-			}
+						if (!is_armed)
+							exit(-1);   // force restart
+					}
+				}
 
 								
 				// NED to FLU systems as per VINS.

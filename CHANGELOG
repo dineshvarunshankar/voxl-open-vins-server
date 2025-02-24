@@ -1,3 +1,5 @@
+0.2.84
+    * Thermal VIO from Seek, Boson or both. Fixes to enable PX4 MPC POS mode to work with VFC
 0.2.83
     * fix memleak with ov_overlay
 0.2.82

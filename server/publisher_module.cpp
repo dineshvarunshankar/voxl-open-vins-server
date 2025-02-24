@@ -141,8 +141,6 @@ static Eigen::Matrix<double, 4, 1> euler_to_quaternion(double roll, double pitch
 
 void _publish_default(double pose_timestamp)
 {
-    static Eigen::Matrix3d rot_global_zero_horizon = world_correction_eigen; //Eigen::Matrix3d::Identity();
-
 	static double nullpoint = 1;
 	static double flipframe = 1;
 
@@ -153,7 +151,6 @@ void _publish_default(double pose_timestamp)
 
 	// make sure we start with clean data structs and apply any global error codes
 	// full extended vio packet
-//	memset(&d, 0, sizeof(d));
 	d.v.magic_number = VIO_MAGIC_NUMBER;
 	d.v.error_code = global_error_codes;
 
@@ -161,17 +158,48 @@ void _publish_default(double pose_timestamp)
 			vio_manager->get_state(); // contains a few extra pieces we need
 
 	// simple lib modal pipe standard vio packet
-//	memset(&s, 0, sizeof(s));
 	s.magic_number = VIO_MAGIC_NUMBER;
 	s.error_code = global_error_codes;
 	s.timestamp_ns = static_cast<int64_t>(current_state->_timestamp * 1e9);
 
 	// simple lib modal pipe standard vio packet
-//	memset(&ov_status, 0, sizeof(ov_status));
 	ov_status.magic_number = VIO_MAGIC_NUMBER;
 
 	// record that we just got a successful pose and point cloud
 	last_real_pose_timestamp_ns = static_cast<int64_t>(pose_timestamp * 1e9);
+
+
+	// Setup gravity vector based on physical mounting of the IMU
+	// Gravity vector direction should be negative if the VOXL is upside down, etc...
+
+	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
+	// voxl flips it to actual
+	if (body_frame_info.gravity_axis == X_AXIS)
+	{
+		// NOTE -1 to flip gravity from body coordindates!
+		float grav_vec[3] =
+			{ (float) -1*body_frame_info.gravity_dir, 0, 0 };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
+	else if (body_frame_info.gravity_axis == Y_AXIS)
+	{
+		float grav_vec[3] =
+			{ 0, (float) body_frame_info.gravity_dir,  0 };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
+	else if (body_frame_info.gravity_axis == Z_AXIS)
+	{
+		float grav_vec[3] =
+			{ 0, 0, (float) -body_frame_info.gravity_dir };
+		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
+	}
+	else
+	{
+		printf("No axis defined!\n");
+		exit(-1);
+	}
+
+
 
 	if (!vio_manager->initialized())
 	{
@@ -354,6 +382,7 @@ void _publish_default(double pose_timestamp)
 		return;
 	}
 
+	// Calc time delta of state
 	double run_rate_s = (s.timestamp_ns - last_sent_timestamp_ns)*1e-9;
 
 	// All checks passed, after this point this function should not return
@@ -376,133 +405,79 @@ void _publish_default(double pose_timestamp)
 	//	Eigen::Matrix3d rot_fej = current_state->_imu->Rot_fej();
 	Eigen::Matrix<double, 4, 1> ned_q = current_state->_imu->quat_fej();
 
-	// Rotations
 
-	// TODO make more efficient
-	// TODO maybe use body extrinsics to set a flag if VOXL2 is mounted irregularly
-	// TODO which is what this is for
-	static Eigen::Matrix<double, 4, 1> rot_corrected(default_level_horizon);
+	// convert ovins from flu to ned
+	ned_q.y() *= -1;
+	ned_q.z() *= -1;
 
-#ifdef EXPERIMENTAL
-	if (!imu_moved && !is_armed)
+	// convert from OVINS wonky body frame to imu frame
+	Eigen::Quaterniond rot_quat(ned_q(3), ned_q(0), ned_q(1), ned_q(2));  // quant in w,x,y,z!!!
+	rot_quat = body_frame_info.body_correction_mat * rot_quat;
+	Eigen::Matrix<double, 4, 1> quat_final;
+    quat_final << rot_quat.x(), rot_quat.y(), rot_quat.z(), rot_quat.w();   // quant in x,y,z,w!!!
+	Eigen::Matrix<double, 3, 3> ned_rot = ov_core::quat_2_Rot(quat_final);
+
+	// Translation x y z
+	// convert from OVINS wonky body frame to imu frame
+	imu_wrt_wio_holder = flu_ned_correction_mat.inverse() * imu_wrt_wio_holder;
+	imu_wrt_wio_holder = body_frame_info.body_correction_mat * imu_wrt_wio_holder;
+
+
+	// Translation velocity vx vy vz
+	// convert from OVINS wonky body frame to imu frame
+	vel_imu_wrt_vio_holder = flu_ned_correction_mat.inverse() * vel_imu_wrt_vio_holder;
+	vel_imu_wrt_vio_holder = body_frame_info.body_correction_mat * vel_imu_wrt_vio_holder;
+
+	// EXPERIMENTAL HORIZON zeroing
+	if (body_frame_info.is_initialized) // && body_frame_info.gravity_axis == X_AXIS)
 	{
-		   double angle_q = std::acos(default_level_horizon.dot(ned_q));
-		   if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
-		   {
-			   printf("[INFO] dynamic horizon alignment\n");
-			   rot_corrected = ov_core::Inv(ned_q);
-		   }
-		   else
-		   {
-			   printf("[INFO] static IMU horizon alignment\n");
-			   rot_corrected = default_level_horizon;
-		   }
-    }
-#endif
-
-	Eigen::Matrix<double, 4, 1> new_rot = ov_core::quat_multiply(ned_q, rot_corrected);
-
-   // Convert to NED of quat
-    new_rot.y() *= -1;
-    new_rot.z() *= -1;
-
-	static double yaw_offset = 0;
-
-	if (gravity_vector_direction  <= 0)
-	{
-		if (gravity_axis == 0) // X AXIS
-		{
-
-			// This is different from other axes as X bounds +-M_PI and ovins
-			// by design will rotate the global frame  due to its gravity calculation
-			// TODO look into fixing this in ovins api
-			new_rot = ov_core::quat_multiply(world_correction_q, new_rot);
-
-			Eigen::Matrix<double, 3, 3> rot_new_rot = ov_core::quat_2_Rot(new_rot);
-			Eigen::Matrix<double, 3, 1> rpy  =ov_core:: rot2rpy(rot_new_rot);
-
-			if (zero_horizon)
-			{
-				double angle_q = std::acos(default_level_horizon.dot(ned_q));
-				if (std::abs(angle_q * 180.0 / M_PI) > 30.0)
-				{
-					yaw_offset = rpy(2);
-				}
-
-				// one shot
-				zero_horizon = false;
-				printf("NULL FACTOR from yaw->roll: %f\n", yaw_offset*180.0 / M_PI);
-			}
-
-			Eigen::Matrix<double, 3, 3> yaw_offset_rot = ov_core::rot_z(-yaw_offset);
-			new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(yaw_offset_rot));
-			rpy  =ov_core:: rot2rpy(ov_core::quat_2_Rot(new_rot));
-
-			// WARNING!!!
-			// TODO FIX THIS AS A ROTATION AND NOT SWAPPING
-			// THIS NEEDS TO SUPPORT  INVERSE OF WORLD COORINATES
-			// ONLY A HACK FOR VERTICALLY MOUNTED VOXLs
-			new_rot = euler_to_quaternion(gravity_vector_direction*rpy(2), rpy(0), rpy(1));
-
-			rot_global_zero_horizon = Eigen::AngleAxisd(yaw_offset, Eigen::Vector3d::UnitZ());
-
-		}
-		else  if (gravity_axis == 1)   //Y AXIS  aka voxl-cam
-		{
-			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_x(M_PI/2);
-			new_rot = ov_core::quat_multiply(new_rot, ov_core::rot_2_quat(roll_offset_rot));
-			rot_global_zero_horizon = Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitZ());
-		}
-		else  if (gravity_axis == 2)  //Z AXIS, normal, typical
-		{
-			Eigen::Matrix<double, 3, 3> roll_offset_rot = ov_core::rot_y(M_PI ) * ov_core::rot_z(M_PI).inverse();
-			new_rot = ov_core::quat_multiply(-new_rot, ov_core::rot_2_quat(roll_offset_rot));
-			rot_global_zero_horizon = Eigen::Matrix3d::Identity();
-		}
+		static Eigen::Matrix<double, 3, 3> ned_rot_zero = ned_rot;
+		ned_rot = ned_rot * ned_rot_zero.transpose();
+		imu_wrt_wio_holder = ned_rot_zero * imu_wrt_wio_holder;
+		vel_imu_wrt_vio_holder = ned_rot_zero * vel_imu_wrt_vio_holder;
 	}
 
-	Eigen::Matrix3d final_out_ned = ov_core::quat_2_Rot(new_rot);
+	// finalize rotation
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
-			final_out_ned.cast<float>();
+			ned_rot.cast<float>();
 
-    if (en_debug)
-    {
-        Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(final_out_ned);
-    	printf("[INFO]  %f, %f, %f --- %f, %f, %f\n",
-                    rpy(0)/M_PI*180,
-                    rpy(1)/M_PI*180,
-                    rpy(2)/M_PI*180,
-                    imu_wrt_wio_holder(0),
-                    imu_wrt_wio_holder(1),
-                    imu_wrt_wio_holder(2));
-    }
+	// finalize rotation rates
+	//
+	// keep track of the last rotation and find the difference between last and
+	// current rotation to estimate angular rate.
+	// TODO go by ?? timestamp instead
+	static Eigen::Matrix<double, 3, 3> last_Rot;
+	Eigen::Matrix<double, 3, 3> rot_since_last_state_ned = last_Rot * ned_rot.transpose();
+	last_Rot = ned_rot;
+	Eigen::Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(rot_since_last_state_ned);
+
+	// run rate is based on state's timestamp
+	double rollrate  =  rpy(0) / run_rate_s;
+	double pitchrate =  rpy(1) / run_rate_s;
+	double yawrate   =  rpy(2) / run_rate_s;
+	s.imu_angular_vel[0] = rollrate;
+	s.imu_angular_vel[1] = pitchrate;
+	s.imu_angular_vel[2] = yawrate;
+
 
 	// camera position here is a bit funky, since open vins outputs imu to cam and we want cam to imu
 	Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat()).transpose();
-
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_cam_to_imu), 3, 3) =
 			cam_out.cast<float>();
 
-    //
-	// Translation x y z
-	//
-	imu_wrt_wio_holder = flu_ned_correction_mat * imu_wrt_wio_holder;
-	imu_wrt_wio_holder = rot_global_zero_horizon * imu_wrt_wio_holder;
-	imu_wrt_wio_holder = world_correction_eigen.inverse() * imu_wrt_wio_holder;
+	// Finalize translation
 	Eigen::MatrixXf::Map(s.T_imu_wrt_vio, 3, 1) = imu_wrt_wio_holder.cast<float>();
 
-	//
-	// Translation velocity vx vy vz
-	//
-	vel_imu_wrt_vio_holder = flu_ned_correction_mat * vel_imu_wrt_vio_holder;
-	vel_imu_wrt_vio_holder =rot_global_zero_horizon * vel_imu_wrt_vio_holder;
-	vel_imu_wrt_vio_holder = world_correction_eigen.inverse()  * vel_imu_wrt_vio_holder;
+	// finalize translation velocities
 	Eigen::MatrixXf::Map(s.vel_imu_wrt_vio, 3, 1) = vel_imu_wrt_vio_holder.cast<float>();
 
+
+	// finalize translation
 	Eigen::MatrixXf::Map(s.T_cam_wrt_imu, 3, 1) = ((ov_core::quat_2_Rot(
 			current_state->_calib_IMUtoCAM[0]->quat().transpose())
 			* current_state->_calib_IMUtoCAM[0]->pos()) * -1).cast<float>();
+
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.gyro_bias), 3, 1) =
 			current_state->_imu->bias_g_fej().cast<float>();
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(d.accl_bias), 3, 1) =
@@ -520,62 +495,6 @@ void _publish_default(double pose_timestamp)
 	s.velocity_covariance[0] = (float) cov_varis(6, 6);
 	s.velocity_covariance[6] = (float) cov_varis(7, 7);
 	s.velocity_covariance[11] = (float) cov_varis(8, 8);
-
-
-	// keep track of the last rotation and find the difference between last and
-	// current rotation to estimate angular rate.
-	// TODO test this with other imu orientations other than standard
-	// TODO go by timestamp instead
-	static Matrix<double, 3, 3> last_Rot;
-	Matrix<double, 3, 3> rot_since_last_state_flu = last_Rot * current_state->_imu->Rot().transpose();
-	Matrix<double, 3, 3> rot_since_last_state_ned = flu_ned_correction_mat   \
-															* world_correction_eigen \
-															* rot_since_last_state_flu \
-															* world_correction_eigen.transpose() \
-															* flu_ned_correction_mat.transpose();
-	last_Rot = current_state->_imu->Rot();
-	Matrix<double, 3, 1>  rpy =  ov_core::rot2rpy(rot_since_last_state_ned);
-
-	double rollrate  =  rpy(0) / run_rate_s;
-	double pitchrate =  rpy(1) / run_rate_s;
-	double yawrate   =  rpy(2) / run_rate_s;
-	s.imu_angular_vel[0] = rollrate;
-	s.imu_angular_vel[1] = pitchrate;
-	s.imu_angular_vel[2] = yawrate;
-
-	// debug for above angular rate calc
-	// Eigen::Matrix<double, 3, 1>  rpy2 =  ov_core::rot2rpy(current_state->_imu->Rot().transpose());
-	// printf("%6.2f %6.2f %6.2f  ", rpy2(0), rpy2(1), rpy2(2));
-	// printf("%6.2f %6.2f %6.2f\n", rollrate, pitchrate, yawrate);
-
-
-	// gravtiy vector direction should be negative if the VOXL is upside down.
-	// TODO figure this out by rotating the gravtiiy vector properly with the
-	// world_frame matrix
-	alt_z = gravity_vector_direction * imu_wrt_wio_holder(gravity_axis);
-
-	// since open vins does the gravity alignment internally, gravity vec is always 0,0,1 and cov is 0'd out BUT
-	// voxl flips it to actual
-	if (gravity_axis == 0)
-	{
-		// NOTE -1 to flip gravity from body coordindates!
-		float grav_vec[3] =
-			{ (float) -1 * gravity_vector_direction, 0, 0 };
-		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
-	}
-	else if (gravity_axis == 1)
-	{
-		// NOTE -1 to flip gravity from body coordindates!
-		float grav_vec[3] =
-			{ 0, (float) -1 * gravity_vector_direction,  0 };
-		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
-	}
-	else if (gravity_axis == 2)
-	{
-		float grav_vec[3] =
-			{ 0, 0, (float) gravity_vector_direction };
-		memcpy(s.gravity_vector, grav_vec, sizeof(float) * 3);
-	}
 
 	// limit the number of features to what fits in our pipe packet
 	d.n_total_features = (int) curr_pixel_locs.size();
@@ -789,11 +708,15 @@ void _publish_default(double pose_timestamp)
 	display_snapshot.cep = T_uncertainty;
 	display_snapshot.rerr = R_uncertainty;
 
-	//publish
-	if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
-		pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
-	if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
-		pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+	static int startup = 0;
+	if (startup++ > 20)
+	{
+		//publish
+		if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
+			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
+			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+	}
 
 	return;
 }

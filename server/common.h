@@ -38,6 +38,7 @@
 #include <opencv2/opencv.hpp>
 #include <functional>
 #include <Eigen/Core>
+#include <Eigen/Dense>
 #include <modal_pipe.h>
 #include <unistd.h>
 
@@ -127,6 +128,36 @@ typedef struct camera_info {
     size_t cam_id;
 } camera_info;
 
+
+//////////////////////////////////////////////////////////////////////////////
+// OVINS ONLY Body frame reconciliation
+// All data types below only used for OVINS
+//////////////////////////////////////////////////////////////////////////////
+
+// Physical IMU orientations detected
+enum IMU_DIRECTION {
+    IMU_DOWN = -1,
+    IMU_UP = 1
+};
+
+// Physical orientation of the gravity vector via euler axes
+enum IMU_AXIS {
+    X_AXIS = 0,
+    Y_AXIS = 1,
+    Z_AXIS = 2
+};
+
+
+// Holder of the transform required from ovins body frame to imu frame
+typedef struct _body_frame_info {
+	int gravity_dir = IMU_DOWN;   // -1 down, 1 up
+	int gravity_axis = X_AXIS;   // x=0, y=1, z=2
+	Eigen::Matrix3d body_correction_mat = Eigen::Matrix3d::Identity();  // rotation matrix
+	bool is_initialized = false;
+} BodyFrameInfo;
+
+// Holder instance
+extern BodyFrameInfo body_frame_info;
 
 
 //////////////////////////////////////////////////////////////////////////////
