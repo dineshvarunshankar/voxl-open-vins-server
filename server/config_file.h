@@ -213,6 +213,7 @@ extern bool en_vio_always_on;
 extern bool en_force_ned_2_flu;
 extern bool en_imu_frame_output;
 extern int en_ext_feature_tracker;
+extern int en_gpu_for_tracking;
 extern int num_features_to_track;
 extern bool en_thermal_enhance;
 extern double thermal_brightness;

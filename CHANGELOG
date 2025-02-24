@@ -1,5 +1,16 @@
+0.3.1
+    * Fixes to enable PX4 MPC POS mode to work with VFC. 
+    * Bug fix & cleanup to thermal vio jitter-frame from shutter
+0.3.0
+    * swap to GPU feature tracker by default
+    * remove unnecessary memcopy when overlay is not running
+    * return to original pixel noise for GPU tracker
+    * fix voxl-inspect-vins errors
+    * add voxl-reset-vins tool (not perfect yet)
+0.2.85
+    * bump version to fix build
 0.2.84
-    * Thermal VIO from Seek, Boson or both. Fixes to enable PX4 MPC POS mode to work with VFC
+    * options to enable gpu tracking
 0.2.83
     * fix memleak with ov_overlay
 0.2.82

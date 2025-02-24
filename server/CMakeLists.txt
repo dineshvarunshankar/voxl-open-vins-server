@@ -30,6 +30,7 @@ find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 find_library(LIBOV_CORE NAMES libov_core_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
 find_library(LIBOV_MSCKF NAMES libov_msckf_lib.so REQUIRED HINTS /usr/lib /usr/lib64 )
 find_library(LIB_CERES NAMES libceres.so.1 REQUIRED HINTS /usr/lib /usr/lib64 )
+find_library(OPENCL_LIBRARY NAMES OpenCL libOpenCL.so HINTS /usr/lib64 )
 ## just a 64-bit lib, lives in lib64 since APQ8096 doesn't like to link to 64-bit
 ## libs in /usr/lib/
 find_library(MODALCV    modalcv    HINTS  /usr/lib64)
@@ -77,6 +78,7 @@ target_link_libraries(${SERVERNAME}
     ${VOXL_COMMON_CONFIG}
     ${OpenCV_LIBRARIES}
     ${MODALCV}
+    ${OPENCL_LIBRARY}
 )
 
 if(BUILD_QRB5165)

@@ -130,8 +130,12 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 			if (cameras_used == 1)
 			{
 				memcpy(curr_message->image_pixels, (uint8_t*) frame,
-						meta.size_bytes);			
-				img_ringbuf->insert_data(curr_message);
+						meta.size_bytes);
+
+				// if there is an overlay client, save the image
+				if(pipe_server_get_num_clients(OVERLAY_CH) > 0){
+					img_ringbuf->insert_data(curr_message);
+				}
 
 				if (en_ext_feature_tracker) {
 					return;
@@ -261,7 +265,11 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					memcpy(curr_message->image_pixels, (uint8_t*) slot_image_pixels,
 							meta.size_bytes*cameras_used);			
 					update_slots = 0;
-					img_ringbuf->insert_data(curr_message);
+
+					// if there is an overlay client, save the image
+					if(pipe_server_get_num_clients(OVERLAY_CH) > 0){
+						img_ringbuf->insert_data(curr_message);
+					}
 
 					double avg_time = 0;
 					for (const auto& _ts : ts_cam_vec)
