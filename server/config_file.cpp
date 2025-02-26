@@ -365,7 +365,7 @@ int config_file_read(void) {
     // ovins default is 1 for sigma_px, but with VFT we extract features on multiple downscaled
     // image levels so some features are noisier, increase sigma to 4
     // gpu feature tracker is still lki to use ovins defaults
-    json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 0);
+    json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 1);
 
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.8);
@@ -414,11 +414,11 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
-    json_fetch_int_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 1);
-    json_fetch_int_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 0);
+    json_fetch_int_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 0);
+    json_fetch_int_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
     json_fetch_bool_with_default(parent, "raansac_gn", (int *)&raansac_gn, 0);
-    json_fetch_bool_with_default(parent, "raansac_tri", (int *)&raansac_tri, 0);
+    json_fetch_bool_with_default(parent, "raansac_tri", (int *)&raansac_tri, 1);
 
     json_fetch_bool_with_default(parent, "en_thermal_enhance", (int*) &en_thermal_enhance,  0);
     json_fetch_double_with_default(parent, "thermal_brightness", &thermal_brightness, 1.0);
