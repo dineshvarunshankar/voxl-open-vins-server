@@ -46,6 +46,7 @@
 #define GRID_H 15
 #define BLOCKS_FOR_100_PERCENT 0.5f
 #define STDDEV_WEIGHT 10.0f // higher number weights the stddev of features more
+#define RANSAC_WEIGHT 1.0f //RAANSAC WEIGHT -- SUBJECT TO CHANGE
 
 // non-tunable params
 #define GRID_BLOCKS (GRID_W*GRID_H)
@@ -53,6 +54,7 @@
 
 extern int grid_spacing_x;
 extern int grid_spacing_y;
+
 
 
 
@@ -161,13 +163,23 @@ static int calc_quality(uint8_t state, float* vel_cov, int img_w, int img_h, int
 			#endif
 			continue;
 		}
+	//JOAO ADDS
+		// USING RAANSAC QUALITY METRIC
+		// RECALL THAT THE FIELD IS STILL NAMED depth_error_stddev
+		float ransac_quality = features[i].depth_error_stddev;
+        float score = MAX_SCORE_PER_BLOCK * ransac_quality * RANSAC_WEIGHT;
 
-		// points with a higher stddev will contribute less to the total score
-		float stddev = features[i].depth_error_stddev;
-		float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
-		#ifdef DEBUG_QUALITY_GRID
-		printf("adding feature to grid: i:%2d x:%3d y:%3d stddev:%f\n", i, x, y, stddev);
-		#endif
+		 if (en_debug)
+    {
+		printf("[ZBFT] adding feature to grid: x:%3d y:%3d RQ:%f\n",  x, y, ransac_quality);
+	}
+		// // points with a higher stddev will contribute less to the total score
+		// float stddev = features[i].depth_error_stddev;
+		// float score = MAX_SCORE_PER_BLOCK - STDDEV_WEIGHT*(stddev*stddev);
+		// #ifdef DEBUG_QUALITY_GRID
+		// printf("adding feature to grid: i:%2d x:%3d y:%3d stddev:%f\n", i, x, y, stddev);
+		// #endif
+
 		_add_feature_to_grid(score, grid_scores, x, y);
 	}
 
