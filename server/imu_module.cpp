@@ -100,6 +100,7 @@ void set_frd_to_imu(imu_data_t *data_array, int i)
 	}
 
 	printf("[INFO] gravity direction : %d\n", body_frame_info.gravity_dir);
+	printf("[INFO] *** FRD to IMU transform READY! *** \n");
 
 	body_frame_info.is_initialized = true;
 
@@ -184,13 +185,16 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		memcpy(&d.v, &s, sizeof(vio_data_t));
 
 		is_initialized = false;
-		// send to both pipes
- 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
- 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 
- 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
- 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		if (body_frame_info.is_initialized)
+		{
+			// send to both pipes
+			if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
+				pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
 
+			if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
+				pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+		}
 		return;
 	}
 
@@ -287,29 +291,37 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 							if (ramp < 258)
 								printf("[INFO] IMU has moved, JERK detected\n");
 
-
 							imu_moved = true;
 							vio_manager->force_moving();
 						}
 					}
 
 					// TODO check am numbers if IMU calibration is WAY OFF
-					if (t_wm.norm() < 0.015 && fabs(t_am.norm()-gravity_mag) < 0.15)
+					if (t_wm.norm() < 0.01 && fabs(t_am.norm()-gravity_mag) < 0.1)
 					{
 						// Configure FRD to IMU frame transform
 						set_frd_to_imu(data_array, i);
+
 					}
 					else if (!body_frame_info.is_initialized)
 					{
-//						static int nagmeter = 0;
-//						if (nagmeter++ % 500 == 0)
-//						{
-						printf("[WARN] (%f and %f) Cannot initialize FRD to IMU transform--too much drift: your IMU may need to be recalibrated or is OVERHEATED!\n",
+						static int nagmeter = 0;
+						if (nagmeter++ % 50 == 0)
+						{
+							printf("[WARN] (%f and %f) Cannot initialize FRD to IMU transform--too much drift: your IMU may need to be recalibrated or is OVERHEATED!\n",
 									t_wm.norm(), fabs(t_am.norm()-gravity_mag) );
-//						}
+						}
 
-						if (!is_armed)
-							exit(-1);   // force restart
+						s.quality = -1;
+						s.state = VIO_STATE_FAILED;
+						// send to both pipes
+				 		if (pipe_server_get_num_clients(EXTENDED_CH) > 0) // publish
+				 			pipe_server_write(EXTENDED_CH, (char*) &d, sizeof(ext_vio_data_t));
+
+				 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
+				 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
+				 		continue;
 					}
 				}
 

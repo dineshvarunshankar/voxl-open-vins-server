@@ -19,7 +19,7 @@
                         "cal_file":                             "opencv_tracking_down_intrinsics.yml"
                 },
 		{
-			"enable":				false,
+			"enable":				true,
 			"name":					"uvc",
 			"pipe_for_preview":		"uvc",
 			"pipe_for_tracking":	"uvc",
@@ -28,7 +28,7 @@
 			"cal_file":				"opencv_uvc_intrinsics.yml"
 		},
 		{
-			"enable":				true,
+			"enable":				false,
 			"name":					"seek",
 			"pipe_for_preview":		"seek",
 			"pipe_for_tracking":	"seek",
