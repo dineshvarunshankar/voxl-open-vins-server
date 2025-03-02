@@ -98,8 +98,8 @@ enable_service_and_exit () {
         set_param max_slam_features 40
         set_param max_slam_in_update 13
         set_param max_msckf_in_update 13
-        set_param cam_imu_time_offset 0.003
-        set_param slam_sigma_px 1
+        set_param cam_imu_time_offset 0.0029
+        set_param slam_sigma_px 1.3
         set_param zupt_max_disparity 3
         set_param num_opencv_threads 7
         set_param takeoff_accel_threshold 0.1

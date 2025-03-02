@@ -1,3 +1,9 @@
+0.3.4
+    * Fix zero features on takeoff motors spinning w/excessive imu noise
+0.3.3
+    * Support for old 1.4.1 thermal and new 1.4.1 w/quality logic
+0.3.2
+    * New quality logic
 0.3.1
     * Fixes to enable PX4 MPC POS mode to work with VFC. 
     * Bug fix & cleanup to thermal vio jitter-frame from shutter
