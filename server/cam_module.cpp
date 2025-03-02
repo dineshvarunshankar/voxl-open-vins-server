@@ -916,7 +916,12 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 					{
 						if (en_debug)
 							printf("Capture new idle images\n");
+
 						idle_image1 = internal_img.clone();
+
+						// HACK CAUSE CAMERA SO CLSOE TO GROUND NO FEATURES
+						idle_image1 = zero_image;
+
 						has_idle_images = true;
 					}
 

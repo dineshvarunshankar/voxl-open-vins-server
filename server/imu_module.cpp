@@ -248,7 +248,9 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 			// check if we somehow got an out-of-order imu sample and reject it
 			if ((int64_t) data_array[i].timestamp_ns <= last_imu_timestamp_ns) {
 				fprintf(stderr, "WARNING out-of-order imu %fms before previous\n", dt);
-					continue;
+				last_imu_timestamp_ns = data_array[i].timestamp_ns;
+				continue;
+
 			}
 			else
 			{
@@ -320,6 +322,8 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 
 				 		if (pipe_server_get_num_clients(SIMPLE_CH) > 0) // publish
 				 			pipe_server_write(SIMPLE_CH, (char*) &s, sizeof(vio_data_t));
+
+						last_imu_timestamp_ns = data_array[i].timestamp_ns;
 
 				 		continue;
 					}
