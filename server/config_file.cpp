@@ -152,6 +152,7 @@ int en_ext_feature_tracker = 1;
 int en_gpu_for_tracking = 0;
 int num_features_to_track;
 bool en_thermal_enhance = false;
+bool en_overlay_landscape = false;
 double thermal_brightness = 1.0;
 double thermal_brightness_bos = 1.0;
 bool raansac_gn;
@@ -296,6 +297,8 @@ int config_file_print(void) {
     printf("VIO always on (for bench testing):                  %s\n", en_vio_always_on ? "true" : "false");
     printf("num_features_to_track:              %d\n", num_features_to_track);
     printf("Enable Thermal Enhance:                  %s\n", en_thermal_enhance ? "true" : "false");
+    printf("Enable Overlay Landscape:                  %s\n", en_overlay_landscape ? "true" : "false");
+
     printf("Thermal Brightness:                  %6.5f\n", thermal_brightness);
     printf("Thermal Brightness BOSON:                  %6.5f\n", thermal_brightness_bos);
     printf("=================================================================\n");
@@ -414,13 +417,14 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);
     json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
-    json_fetch_int_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 0);
-    json_fetch_int_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 1);
+    json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 0);
+    json_fetch_bool_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
     json_fetch_bool_with_default(parent, "raansac_gn", (int *)&raansac_gn, 0);
     json_fetch_bool_with_default(parent, "raansac_tri", (int *)&raansac_tri, 1);
 
     json_fetch_bool_with_default(parent, "en_thermal_enhance", (int*) &en_thermal_enhance,  0);
+    json_fetch_bool_with_default(parent, "en_overlay_landscape", (int*) &en_overlay_landscape,  0);
     json_fetch_double_with_default(parent, "thermal_brightness", &thermal_brightness, 1.0);
     json_fetch_double_with_default(parent, "thermal_brightness_bos", &thermal_brightness_bos, 1.0);
 

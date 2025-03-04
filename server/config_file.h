@@ -210,6 +210,7 @@ extern double takeoff_threshold;
 extern double max_allowable_cep;
 extern bool en_force_init;
 extern bool en_vio_always_on;
+extern bool en_overlay_landscape;
 extern bool en_force_ned_2_flu;
 extern bool en_imu_frame_output;
 extern int en_ext_feature_tracker;

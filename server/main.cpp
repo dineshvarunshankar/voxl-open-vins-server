@@ -812,10 +812,10 @@ static void _overlay_disconnect_cb(__attribute__((unused)) int ch,
 
 
 
-#define OVERLAY_RES_W_X 320
-#define OVERLAY_RES_H_Y 240
+#define OVERLAY_RES_W_X 512
+#define OVERLAY_RES_H_Y 384
 
-static void _post_snapshot()
+static void _post_snapshot_landscape()
 {
 	static int skip_cnt = 0;
 	static int target_id = -1;
@@ -892,7 +892,7 @@ static void _post_snapshot()
 			}
 			else
 			{
-				font_size = 0.33;
+				font_size = 0.43;
 				border_scale = 2;
 
 				if (cameras_used == 1)
@@ -1167,7 +1167,7 @@ static void _post_snapshot()
 
 }
 
-static void _post_snapshot_working()
+static void _post_snapshot_vertical()
 {
 	static int skip_cnt = 0;
 	static int target_id = -1;
@@ -1652,7 +1652,10 @@ static void* _overlay_thread_func(__attribute__((unused)) void *ctx)
 		double u_freq = (1.0 / publish_frequency) * 1e6;
 		usleep(u_freq);  // run about the same speed as the camera
 		if (overlay_client_connected) {
-			_post_snapshot();
+			if (en_overlay_landscape)
+				_post_snapshot_landscape();
+			else
+				_post_snapshot_vertical();
 		}
 	}
 
