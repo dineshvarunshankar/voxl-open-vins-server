@@ -79,22 +79,38 @@ set_param_string () {
 	sed -E -i "/\"$var\":/c\	\"$var\":	\"$2\"," ${CONFIG_FILE}
 }
 
+copy_conf () {
+	if [ ! -e "/etc/modalai/extrinsics.conf.oem" ]; then
+	        cp /etc/modalai/extrinsics.conf /etc/modalai/extrinsics.conf.oem
+	fi
+	if [ ! -e "/etc/modalai/vio_cams.conf.oem" ]; then
+        	cp /etc/modalai/vio_cams.conf /etc/modalai/vio_cams.conf.oem
+	fi
+	if [ ! -e "/etc/modalai/vio-open-vins-server.conf.oem" ]; then
+        	cp /etc/modalai/voxl-open-vins-server.conf /etc/modalai/voxl-open-vins-server.conf.oem
+	fi
+}
+
+
 disable_service_and_exit () {
-	echo "disabling ${NAME} systemd service"
-	systemctl disable ${SERVICE_FILE}
-	echo "stopping ${NAME} systemd service"
-	systemctl stop ${SERVICE_FILE}
-	echo "Done configuring ${NAME}"
+        cp /etc/modalai/extrinsics.conf.oem /etc/modalai/extrinsics.conf
+        cp /etc/modalai/vio_cams.conf.oem /etc/modalai/vio_cams.conf
+        cp /etc/modalai/voxl-open-vins-server.conf.oem /etc/modalai/voxl-open-vins-server.conf
+	echo "disabling voxl-uvc-server systemd service"
+	systemctl disable voxl-uvc-server
 	exit 0
 }
 
 enable_service_and_exit () {
 	echo "enabling voxl-uvc-server systemd service"
 	systemctl enable voxl-uvc-server
-	echo "enabling  ${NAME} systemd service"
-	systemctl enable  ${SERVICE_FILE}
-        cp /etc/modalai/vio_cams.conf /etc/modalai/vio_cams.conf.oem
+	
+	copy_conf
+
+        cp /etc/modalai/extrinsics.conf.thermal /etc/modalai/extrinsics.conf
         cp /etc/modalai/vio_cams.conf.boson /etc/modalai/vio_cams.conf
+        cp /etc/modalai/voxl-uvc-server.conf /etc/modalai/voxl-uvc-server.conf
+
         set_param max_slam_features 40
         set_param max_slam_in_update 13
         set_param max_msckf_in_update 13
@@ -112,12 +128,8 @@ enable_service_and_exit () {
 }
 
 reset_config_file_to_default () {
-	echo "wiping old config file"
-	rm -rf ${CONFIG_FILE}
-	${NAME} -c
+	echo "Done configuring ${NAME}"
 }
-
-
 
 
 ################################################################################
