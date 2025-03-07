@@ -41,7 +41,7 @@
 			"parent": "imu_apps",
 			"child":  "uvc",
 			"T_child_wrt_parent": [0.037, 0.000, 0.0006],
-			"RPY_parent_to_child":    [0, 90, 90]
+			"RPY_parent_to_child":    [0, -90, -90]
 		}, {
 			"parent": "imu_apps",
 			"child":  "seek",
