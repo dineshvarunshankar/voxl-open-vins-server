@@ -46,7 +46,7 @@
 #define GRID_H 15
 #define BLOCKS_FOR_100_PERCENT 0.5f
 #define STDDEV_WEIGHT 10.0f // higher number weights the stddev of features more
-#define RANSAC_WEIGHT 1.0f //RAANSAC WEIGHT -- SUBJECT TO CHANGE
+#define RANSAC_WEIGHT 1.5f //RAANSAC WEIGHT -- SUBJECT TO CHANGE
 
 // non-tunable params
 #define GRID_BLOCKS (GRID_W*GRID_H)

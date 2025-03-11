@@ -256,6 +256,7 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("=============================ZUPT================================\n");
     printf("refine features:                  %s\n", refine_features ? "true" : "false");
+    printf("max runs:                         %d\n", max_runs);
     printf("try zupt:                         %s\n", try_zupt ? "true" : "false");
     printf("en_ext_feature_tracker:             %d\n", en_ext_feature_tracker);
     printf("en_gpu_for_tracking:                %d\n", en_gpu_for_tracking);
@@ -272,7 +273,6 @@ int config_file_print(void) {
     printf("=================================================================\n");
     printf("========================FEATURE INITIALIZER======================\n");
     printf("triangulate 1d:                   %s\n", triangulate_1d ? "true" : "false");
-    printf("max runs:                         %d\n", max_runs);
     printf("init lamda:                       %6.5f\n", init_lamda);
     printf("max lamda:                        %6.5f\n", max_lamda);
     printf("min dx:                           %6.5f\n", min_dx);
