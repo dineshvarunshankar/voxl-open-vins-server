@@ -213,27 +213,20 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		// So on average use every other packet.
 		if (!vio_manager->is_moving())
 		{
-			if (en_gpu_for_tracking)
-				perf_limit = 1; //6
+			if (!is_init && !body_frame_info.is_initialized)
+			{
+				perf_limit = 1;
+			}
 			else
-				perf_limit = 3; //6
+			{
+				perf_limit = 5;
+			}
 		}
 		else
 		{
-			if (en_gpu_for_tracking)
-			{
-				if (n_packets > 15)
-				{
-					perf_limit = 3;
-				}
-				else
-				{
-					perf_limit = 1;  //3
-				}
-			}
 			if (n_packets > 100)
 			{
-				perf_limit = 8;  //3
+				perf_limit = 10;
 			}
 			else if (n_packets > 15)
 			{

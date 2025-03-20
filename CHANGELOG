@@ -1,3 +1,5 @@
+0.3.8
+    * refine throttling of imu data all modes
 0.3.7
     * remove throttling of imu data when under GPU FT mode
 0.3.6
