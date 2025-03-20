@@ -1,3 +1,9 @@
+0.3.7
+    * remove throttling of imu data when under GPU FT mode
+0.3.6
+    * debug upside down voxl2
+0.3.5
+    * clean up thermal vio
 0.3.4
     * Fix zero features on takeoff motors spinning w/excessive imu noise
 0.3.3

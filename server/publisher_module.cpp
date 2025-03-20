@@ -405,6 +405,8 @@ void _publish_default(double pose_timestamp)
 	Eigen::Matrix<double, 3, 1> vel_imu_wrt_vio_holder = current_state->_imu->vel();
 	// Not used anymore!
 	//	Eigen::Matrix3d rot_fej = current_state->_imu->Rot_fej();
+
+	// Rotation
 	Eigen::Matrix<double, 4, 1> ned_q = current_state->_imu->quat_fej();
 
 
@@ -421,8 +423,10 @@ void _publish_default(double pose_timestamp)
 
 	// Translation x y z
 	// convert from OVINS wonky body frame to imu frame
+//	printf("%f %f %f  -- ",  imu_wrt_wio_holder[0],  imu_wrt_wio_holder[1],  imu_wrt_wio_holder[2]);
 	imu_wrt_wio_holder = flu_ned_correction_mat.inverse() * imu_wrt_wio_holder;
-	imu_wrt_wio_holder = body_frame_info.body_correction_mat * imu_wrt_wio_holder;
+	imu_wrt_wio_holder = (body_frame_info.body_correction_mat * imu_wrt_wio_holder);
+//	printf(" %f %f %f\n",  imu_wrt_wio_holder[0],  imu_wrt_wio_holder[1],  imu_wrt_wio_holder[2]);
 
 
 	// Translation velocity vx vy vz

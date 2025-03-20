@@ -99,7 +99,7 @@ void set_frd_to_imu(imu_data_t *data_array, int i)
 			break;
 	}
 
-	printf("[INFO] gravity direction : %d\n", body_frame_info.gravity_dir);
+	printf("[INFO] gravity direction (%d) : %d\n", body_frame_info.gravity_axis, body_frame_info.gravity_dir);
 	printf("[INFO] *** FRD to IMU transform READY! *** \n");
 
 	body_frame_info.is_initialized = true;
@@ -213,16 +213,36 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 		// So on average use every other packet.
 		if (!vio_manager->is_moving())
 		{
-		perf_limit = 5; //6
+			if (en_gpu_for_tracking)
+				perf_limit = 1; //6
+			else
+				perf_limit = 3; //6
 		}
 		else
 		{
+			if (en_gpu_for_tracking)
+			{
+				if (n_packets > 15)
+				{
+					perf_limit = 3;
+				}
+				else
+				{
+					perf_limit = 1;  //3
+				}
+			}
 			if (n_packets > 100)
-			perf_limit = 10;  //3
+			{
+				perf_limit = 8;  //3
+			}
 			else if (n_packets > 15)
-			perf_limit = 3;
+			{
+				perf_limit = 3;
+			}
 			else
+			{
 				perf_limit = 1;
+			}
 
 			if (!changed_motion_state)
 			{
@@ -297,6 +317,12 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 							vio_manager->force_moving();
 						}
 					}
+
+//					printf("[WARN] (%f and %f) [%f %f %f]\n",
+//							t_wm.norm(), fabs(t_am.norm()-gravity_mag),
+//							data_array[i].accl_ms2[0],
+//							data_array[i].accl_ms2[1],
+//							data_array[i].accl_ms2[2] );
 
 					// TODO check am numbers if IMU calibration is WAY OFF
 					if (t_wm.norm() < 0.01 && fabs(t_am.norm()-gravity_mag) < 0.1)
@@ -422,8 +448,6 @@ int connect_imu_service(void) {
 		fprintf(stderr, "failed to open imu client pipe\n");
 		return -1;
 	}
-
-	pipe_client_flush(IMU_CH);
 
     return 0;
 }
