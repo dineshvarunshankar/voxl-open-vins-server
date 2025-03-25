@@ -428,11 +428,13 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 						if ((is_armed || en_vio_always_on) && (double) alt_z < takeoff_threshold) // turn off, we are in the air
 						{
-							//printf("Detected Takeoff, going to multicamera VINS normal operations\n");
+							printf("Detected Takeoff, going to multicamera VINS normal operations\n");
 							use_takeoff_cam = false;
 
 							// if we're disarmed, and running load  throttling, turn off and go fullt throttle
 							idler_limit = -1;
+						} else {
+							printf("alt_z: %f, threshold: %f\n",  (double)alt_z, (double)takeoff_threshold);
 						}
 					}
 					else
@@ -1321,7 +1323,7 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 }
 
 
-int connect_cam_service(std::vector<camera_info> &cam_info_vec) {
+int connect_cam_service(std::vector<cam_info> &cam_info_vec) {
 
 	// connect to all configured cameras
 	char t_cam_nam[256];

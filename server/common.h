@@ -115,7 +115,7 @@ typedef struct image_data {
 } image_data;
 
 
-typedef struct camera_info {
+typedef struct cam_info {
     char name[128];
     char tracking_name[128];
     char preview_name[128];
@@ -126,7 +126,7 @@ typedef struct camera_info {
     int height;
     bool is_fisheye;
     size_t cam_id;
-} camera_info;
+} cam_info;
 
 
 //////////////////////////////////////////////////////////////////////////////

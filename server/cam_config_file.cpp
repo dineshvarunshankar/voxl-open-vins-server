@@ -46,7 +46,7 @@
 
 
 // extern variable in cam_config_file.hpp
-std::vector<camera_info> cam_info_vec;
+std::vector<cam_info> cam_info_vec;
 char imu_name[64];
 Eigen::Matrix3d world_correction_eigen;
 Eigen::Matrix<double, 4, 1> world_correction_q;
@@ -163,13 +163,13 @@ int cam_config_file_read(void)
 		}
 	}
 
-	// loop through all the cameras and put the common info into the local camera_info format
+	// loop through all the cameras and put the common info into the local cam_info format
 	// which mimics very closely the openvins lib formaty for intrinsics and extrinsics
 	// for easy copying in main()
 	int is_there_an_occlluded_cam = 0;
 	for(int i=0; i<n_cams; i++){
 
-		camera_info cam;
+		cam_info cam;
 		strcpy(cam.name, vio_cams[i].name);
 		strcpy(cam.tracking_name, vio_cams[i].pipe_for_tracking);
 		strcpy(cam.preview_name, vio_cams[i].pipe_for_preview);

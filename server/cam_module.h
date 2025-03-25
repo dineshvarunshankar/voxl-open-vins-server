@@ -9,7 +9,7 @@
  *
  *             This sets the camera helper callbacks and opens the client pipes
  */
-int connect_cam_service(std::vector<camera_info> &cam_info_vec);
+int connect_cam_service(std::vector<cam_info> &cam_info_vec);
 
 
 

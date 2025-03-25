@@ -365,7 +365,7 @@ static bool _parse_opts(int argc, char *argv[])
 	std::string tmp_str = "";
 
 	// set default before we do anything else
-//	ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::ALL);
+//  ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::ALL);
 	ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::SILENT);
 
 	while (1)

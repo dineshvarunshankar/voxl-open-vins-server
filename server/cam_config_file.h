@@ -41,7 +41,7 @@
 
 
 
-extern std::vector<camera_info> cam_info_vec;
+extern std::vector<cam_info> cam_info_vec;
 extern char imu_name[64];
 extern Eigen::Matrix3d world_correction_eigen;
 extern Eigen::Matrix<double, 4, 1> world_correction_q;
