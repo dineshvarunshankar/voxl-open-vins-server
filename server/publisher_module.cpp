@@ -443,6 +443,9 @@ void _publish_default(double pose_timestamp)
 		vel_imu_wrt_vio_holder = ned_rot_zero * vel_imu_wrt_vio_holder;
 	}
 
+
+	alt_z = imu_wrt_wio_holder(body_frame_info.gravity_axis);
+
 	// finalize rotation
 	Eigen::MatrixXf::Map(reinterpret_cast<float*>(s.R_imu_to_vio), 3, 3) =
 			ned_rot.cast<float>();
