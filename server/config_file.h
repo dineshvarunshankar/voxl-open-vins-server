@@ -221,6 +221,9 @@ extern double thermal_brightness;
 extern double thermal_brightness_bos;
 extern bool raansac_gn;
 extern bool raansac_tri;
+extern int pyr_levels;
+extern int grid_x;
+extern int grid_y;
 
 // read only our own config file without printing the contents
 int config_file_read(void);

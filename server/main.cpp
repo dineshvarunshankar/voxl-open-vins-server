@@ -365,7 +365,7 @@ static bool _parse_opts(int argc, char *argv[])
 	std::string tmp_str = "";
 
 	// set default before we do anything else
-//  ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::ALL);
+//	ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::ALL);
 	ov_core::Printer::setPrintLevel(ov_core::Printer::PrintLevel::SILENT);
 
 	while (1)
@@ -1804,9 +1804,9 @@ static ov_msckf::VioManagerOptions generate_open_vins_manager_options()
 
 
 	// internal tracker setup
-	vio_manager_options.grid_x = 5;
-	vio_manager_options.grid_y = 5;
-	vio_manager_options.pyramid_levels = 5;
+	vio_manager_options.grid_x = grid_x;
+	vio_manager_options.grid_y = grid_y;
+	vio_manager_options.pyramid_levels = pyr_levels;
 	vio_manager_options.downsample_cameras = false; // TBD
 	vio_manager_options.num_opencv_threads = num_opencv_threads;
 	vio_manager_options.num_pts = num_features_to_track;

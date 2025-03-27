@@ -144,9 +144,9 @@ bool use_baro;
 double takeoff_threshold = -0.5f;
 double max_allowable_cep;
 bool en_force_init = false;
-bool en_vio_always_on = false;
+bool en_vio_always_on = true;
 bool en_force_ned_2_flu = false;
-bool en_imu_frame_output = true;
+bool en_imu_frame_output = false;
 
 int en_ext_feature_tracker = 1;
 int en_gpu_for_tracking = 0;
@@ -157,6 +157,9 @@ double thermal_brightness = 1.0;
 double thermal_brightness_bos = 1.0;
 bool raansac_gn;
 bool raansac_tri;
+int pyr_levels = 6;
+int grid_x = 5;
+int grid_y = 5;
 
 
 
@@ -233,6 +236,9 @@ int config_file_print(void) {
     printf("feat rep slam:                    %s\n", feat_set_as_string(feat_rep_slam).c_str());
     printf("cam imu time offset:              %6.5f\n", cam_imu_time_offset);
     printf("slam delay:                       %6.5f\n", slam_delay);
+    printf("pyr levels:                       %d\n", pyr_levels);
+    printf("grid x:                           %d\n", grid_x);
+    printf("grid y:                           %d\n", grid_y);
     printf("=================================================================\n");
     printf("=====================INERTIAL INITIALIZER========================\n");
     printf("gravity mag:                      %6.5f\n", gravity_mag);
@@ -369,6 +375,10 @@ int config_file_read(void) {
     // image levels so some features are noisier, increase sigma to 4
     // gpu feature tracker is still lki to use ovins defaults
     json_fetch_bool_with_default(parent, "refine_features", (int *)&refine_features, 1);
+    
+    json_fetch_int_with_default(parent, "pyr_levels", &pyr_levels, 6);
+    json_fetch_int_with_default(parent, "grid_x", &grid_x, 5);
+    json_fetch_int_with_default(parent, "grid_y", &grid_y, 5);
 
     json_fetch_double_with_default(parent, "msckf_sigma_px", &msckf_sigma_px, 1.0);
     json_fetch_double_with_default(parent, "slam_sigma_px", &slam_sigma_px, 1.8);
@@ -412,11 +422,11 @@ int config_file_read(void) {
     json_fetch_double_with_default(parent, "max_allowable_cep", &max_allowable_cep, 1.0);
     json_fetch_bool_with_default(parent, "en_force_init", (int *)&en_force_init, 0);
 	json_fetch_bool_with_default(parent, "en_force_ned_2_flu", (int*) &en_force_ned_2_flu,  0);
-	json_fetch_bool_with_default(parent, "en_imu_frame_output", (int*) &en_imu_frame_output,  1);
+	json_fetch_bool_with_default(parent, "en_imu_frame_output", (int*) &en_imu_frame_output,  0);
 
     json_fetch_double_with_default(parent, "track_frequency", &track_frequency, 15.0);
     json_fetch_int_with_default(parent, "publish_frequency", &publish_frequency, 5);
-    json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 0);
+    json_fetch_bool_with_default(parent, "en_vio_always_on", (int *)&en_vio_always_on, 1);
     json_fetch_bool_with_default(parent, "en_ext_feature_tracker", &en_ext_feature_tracker, 0);
     json_fetch_bool_with_default(parent, "en_gpu_for_tracking", &en_gpu_for_tracking, 1);
     json_fetch_int_with_default(parent, "num_features_to_track", &num_features_to_track, 20);
