@@ -1,4 +1,4 @@
-#!/bin/bash
+\#!/bin/bash
 ################################################################################
 # Copyright 2024 ModalAI Inc.
 #
@@ -42,6 +42,7 @@ print_usage () {
 	echo "voxl-configure-open-vins disable"
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
+	echo "voxl-configure-open-vins experimentalz"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -96,12 +97,105 @@ enable_service_and_exit () {
 	exit 0
 }
 
+
 reset_config_file_to_default () {
 	echo "wiping old config file"
 	rm -rf ${CONFIG_FILE}
 	${NAME} -c
 }
 
+enable_experimentalZ () {
+
+	reset_config_file_to_default
+    set_param en_auto_reset true
+    set_param auto_reset_max_velocity 20
+    set_param auto_reset_max_v_cov_instant 0.10000000149011612
+    set_param auto_reset_max_v_cov 0.10000000149011612
+    set_param auto_reset_max_v_cov_timeout_s 30
+    set_param auto_reset_min_features 1
+    set_param auto_reset_min_feature_timeout_s 30
+    set_param auto_fallback_timeout_s 3
+    set_param auto_fallback_min_v 0.600000023841858
+    set_param en_cont_yaw_checks false
+    set_param fast_yaw_thresh 5
+    set_param fast_yaw_timeout_s 1.75
+    set_param do_fej true
+    set_param imu_avg true
+    set_param use_rk4_integration true
+    set_param cam_to_imu_refinement true
+    set_param cam_intrins_refinement true
+    set_param cam_imu_ts_refinement true
+    set_param max_clone_size 11
+    set_param max_slam_features 35
+    set_param max_slam_in_update 15
+    set_param max_msckf_in_update 30
+    set_param feat_rep_msckf 4
+    set_param feat_rep_slam 4
+    set_param cam_imu_time_offset 0
+    set_param slam_delay 1
+    set_param gravity_mag 9.80665
+    set_param init_window_time 1
+    set_param init_imu_thresh 1
+    set_param imu_sigma_w 0.00013990944749616306
+    set_param imu_sigma_wb 4.1189724174615527e-07
+    set_param imu_sigma_a 0.0038947538150776763
+    set_param imu_sigma_ab 5.538346201712153e-05
+    set_param msckf_chi2_multiplier 40
+    set_param slam_chi2_multiplier 40
+    set_param zupt_chi2_multiplier 1
+    set_param refine_features true
+    set_param msckf_sigma_px 1.8
+    set_param slam_sigma_px 1.8
+    set_param zupt_sigma_px 1
+    set_param try_zupt true
+    set_param zupt_max_velocity 0.03
+    set_param zupt_only_at_beginning true
+    set_param zupt_noise_multiplier 1
+    set_param zupt_max_disparity 8
+    set_param init_dyn_use false
+    set_param triangulate_1d false
+    set_param max_runs 5
+    set_param init_lamda 0.001
+    set_param max_lamda 10000000000
+    set_param min_dx 1e-06
+    set_param min_dcost 1e-06
+    set_param lam_mult 10
+    set_param min_dist 0.1
+    set_param max_dist 60
+    set_param max_baseline 40
+    set_param max_cond_number 600000
+    set_param use_mask false
+    set_param use_stereo false
+    set_param use_baro false
+    set_param num_opencv_threads 4
+    set_param fast_threshold 15
+    set_param histogram_method 1
+    set_param knn_ratio 0.7
+    set_param takeoff_accel_threshold 0.5
+    set_param takeoff_threshold -0.1
+    set_param use_stats false
+    set_param max_allowable_cep 1
+    set_param en_force_init false
+    set_param en_force_ned_2_flu false
+    set_param en_imu_frame_output false
+    set_param track_frequency 15
+    set_param publish_frequency 5
+    set_param en_vio_always_on true
+    set_param en_ext_feature_tracker false
+    set_param en_gpu_for_tracking true
+    set_param num_features_to_track 40
+    set_param raansac_gn false
+    set_param raansac_tri true
+    set_param grid_x 5
+    set_param grid_y 5
+    set_param pyr_levels 6
+    set_param en_thermal_enhance false
+    set_param en_overlay_landscape false
+    set_param thermal_brightness 1
+    set_param thermal_brightness_bos 1
+	
+	enable_service_and_exit
+}
 
 
 
@@ -139,11 +233,14 @@ case ${arg} in
 	"enable")
 		enable_service_and_exit
 		;;
-
+	"experimentalz")
+		enable_experimentalZ
+		;;
 	*)
 		echo "invalid option"
 		print_usage
 		exit 1
 esac
+
 
 
