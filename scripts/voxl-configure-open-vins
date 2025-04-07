@@ -107,9 +107,9 @@ reset_config_file_to_default () {
 enable_experimentalZ () {
 
 	reset_config_file_to_default
-    set_param auto_reset_max_v_cov_timeout_s 30
+    set_param auto_reset_max_v_cov_timeout_s 5 #30
     set_param auto_reset_min_features 1
-    set_param auto_reset_min_feature_timeout_s 30
+    set_param auto_reset_min_feature_timeout_s 3 #30
     set_param auto_fallback_timeout_s 3
     set_param max_clone_size 11
     set_param max_slam_features 35
