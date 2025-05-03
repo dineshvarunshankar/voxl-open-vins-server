@@ -318,13 +318,16 @@ void _imu_data_handler_cb(__attribute__((unused)) int ch,
 //							data_array[i].accl_ms2[2] );
 
 					// TODO check am numbers if IMU calibration is WAY OFF
-					if (t_wm.norm() < 0.01 && fabs(t_am.norm()-gravity_mag) < 0.1)
-					{
+					// if (t_wm.norm() < 0.01 && fabs(t_am.norm()-gravity_mag) < 0.1)
+					// {
+					//REMOVE CHECKS FOR NOW
 						// Configure FRD to IMU frame transform
 						set_frd_to_imu(data_array, i);
 
-					}
-					else if (!body_frame_info.is_initialized)
+					// }
+					// else if (!body_frame_info.is_initialized)
+					//FOR NOW JUST CHECK IF IT'S INITIALIZED
+					if (!body_frame_info.is_initialized)
 					{
 						static int nagmeter = 0;
 						if (nagmeter++ % 50 == 0)
