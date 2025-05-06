@@ -17,93 +17,98 @@ std::mutex imu_lock_mutex;
 //
 void set_frd_to_imu(imu_data_t *data_array, int i)
 {
-	// we only need to do this at powerup up
-	//
-	// TODO: look at when power up is moving or some awkward angle type edge cases
 	if (body_frame_info.is_initialized)
 		return;
 
+	bool used_static = false;
+	Eigen::Matrix3d R_imu_to_body;
 
-	// Determine physical IMU axis that gravity vector resides
-	body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[0]);
-	printf("[INFO] FRD to IMU NED configuration done. g direction: %d\n", body_frame_info.gravity_dir);
+	// FETCH IT IF POSSIBLE
+	double R_tmp[3][3];
+	if (vcc_fetch_R_child_to_body("imu_apps", R_tmp) == 0) {
+		for (int r = 0; r < 3; ++r)
+			for (int c = 0; c < 3; ++c)
+				R_imu_to_body(r, c) = R_tmp[c][r];  // TRANSPOSE IMU->body
+		used_static = true;
+	}
 
-	for (int k = 0; k<3; ++k)
-	{
-		if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[body_frame_info.gravity_axis]))
-		{
-			body_frame_info.gravity_axis = k;
-			body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[k]);
+	if (used_static) {
+		//THIS WILL STILL BE IN AGREEMENT WITH THE IMU ENUM
+		Eigen::Vector3d g_body(0, 0, 1);  // FRD: Z-down->gravity_body = +Z
+		Eigen::Vector3d g_imu = R_imu_to_body.transpose() * g_body;
+
+		//FIND THE DOMINANT GRAVITY AXIS
+		int max_axis = 0;
+		double max_val = fabs(g_imu[0]);
+		for (int k = 1; k < 3; ++k) {
+			if (fabs(g_imu[k]) > max_val) {
+				max_axis = k;
+				max_val = fabs(g_imu[k]);
+			}
+		}
+
+		body_frame_info.gravity_axis = max_axis;
+		body_frame_info.gravity_dir = (g_imu[max_axis] >= 0) ? 1 : -1;
+		body_frame_info.body_correction_mat = R_imu_to_body;
+
+		// if (en_debug) {
+			printf("[INFO] [static] gravity axis: %d dir: %d (val: %.3f)\n",
+			       body_frame_info.gravity_axis,
+			       body_frame_info.gravity_dir,
+			       g_imu[body_frame_info.gravity_axis]);
+		// }
+	}
+	else {
+		//FALLBACK: DETECT FROM IMU ACCEL DATA
+		body_frame_info.gravity_axis = 0;
+		body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[0]);
+
+		for (int k = 1; k < 3; ++k) {
+			if (fabs(data_array[i].accl_ms2[k]) > fabs(data_array[i].accl_ms2[body_frame_info.gravity_axis])) {
+				body_frame_info.gravity_axis = k;
+				body_frame_info.gravity_dir = sign(data_array[i].accl_ms2[k]);
+			}
+		}
+
+		// if (en_debug) {
+			printf("[INFO] [dynamic] gravity axis: %d dir: %d (val: %.3f)\n",
+			       body_frame_info.gravity_axis,
+			       body_frame_info.gravity_dir,
+			       data_array[i].accl_ms2[body_frame_info.gravity_axis]);
+		// }
+
+		//LEGACY CORRECTION HANDLING
+		if (en_imu_frame_output) {
+			switch (body_frame_info.gravity_axis) {
+				case X_AXIS:
+					if (data_array[i].accl_ms2[2] < 0) {
+						body_frame_info.body_correction_mat =
+							Eigen::AngleAxisd(body_frame_info.gravity_dir * M_PI / 2, Eigen::Vector3d::UnitY()).toRotationMatrix();
+					}
+					else {
+						body_frame_info.body_correction_mat =
+							Eigen::AngleAxisd(-body_frame_info.gravity_dir * M_PI / 2, Eigen::Vector3d::UnitY()).toRotationMatrix()
+							* Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+					}
+					break;
+
+				case Y_AXIS:
+					body_frame_info.body_correction_mat =
+						Eigen::AngleAxisd(body_frame_info.gravity_dir * M_PI / 2, Eigen::Vector3d::UnitX()).toRotationMatrix();
+					break;
+
+				case Z_AXIS:
+					if (body_frame_info.gravity_dir > 0) {
+						body_frame_info.body_correction_mat =
+							Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+					}
+					break;
+			}
 		}
 	}
 
-
-	if (en_debug)
-	{
-		printf("[INFO] Body Frame Stats: %d %d %f\n",
-									body_frame_info.gravity_axis,
-									body_frame_info.gravity_dir,
-									data_array[i].accl_ms2[body_frame_info.gravity_axis]);
-	}
-
-	switch (body_frame_info.gravity_axis)
-	{
-		case X_AXIS:
-			// OVINS on the X axis has a quirk when transforming what the forward direction is
-			// since it detect g on the x axis of the imu, the body frame has Z imu in the range at +-M_PI
-			// and not 0. With their implementation of fej euler rotations
-			// that results in gimbal lock.
-			// In publishing we convert everything to quats and resolve that problem
-			// Therefore we monitor the sign flip based on it the IMU. Hence at
-			// power up if the IMU Z (g is on the IMU_X) maybe either positive or negative and
-			// as a result FLIPS the forward direction 180 degrees based on what that initial value is.
-			// We need to detect that and act accordingly
-			//
-
-			if (en_imu_frame_output)
-			{
-				// X in body frame is pointed upward from VOXL2 chip
-				if (data_array[i].accl_ms2[2] < 0) // Z axis tilted negative
-				{
-					body_frame_info.body_correction_mat =
-						Eigen::AngleAxisd(body_frame_info.gravity_dir * M_PI/2, Eigen::Vector3d::UnitY()).toRotationMatrix();
-				}
-				else // Z axis tilted positive
-				{
-					body_frame_info.body_correction_mat =
-							Eigen::AngleAxisd(-body_frame_info.gravity_dir * M_PI/2, Eigen::Vector3d::UnitY()).toRotationMatrix() *
-							Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-				}
-			}
-			break;
-
-		case Y_AXIS:
-			if (en_imu_frame_output)
-			{
-				// either cause just rotate 90 in direction of gravity
-				body_frame_info.body_correction_mat =
-						Eigen::AngleAxisd(body_frame_info.gravity_dir*M_PI/2, Eigen::Vector3d::UnitX()).toRotationMatrix();
-			}
-
-			break;
-
-		case Z_AXIS:
-			if (en_imu_frame_output)
-			{
-				// just rotate Z back to FRD when upside down
-				if (body_frame_info.gravity_dir > 0)
-				{
-					body_frame_info.body_correction_mat = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-				}
-			}
-			break;
-	}
-
-	printf("[INFO] gravity direction (%d) : %d\n", body_frame_info.gravity_axis, body_frame_info.gravity_dir);
-	printf("[INFO] *** FRD to IMU transform READY! *** \n");
-
+	printf("[INFO] *** FRD to IMU transform READY! ***\n");
 	body_frame_info.is_initialized = true;
-
 }
 
 void _imu_disconnect_cb(__attribute__((unused)) int ch,
