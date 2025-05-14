@@ -433,8 +433,6 @@ static void _cam_helper_cb(__attribute__((unused)) int ch,
 
 							// if we're disarmed, and running load  throttling, turn off and go fullt throttle
 							idler_limit = -1;
-						} else {
-							printf("alt_z: %f, threshold: %f\n",  (double)alt_z, (double)takeoff_threshold);
 						}
 					}
 					else

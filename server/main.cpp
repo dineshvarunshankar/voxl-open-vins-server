@@ -686,6 +686,10 @@ static int _hard_reset_(bool fast_reset)
 		
 		usleep(50);
 
+		if (vio_manager) {
+			vio_manager->shutdown();  // stop all background work and release shared_ptr refs
+		}
+
 		// swap instances
 		old_vio_manager = std::move(vio_manager);
 		vio_manager.reset(new ov_msckf::VioManager(vio_manager_options));
