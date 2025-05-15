@@ -1,5 +1,6 @@
 0.3.11
     * add 4G memory limit to process for safety
+    * fix GPU memory leak
 0.3.10
     * D0008 imu-body rotation extrinsic fix
 0.3.9
