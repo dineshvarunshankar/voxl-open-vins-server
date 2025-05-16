@@ -34,9 +34,7 @@
 #define CAM_CONFIG_FILE_H
 
 #include <opencv2/opencv.hpp>
-#include <voxl_common_config.h>
 #include "common.h"
-
 
 #define MAX_CAMERAS 4
 
