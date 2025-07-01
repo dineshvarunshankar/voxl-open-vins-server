@@ -3,22 +3,8 @@
 # TODOs:
 **Cam**
 - Add Thermal Camera composition with regular Cameras
-- Handle Stiched Stereo Case
-
-
-**Main/Core**
-- Split main.cpp ideally into 3+ without breaking health thread and reset logic, avoid future race conditions
-
-
-**Imu**
-- Make IMU factory for using multiple IMUS 
-- Handle Multi-IMU sync
-
-# Achieved:
-- Refactor/Modularization of 3 Cam/2Cam/1Cam cases
-- VFT Removal
-- General Polishing (IFDEF removals),  C++ 17 general pratices
-- Improved Reset Logic for robust MultiCam approach with Atomic
+**General**
+- Please Refer to **ROADMAP** file for the quick todos
 
 
 
