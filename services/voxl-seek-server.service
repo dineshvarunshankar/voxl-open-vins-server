@@ -1,0 +1,18 @@
+#
+# Copyright (c) 2022 ModalAI, Inc.
+#
+
+[Unit]
+Description=voxl-seek-server
+SourcePath=/home/root/voxl-seek-docker/
+After=voxl-wait-for-fs.service
+Requires=voxl-wait-for-fs.service
+
+[Service]
+User=root
+Type=simple
+#Restart=on-failure
+ExecStart=/bin/bash -c "/home/root/voxl-seek-docker/start-seek-server.sh" 
+
+[Install]
+WantedBy=multi-user.target

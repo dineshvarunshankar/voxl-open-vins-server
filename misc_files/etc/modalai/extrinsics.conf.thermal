@@ -1,0 +1,91 @@
+/**
+ * The file is constructed as an array of multiple extrinsic entries, each
+ * describing the relation from one parent to one child. Nothing stops you from
+ * having duplicates but this is not advised.
+ *
+ * The rotation is stored in the file as a Tait-Bryan rotation sequence in
+ * intrinsic XYZ order in units of degrees. This corresponds to the parent
+ * rolling about its X axis, followed by pitching about its new Y axis, and
+ * finally yawing around its new Z axis to end up aligned with the child
+ * coordinate frame.
+ *
+ * Note that we elect to use the intrinsic XYZ rotation in units of degrees for
+ * ease of use when doing camera-IMU extrinsic relations in the field. This is
+ * not the same order as the aerospace yaw-pitch-roll (ZYX) sequence as used by
+ * the rc_math library. However, since the camera Z axis points out the lens, it
+ * is helpful for the last step in the rotation sequence to rotate the camera
+ * about its lens after first rotating the IMU's coordinate frame to point in
+ * the right direction by Roll and Pitch.
+ *
+ * The Translation vector should represent the center of the child coordinate
+ * frame with respect to the parent coordinate frame in units of meters.
+ *
+ * The parent and child name strings should not be longer than 63 characters.
+ *
+ * The relation from Body to Ground is a special case where only the Z value is
+ * read by voxl-vision-hub and voxl-qvio-server so that these services know the
+ * height of the drone's center of mass (and tracking camera) above the ground
+ * when the drone is sitting on its landing gear ready for takeoff.
+ *
+ * See https://docs.modalai.com/configure-extrinsics/ for more details.
+ **/
+
+{
+	"name":	"D0014_Starling_2",
+	"extrinsics": [{
+			"parent": "imu_apps",
+			"child":  "tracking_front",
+			"T_child_wrt_parent": [0.037, 0.000, 0.0006],
+			"RPY_parent_to_child":    [0, 90, 90]
+		}, {
+			"parent": "imu_apps",
+			"child":  "uvc",
+			"T_child_wrt_parent": [0.037, 0.000, 0.0006],
+			"RPY_parent_to_child":    [0, -90, -90]
+		}, {
+			"parent": "imu_apps",
+			"child":  "seek",
+			"T_child_wrt_parent": [0, 0, 0],
+			"RPY_parent_to_child":    [0, 0, 0]
+		}, {
+			"parent": "imu_apps",
+			"child":  "tracking_down",
+			"T_child_wrt_parent": [-0.08825, -0.0045, 0.0269],
+			"RPY_parent_to_child":    [0, 0, 180]
+		}, {
+			"parent": "imu_apps",
+			"child":  "tracking_rear",
+			"T_child_wrt_parent": [-0.092, 0.016, 0.0036],
+			"RPY_parent_to_child":    [0, -90, -90]
+		}, {
+			"parent": "imu_apps",
+			"child":  "hires",
+			"T_child_wrt_parent": [0.0388, 0.0, 0.0186],
+			"RPY_parent_to_child":    [0, 90, 90]
+		}, {
+			"parent": "body",
+			"child":  "imu_apps",
+			"T_child_wrt_parent": [0.0295, -0.0065, -0.016],
+			"RPY_parent_to_child":    [0, 0, 180]
+		}, {
+			"parent": "body",
+			"child":  "imu_px4",
+			"T_child_wrt_parent": [0.0043, 0.0073, -0.0163],
+			"RPY_parent_to_child":    [0, 0, 0]
+		}, {
+			"parent":	"imu_apps",
+			"child":	"lepton0_raw",
+			"T_child_wrt_parent":	[-0.0846, 0.0128, 0.0242],
+			"RPY_parent_to_child":	[0, 0, 90]
+		}, {
+			"parent": "body",
+			"child":  "tof",
+			"T_child_wrt_parent": [0.066, 0.009, -0.012],
+			"RPY_parent_to_child":    [0, 90, 180]
+		}, {
+			"parent": "body",
+			"child":  "ground",
+			"T_child_wrt_parent": [0, 0, 0.033],
+			"RPY_parent_to_child":    [0, 0, 0]
+		}]
+}

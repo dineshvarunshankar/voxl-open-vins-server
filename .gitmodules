@@ -1,0 +1,3 @@
+[submodule "external/open_vins"]
+	path = external/open_vins
+	url = https://github.com/modalai/open_vins

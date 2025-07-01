@@ -1,0 +1,207 @@
+# Doxyfile for VOXL OpenVINS Server Documentation
+
+# Project information
+PROJECT_NAME           = "VOXL OpenVINS Server"
+PROJECT_NUMBER         = 1.0
+PROJECT_BRIEF          = "Visual Inertial Odometry Server for VOXL Platform"
+OUTPUT_DIRECTORY       = doc
+CREATE_SUBDIRS         = YES
+ALLOW_UNICODE_NAMES    = NO
+OUTPUT_LANGUAGE        = English
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+ALWAYS_DETAILED_SEC    = YES
+INLINE_INHERITED_MEMB  = NO
+FULL_PATH_NAMES       = YES
+SHORT_NAMES           = NO
+JAVADOC_AUTOBRIEF     = YES
+QT_AUTOBRIEF          = NO
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS          = YES
+SEPARATE_MEMBER_PAGES = NO
+TAB_SIZE              = 8
+OPTIMIZE_OUTPUT_FOR_C = NO
+OPTIMIZE_OUTPUT_JAVA  = NO
+EXTENSION_MAPPING     =
+MARKDOWN_SUPPORT      = YES
+
+# Build options
+BUILTIN_STL_SUPPORT   = YES
+CPP_CLI_SUPPORT       = NO
+SIP_SUPPORT           = NO
+IDL_PROPERTY_SUPPORT  = YES
+DISTRIBUTE_GROUP_DOC  = NO
+GROUP_NESTED_COMPOUNDS = NO
+SUBGROUPING           = YES
+INLINE_GROUPED_CLASSES = NO
+INLINE_SIMPLE_STRUCTS  = NO
+
+# Input options
+INPUT                 = .
+INPUT_ENCODING        = UTF-8
+FILE_PATTERNS         = *.h *.hpp *.cpp *.cc *.c
+RECURSIVE             = YES
+EXCLUDE               = 
+EXCLUDE_SYMLINKS      = NO
+EXCLUDE_PATTERNS      = 
+EXCLUDE_SYMLINKS      = NO
+EXAMPLE_PATTERNS      = *
+EXAMPLE_RECURSIVE     = NO
+IMAGE_PATH            = 
+INPUT_FILTER          = 
+FILTER_PATTERNS       = 
+FILTER_SOURCE_FILES   = NO
+FILTER_SOURCE_PATTERNS = 
+
+# Source browsing
+SOURCE_BROWSER        = YES
+INLINE_SOURCES        = NO
+STRIP_CODE_COMMENTS   = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION   = YES
+REFERENCES_LINK_SOURCE = YES
+SOURCE_TOOLTIPS       = YES
+USE_HTAGS             = NO
+VERBATIM_HEADERS      = YES
+
+# Alphabetical class index
+ALPHABETICAL_INDEX    = YES
+COLS_IN_ALPHA_INDEX   = 5
+IGNORE_PREFIX         = 
+
+# HTML output options
+GENERATE_HTML         = YES
+HTML_OUTPUT           = html
+HTML_FILE_EXTENSION   = .html
+HTML_HEADER           = 
+HTML_FOOTER           = 
+HTML_STYLESHEET       = 
+HTML_EXTRA_STYLESHEET = 
+HTML_EXTRA_FILES      = 
+HTML_COLORSTYLE_HUE   = 220
+HTML_COLORSTYLE_SAT   = 100
+HTML_COLORSTYLE_GAMMA = 80
+HTML_TIMESTAMP        = NO
+HTML_DYNAMIC_MENUS    = YES
+HTML_DYNAMIC_SECTIONS = NO
+GENERATE_DOCSET       = NO
+DOCSET_FEEDNAME       = "Doxygen generated docs"
+DOCSET_BUNDLE_ID      = org.doxygen.Project
+DOCSET_PUBLISHER_ID   = org.doxygen.Publisher
+DOCSET_PUBLISHER_NAME = Publisher
+GENERATE_HTMLHELP     = NO
+CHM_FILE              = 
+HHC_LOCATION          = 
+GENERATE_CHI          = NO
+CHM_INDEX_ENCODING    = 
+BINARY_TOC            = NO
+TOC_EXPAND            = NO
+GENERATE_QHP          = NO
+QCH_FILE              = 
+QHP_NAMESPACE         = org.doxygen.Project
+QHP_VIRTUAL_FOLDER    = doc
+QHP_CUST_FILTER_NAME  = 
+QHP_CUST_FILTER_ATTRS = 
+QHP_SECT_FILTER_ATTRS = 
+QHG_LOCATION          = 
+GENERATE_ECLIPSEHELP  = NO
+ECLIPSE_DOC_ID        = org.doxygen.Project
+GENERATE_LATEX        = NO
+LATEX_OUTPUT          = latex
+LATEX_CMD_NAME        = latex
+MAKEINDEX_CMD_NAME    = makeindex
+COMPACT_LATEX         = NO
+PAPER_TYPE            = a4
+EXTRA_PACKAGES        = 
+LATEX_HEADER          = 
+LATEX_FOOTER          = 
+LATEX_EXTRA_STYLESHEET = 
+LATEX_EXTRA_FILES     = 
+PDF_HYPERLINKS        = YES
+USE_PDFLATEX          = YES
+LATEX_BATCHMODE       = NO
+LATEX_HIDE_INDICES    = NO
+LATEX_BIB_STYLE       = plain
+LATEX_TIMESTAMP       = NO
+
+# RTF output options
+GENERATE_RTF          = NO
+RTF_OUTPUT            = rtf
+COMPACT_RTF           = NO
+RTF_HYPERLINKS        = NO
+RTF_STYLESHEET_FILE   = 
+RTF_EXTENSIONS_FILE   = 
+
+# Man page generation
+GENERATE_MAN          = NO
+MAN_OUTPUT            = man
+MAN_EXTENSION         = .3
+MAN_SUBDIR            = 
+MAN_LINKS             = NO
+
+# XML output options
+GENERATE_XML          = NO
+XML_OUTPUT            = xml
+XML_PROGRAMLISTING    = YES
+
+# DocBook output options
+GENERATE_DOCBOOK      = NO
+DOCBOOK_OUTPUT        = docbook
+
+# AutoGen Definitions output options
+GENERATE_AUTOGEN_DEF  = NO
+
+# Perl module output options
+GENERATE_PERLMOD      = NO
+PERLMOD_LATEX         = NO
+PERLMOD_PRETTY        = YES
+PERLMOD_MAKEVAR_PREFIX = 
+
+# Preprocessor options
+ENABLE_PREPROCESSING  = YES
+MACRO_EXPANSION       = NO
+EXPAND_ONLY_PREDEF   = NO
+SEARCH_INCLUDES       = YES
+INCLUDE_PATH          = 
+INCLUDE_FILE_PATTERNS = 
+PREDEFINED            = 
+EXPAND_AS_DEFINED     = 
+SKIP_FUNCTION_MACROS  = YES
+
+# External references
+TAGFILES              = 
+GENERATE_TAGFILE      = 
+ALLEXTERNALS          = NO
+EXTERNAL_GROUPS       = YES
+EXTERNAL_PAGES        = YES
+PERL_PATH             = /usr/bin/perl
+
+# Dot options
+CLASS_DIAGRAMS        = YES
+HIDE_UNDOC_RELATIONS  = YES
+CLASS_GRAPH           = YES
+COLLABORATION_GRAPH   = YES
+UML_LOOK              = NO
+UML_RELATION_POS      = 
+TEMPLATE_RELATIONS     = YES
+INCLUDE_GRAPH         = YES
+INCLUDED_BY_GRAPH     = YES
+CALL_GRAPH            = YES
+CALLER_GRAPH          = YES
+GRAPHICAL_HIERARCHY   = YES
+DIRECTORY_GRAPH       = YES
+DOT_IMAGE_FORMAT      = png
+INTERACTIVE_SVG       = NO
+DOT_PATH              = 
+DOTFILE_DIRS          = 
+MSCFILE_DIRS          = 
+DIAFILE_DIRS          = 
+PLANTUML_JAR_PATH     = 
+PLANTUML_CFG_FILE     = 
+PLANTUML_INCLUDE_PATH = 
+DOT_GRAPH_MAX_NODES   = 50
+MAX_DOT_GRAPH_DEPTH   = 0
+DOT_TRANSPARENT       = NO
+DOT_MULTI_TARGETS     = NO
+GENERATE_LEGEND       = YES
+DOT_CLEANUP           = YES 
