@@ -22,6 +22,43 @@
 namespace voxl
 {
 
+    static void printExtrinsic(const vcc_extrinsic_t& ext)
+    {
+        /* guard: empty parent means this slot wasn’t filled in */  
+        if (ext.parent[0] == '\0') {
+            std::cout << "Extrinsic has no parent frame assigned.\n";
+            return;
+        }
+
+        std::cout << "==========  Extrinsic calibration  ==========\n";
+        std::cout << " Parent frame : " << ext.parent << '\n';
+        std::cout << " Child  frame : " << ext.child  << '\n';
+
+        // Translation vector (m)
+        std::cout << " Translation T_child←parent [m] : "
+                << std::fixed << std::setprecision(3)
+                << ext.T_child_wrt_parent[0] << ", "
+                << ext.T_child_wrt_parent[1] << ", "
+                << ext.T_child_wrt_parent[2] << '\n';
+
+        // Euler angles (deg)
+        std::cout << " RPY parent→child  [deg]        : "
+                << ext.RPY_parent_to_child[0] << ", "
+                << ext.RPY_parent_to_child[1] << ", "
+                << ext.RPY_parent_to_child[2] << '\n';
+
+        // 3×3 rotation matrix
+        std::cout << " Rotation matrix child←parent   :\n";
+        for (int r = 0; r < 3; ++r) {
+            std::cout << "   [ ";
+            for (int c = 0; c < 3; ++c)
+                std::cout << std::setw(10) << std::setprecision(6)
+                        << ext.R_child_to_parent[r][c] << (c < 2 ? ' ' : '\0');
+            std::cout << " ]\n";
+        }
+        std::cout << "=============================================\n";
+    }
+
     /**
      * @brief Synchronize camera configuration with system services
      *
@@ -209,7 +246,41 @@ namespace voxl
             camchain_config[cam_key]["resolution"] = resolution;
 
             camchain_config[cam_key]["distortion_model"] = vio_cams[i].cal.is_fisheye ? "equidistant" : "radtan";
+            
             // TODO: ADD EXTRINSICS
+            YAML::Node extrinsics = YAML::Node(YAML::NodeType::Sequence);
+            
+            vcc_extrinsic_t ext = vio_cams[i].extrinsic;
+            Eigen::Vector3d t_pc_p(
+                ext.T_child_wrt_parent[0],
+                ext.T_child_wrt_parent[1],
+                ext.T_child_wrt_parent[2]
+            );
+            const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_cp(&ext.R_child_to_parent[0][0]);
+
+            Eigen::Matrix4d T_child_parent = Eigen::Matrix4d::Identity();
+            T_child_parent.block<3,3>(0,0) =  R_cp.transpose();                  // rotation
+            T_child_parent.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;      // translation
+            
+            std::cout << "se3 T_cam_imu =\n" << T_child_parent << '\n';
+
+            for (int row = 0; row < 4; ++row) {
+                YAML::Node row_node = YAML::Node(YAML::NodeType::Sequence);
+                for (int col = 0; col < 4; ++col) {
+                    row_node.push_back(T_child_parent(row, col));
+                }
+                extrinsics.push_back(row_node);
+            }
+            camchain_config[cam_key]["T_cam_imu"] = extrinsics;
+
+            Eigen::Matrix<double, 3, 1> translation;
+            translation[0] = vio_cams[i].extrinsic.T_child_wrt_parent[0];
+            translation[1] = -1 * vio_cams[i].extrinsic.T_child_wrt_parent[1];
+            translation[2] = -1 * vio_cams[i].extrinsic.T_child_wrt_parent[2];
+
+            std::cout << "Translation vector: " << translation.transpose() << std::endl;
+
+
             // ADD THIS CAMERA TO OUR INFO VECTOR
             cam_info_vec.push_back(cam);
         }
