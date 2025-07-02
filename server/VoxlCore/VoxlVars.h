@@ -404,6 +404,13 @@ extern float fast_yaw_thresh;
 extern float fast_yaw_timeout_s;
 
 /**
+ * @brief Base folder for yaml configuration files
+ *
+ * Base folder for storing YAML configuration files
+ * for the VINS.
+ */
+extern char folder_base[CHAR_BUF_SIZE];
+/**
  * @brief Enable debug output
  *
  * Flag to enable detailed debug output and logging
