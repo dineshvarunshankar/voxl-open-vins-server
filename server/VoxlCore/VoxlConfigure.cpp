@@ -128,7 +128,7 @@ namespace voxl
         }
         // NOW SYNC ESTIMATOR YAML WITH CONF FILE
         // OPEN ESTIMATOR YAML FILE
-        std::string yaml_estimator_path = "/etc/modalai/VoxlConfig/starling2/estimator_config.yaml";
+        std::string yaml_estimator_path = std::string(folder_base) + "/estimator_config.yaml";
         YAML::Node config;
         try
         {
@@ -166,7 +166,7 @@ namespace voxl
         // NOW SYNC INTRINSICS AND DISTORTION MODEL
 
         // LOAD CAMCHAIN YAML FILE
-        std::string yaml_camchain_path = "/etc/modalai/VoxlConfig/starling2/kalibr_imucam_chain.yaml";
+        std::string yaml_camchain_path = std::string(folder_base) + "/kalibr_imucam_chain.yaml";
         YAML::Node camchain_config;
         try
         {
@@ -353,7 +353,6 @@ namespace voxl
 
         char string_holder[CHAR_BUF_SIZE];
         memset(string_holder, '\0', CHAR_BUF_SIZE);
-        // auto reset features
         json_fetch_bool_with_default(parent, "en_auto_reset", &en_auto_reset, 1);
         json_fetch_float_with_default(parent, "auto_reset_max_velocity", &auto_reset_max_velocity, 20.0f);
         json_fetch_float_with_default(parent, "auto_reset_max_v_cov_instant", &auto_reset_max_v_cov_instant, 0.1f);
@@ -366,7 +365,7 @@ namespace voxl
         json_fetch_bool_with_default(parent, "en_cont_yaw_checks", (int *)&en_cont_yaw_checks, 0);
         json_fetch_float_with_default(parent, "fast_yaw_thresh", &fast_yaw_thresh, 5.0f);
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
-        // TODO YAML PARENT FOLDER
+        json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/etc/modalai/VoxlConfig/starling2");
         if (json_get_parse_error_flag())
         {
             fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
