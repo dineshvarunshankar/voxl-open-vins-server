@@ -4,11 +4,11 @@
  * @author Zauberflote
  * @date 2025
  * @version 1.0
- * 
+ *
  * This header defines the configuration management system for the VOXL OpenVINS
  * server. It provides functions for reading server configuration files and
  * synchronizing camera configurations with the system.
- * 
+ *
  * The configuration system handles:
  * - Server configuration file parsing and validation
  * - Camera configuration synchronization with system services
@@ -41,7 +41,7 @@
 
 /**
  * @brief Default configuration file path
- * 
+ *
  * Path to the main configuration file for the VOXL OpenVINS server.
  * This file contains all server-specific configuration parameters.
  */
@@ -49,7 +49,7 @@
 
 /**
  * @brief Configuration file header comment
- * 
+ *
  * Standard header comment that is written to configuration files
  * to provide context and usage information.
  */
@@ -70,53 +70,54 @@
 /**
  * @namespace voxl
  * @brief Main namespace for VOXL OpenVINS server components
- * 
+ *
  * This namespace contains all the core functionality for the VOXL OpenVINS
  * server, including configuration management, camera handling, and IMU
  * processing.
  */
-namespace voxl {
+namespace voxl
+{
 
-// ============================================================================
-// CONFIGURATION FUNCTIONS
-// ============================================================================
+    // ============================================================================
+    // CONFIGURATION FUNCTIONS
+    // ============================================================================
 
-/**
- * @brief Synchronize camera configuration with system services
- * 
- * This function reads camera configuration from system services and
- * synchronizes the lens intrinsics and distortion model parameters
- * with the VIO system. It ensures that the camera calibration data
- * used by the VIO system matches the current system configuration.
- * 
- * The function performs the following operations:
- * - Reads camera configuration from system services
- * - Updates lens intrinsics parameters
- * - Updates distortion model parameters
- * - Validates configuration consistency
- * 
- * TODO: Add support for extrinsic calibration parameters
- * 
- * @return 0 on success, non-zero on failure
- * @see read_server_config()
- */
-int sync_cam_config(void);
+    /**
+     * @brief Synchronize camera configuration with system services
+     *
+     * This function reads camera configuration from system services and
+     * synchronizes the lens intrinsics and distortion model parameters
+     * with the VIO system. It ensures that the camera calibration data
+     * used by the VIO system matches the current system configuration.
+     *
+     * The function performs the following operations:
+     * - Reads camera configuration from system services
+     * - Updates lens intrinsics parameters
+     * - Updates distortion model parameters
+     * - Validates configuration consistency
+     *
+     * TODO: Add support for extrinsic calibration parameters
+     *
+     * @return 0 on success, non-zero on failure
+     * @see read_server_config()
+     */
+    int sync_cam_config(void);
 
-/**
- * @brief Read and parse server configuration file
- * 
- * This function reads the main server configuration file and parses
- * all the parameters needed for VIO operation. It handles JSON format
- * configuration files and validates the parameters.
- * 
- * The function reads configuration for:
- * - VIO algorithm parameters
+    /**
+     * @brief Read and parse server configuration file
+     *
+     * This function reads the main server configuration file and parses
+     * all the parameters needed for VIO operation. It handles JSON format
+     * configuration files and validates the parameters.
+     *
+     * The function reads configuration for:
+     * - VIO algorithm parameters
 
- * 
- * @return 0 on success, non-zero on failure
- * @see sync_cam_config()
- */
-int read_server_config(void);
+     *
+     * @return 0 on success, non-zero on failure
+     * @see sync_cam_config()
+     */
+    int read_server_config(void);
 
 } // namespace voxl
 

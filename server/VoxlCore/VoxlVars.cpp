@@ -4,7 +4,7 @@
  * @author Zauberflote
  * @date 2025
  * @version 1.0
- * 
+ *
  * This file contains the definitions of all global variables declared in VoxlVars.h.
  * It provides the actual storage for system state, configuration parameters,
  * and operational variables used throughout the VIO system.
@@ -141,6 +141,4 @@ int camera_pipe_channels[MAX_CAM_CNT] = {0};
 // ============================================================================
 
 /** @brief Image ring buffer for processing */
-voxl::img_ringbuf_packet* img_ringbuf = nullptr;
-
-
+voxl::img_ringbuf_packet *img_ringbuf = nullptr;

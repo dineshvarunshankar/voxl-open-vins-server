@@ -50,10 +50,10 @@ void Publisher::start()
 {
     // Initialize publisher if needed
     first_packet = true;
-    
+
     // Set VIO state to initializing
     vio_state = VIO_STATE_INITIALIZING;
-    
+
     // Start the health check system
     HealthCheck::getInstance().start();
 }
@@ -68,7 +68,7 @@ void Publisher::stop()
 {
     // Stop the health check system
     HealthCheck::getInstance().stop();
-    
+
     // Clean up resources if needed
 }
 
@@ -131,9 +131,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
         R_I_G = R_I_G * ned_rot_zero.transpose();
         v_I_G = ned_rot_zero * v_I_G;
         p_I_G = ned_rot_zero * p_I_G;
-        
+
         // Set VIO state to OK when system is initialized
-        if (vio_state.load() == VIO_STATE_INITIALIZING) {
+        if (vio_state.load() == VIO_STATE_INITIALIZING)
+        {
             vio_state = VIO_STATE_OK;
         }
     }
@@ -156,7 +157,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
     // NOW LET'S HANDLE THE ANGULAR VELOCITY
     if (first_packet)
     {
-        
+
         for (int i = 0; i < 3; i++)
         {
             vio_packet.imu_angular_vel[i] = 0.0f;
@@ -221,22 +222,28 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
     //  }
     // ERROR CODE - Update atomic variable and copy to packet
     // Check for covariance issues (negative diagonal elements)
-    if (covariance_posori(3, 3) < 0.0 || covariance_posori(4, 4) < 0.0 || covariance_posori(5, 5) < 0.0) {
+    if (covariance_posori(3, 3) < 0.0 || covariance_posori(4, 4) < 0.0 || covariance_posori(5, 5) < 0.0)
+    {
         fprintf(stderr, "ERROR: covariance diagonal went negative\n");
         vio_error_codes |= ERROR_CODE_COVARIANCE;
     }
-    
+
     // Check for timestamp issues (packets from the past)
     static int64_t last_sent_timestamp_ns = 0;
-    if (vio_packet.timestamp_ns < last_sent_timestamp_ns) {
-        if(first_packet){
+    if (vio_packet.timestamp_ns < last_sent_timestamp_ns)
+    {
+        if (first_packet)
+        {
             // During first packet, just update the timestamp without error
             first_packet = false;
-        } else {
+        }
+        else
+        {
             // Only flag error if timestamp is significantly in the past (more than 1ms)
             int64_t time_diff = last_sent_timestamp_ns - vio_packet.timestamp_ns;
-            if (time_diff > 1000000) { // 1ms in nanoseconds
-                fprintf(stderr, "WARNING: skipping pose data from the past %ld %ld (diff: %ld ns)\n", 
+            if (time_diff > 1000000)
+            { // 1ms in nanoseconds
+                fprintf(stderr, "WARNING: skipping pose data from the past %ld %ld (diff: %ld ns)\n",
                         vio_packet.timestamp_ns, last_sent_timestamp_ns, time_diff);
                 printf("[DEBUG-HK] Setting ERROR_CODE_BAD_TIMESTAMP in VIO packet\n");
                 vio_error_codes |= ERROR_CODE_BAD_TIMESTAMP;
@@ -244,91 +251,106 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
         }
     }
     last_sent_timestamp_ns = vio_packet.timestamp_ns;
-    
+
     // Check for velocity uncertainty issues
     double V_uncertainty = 0.0;
     V_uncertainty += covariance_posori(6, 6) * covariance_posori(6, 6);
     V_uncertainty += covariance_posori(7, 7) * covariance_posori(7, 7);
     V_uncertainty += covariance_posori(8, 8) * covariance_posori(8, 8);
     V_uncertainty = sqrt(V_uncertainty);
-    
-    if (is_armed && V_uncertainty > auto_reset_max_v_cov_instant) {
-        fprintf(stderr, "ERROR: exceeded velocity uncertainty threshold %f vs %f\n", 
+
+    if (is_armed && V_uncertainty > auto_reset_max_v_cov_instant)
+    {
+        fprintf(stderr, "ERROR: exceeded velocity uncertainty threshold %f vs %f\n",
                 V_uncertainty, auto_reset_max_v_cov_instant);
         vio_error_codes |= ERROR_CODE_VEL_INST_CERT;
     }
-    
+
     // Check for excessive velocity
     double current_velocity = state->_imu->vel().norm();
-    if (current_velocity > auto_reset_max_velocity) {
-        fprintf(stderr, "ERROR: exceeded maximum velocity %f vs %f\n", 
+    if (current_velocity > auto_reset_max_velocity)
+    {
+        fprintf(stderr, "ERROR: exceeded maximum velocity %f vs %f\n",
                 current_velocity, auto_reset_max_velocity);
         vio_error_codes |= ERROR_CODE_VEL_WINDOW_CERT;
     }
-    
+
     // Check for insufficient features
-    if (vio_packet.n_feature_points < auto_reset_min_features) {
+    if (vio_packet.n_feature_points < auto_reset_min_features)
+    {
         static int64_t last_good_feat_ts = 0;
         static bool wait_for_features = true;
-        
-        if (wait_for_features) {
-            if (vio_packet.n_feature_points > 3) {
+
+        if (wait_for_features)
+        {
+            if (vio_packet.n_feature_points > 3)
+            {
                 last_good_feat_ts = vio_packet.timestamp_ns;
                 wait_for_features = false;
             }
-        } else {
-            if (vio_packet.n_feature_points > auto_reset_min_features) {
+        }
+        else
+        {
+            if (vio_packet.n_feature_points > auto_reset_min_features)
+            {
                 last_good_feat_ts = vio_packet.timestamp_ns;
             }
-            
+
             double ts = (vio_packet.timestamp_ns - last_good_feat_ts) * 1e-9;
-            if (ts > auto_reset_min_feature_timeout_s) {
-                fprintf(stderr, "ERROR: insufficient features for too long! cur: %d, min_req: %d\n", 
+            if (ts > auto_reset_min_feature_timeout_s)
+            {
+                fprintf(stderr, "ERROR: insufficient features for too long! cur: %d, min_req: %d\n",
                         vio_packet.n_feature_points, auto_reset_min_features);
                 vio_error_codes |= ERROR_CODE_NO_FEATURES;
                 wait_for_features = true;
             }
         }
     }
-    
+
     // Check for quality issues
     static int64_t last_good_qual_ts = 0;
     double ts_threshold = auto_reset_max_v_cov_timeout_s;
-    
-    if (vio_packet.quality >= 1) {
+
+    if (vio_packet.quality >= 1)
+    {
         last_good_qual_ts = vio_packet.timestamp_ns;
     }
-    
+
     double ts = (vio_packet.timestamp_ns - last_good_qual_ts) * 1e-9;
-    if (ts > ts_threshold) {
+    if (ts > ts_threshold)
+    {
         fprintf(stderr, "ERROR: quality was bad for too long!\n");
         vio_error_codes |= ERROR_CODE_NOT_STATIONARY;
     }
-    
+
     // Check for fast yaw changes (spinning in place)
     static int64_t start_spin_time = 0;
     static bool spinning_detected = false;
-    
+
     double yawrate = vio_packet.imu_angular_vel[2];
-    bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && 
-                             fabs(vio_packet.vel_imu_wrt_vio[0]) <= 1.0 && 
-                             fabs(vio_packet.vel_imu_wrt_vio[1]) <= 1.0);
-    
-    if (!spinning_in_place) {
+    bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh &&
+                              fabs(vio_packet.vel_imu_wrt_vio[0]) <= 1.0 &&
+                              fabs(vio_packet.vel_imu_wrt_vio[1]) <= 1.0);
+
+    if (!spinning_in_place)
+    {
         start_spin_time = vio_packet.timestamp_ns;
         spinning_detected = false;
-    } else if (!spinning_detected) {
+    }
+    else if (!spinning_detected)
+    {
         double spin_duration = (vio_packet.timestamp_ns - start_spin_time) * 1e-9;
-        if (spin_duration > fast_yaw_timeout_s) {
+        if (spin_duration > fast_yaw_timeout_s)
+        {
             fprintf(stderr, "ERROR: exceeded spin rate over time threshold %f!\n", fast_yaw_timeout_s);
             vio_error_codes |= ERROR_CODE_IMU_OOB;
             spinning_detected = true;
         }
     }
-    
+
     // Copy error codes from atomic variable to packet
     vio_packet.error_code = vio_error_codes.load();
-    
+
     // QUALITY CALCULATION
     // Calculate uncertainty metrics
     double T_uncertainty = 0.0;
@@ -336,38 +358,43 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
     T_uncertainty += covariance_posori(1, 1) * covariance_posori(1, 1);
     T_uncertainty += covariance_posori(2, 2) * covariance_posori(2, 2);
     T_uncertainty = sqrt(T_uncertainty);
-    
+
     double R_uncertainty = 0.0;
     R_uncertainty += covariance_posori(3, 3) * covariance_posori(3, 3);
     R_uncertainty += covariance_posori(4, 4) * covariance_posori(4, 4);
     R_uncertainty += covariance_posori(5, 5) * covariance_posori(5, 5);
     R_uncertainty = sqrt(R_uncertainty);
-    
+
     // Map velocity uncertainty to quality (0-100 scale)
     double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
     v_cov_quality = std::max(0.0, std::min(100.0, v_cov_quality));
-    
+
     // Calculate position-based quality
     double max_allowable_cep = 0.1; // 10cm CEP threshold
     double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
     pos_quality = std::max(0.0, std::min(100.0, pos_quality));
-    
+
     // Use the lower of the two qualities
     vio_packet.quality = static_cast<int32_t>(std::min(v_cov_quality, pos_quality));
-    
+
     // Ensure quality is within bounds
-    if (vio_packet.quality > 100) vio_packet.quality = 100;
-    if (vio_packet.quality < 0) vio_packet.quality = 0;
-    
+    if (vio_packet.quality > 100)
+        vio_packet.quality = 100;
+    if (vio_packet.quality < 0)
+        vio_packet.quality = 0;
+
     // Check for auto-reset conditions
-    if (should_auto_reset(state, vio_packet.quality, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1])) {
+    if (should_auto_reset(state, vio_packet.quality, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
+    {
         fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
                 vio_packet.quality, vio_packet.n_feature_points, V_uncertainty);
         vio_packet.quality = -1;
         vio_packet.state = VIO_STATE_FAILED;
         vio_state = VIO_STATE_FAILED;
         // Note: Actual reset logic would be handled by the main VIO manager
-    } else {
+    }
+    else
+    {
         vio_packet.state = VIO_STATE_OK;
         vio_state = VIO_STATE_OK;
     }
@@ -423,12 +450,12 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
                     Eigen::Vector3d p_FinG;
                     if (SLAM_FEATS[id]->_feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
                     {
-                        p_FinG = SLAM_FEATS[id]->get_xyz(true); //GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
+                        p_FinG = SLAM_FEATS[id]->get_xyz(true); // GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
                         p_FinG = ov2frd * p_FinG;
                     }
                     else if (SLAM_FEATS[id]->_feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
                     {
-                        //FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
+                        // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
                         Eigen::Vector3d p_FinA = SLAM_FEATS[id]->get_xyz(false);
                         Eigen::Vector3d T_I_C(0, 0, 0); // translation from imu to camera position
                         p_FinG = R_I_G * (R_I_C * p_FinA + T_I_C) + p_I_G;
@@ -463,84 +490,97 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state, std::shared_ptr<
  * @return true if auto-reset should be triggered, false otherwise
  */
 bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
-                                 int quality,
-                                 int n_features,
-                                 double V_uncertainty,
-                                 double yawrate,
-                                 double current_velocity,
-                                 double vel_x,
-                                 double vel_y)
+                                  int quality,
+                                  int n_features,
+                                  double V_uncertainty,
+                                  double yawrate,
+                                  double current_velocity,
+                                  double vel_x,
+                                  double vel_y)
 {
     // Only check for auto-reset if enabled and system is stable
-    if (!en_auto_reset) {
+    if (!en_auto_reset)
+    {
         return false;
     }
-    
+
     // Check if VIO manager is in a bad state
-    bool vio_manager_bad = false; //FUTURE IMPLEMENTATION WITH SfM, for now just auto false
-    
+    bool vio_manager_bad = false; // FUTURE IMPLEMENTATION WITH SfM, for now just auto false
+
     // Check quality conditions
     bool quality_bad = quality < 1;
     bool stable_quality_bad = false;
-    
+
     // Check for stable quality issues (quality bad for extended period)
     static int64_t last_good_qual_ts = 0;
-    if (quality >= 1) {
+    if (quality >= 1)
+    {
         last_good_qual_ts = state->_timestamp * 1e9;
     }
     double ts = (state->_timestamp * 1e9 - last_good_qual_ts) * 1e-9;
-    if (ts > auto_reset_max_v_cov_timeout_s) {
+    if (ts > auto_reset_max_v_cov_timeout_s)
+    {
         stable_quality_bad = true;
     }
-    
+
     // Check feature conditions
     bool stable_features_bad = false;
     static int64_t last_good_feat_ts = 0;
     static bool wait_for_features = true;
-    
-    if (wait_for_features) {
-        if (n_features > 3) {
+
+    if (wait_for_features)
+    {
+        if (n_features > 3)
+        {
             last_good_feat_ts = state->_timestamp * 1e9;
             wait_for_features = false;
         }
-    } else {
-        if (n_features > auto_reset_min_features) {
+    }
+    else
+    {
+        if (n_features > auto_reset_min_features)
+        {
             last_good_feat_ts = state->_timestamp * 1e9;
         }
-        
+
         double ts = (state->_timestamp * 1e9 - last_good_feat_ts) * 1e-9;
-        if (ts > auto_reset_min_feature_timeout_s) {
+        if (ts > auto_reset_min_feature_timeout_s)
+        {
             stable_features_bad = true;
             wait_for_features = true;
         }
     }
-    
+
     // Check velocity conditions using passed values
     bool too_fast = current_velocity > auto_reset_max_velocity;
     bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
-    
+
     // Check for excessive spinning using passed yawrate
     bool too_much_spinning = false;
     static int64_t start_spin_time = 0;
     static bool spinning_detected = false;
-    
+
     // Use the passed yawrate value and actual velocity components
-    bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh && 
-                             fabs(vel_x) <= 1.0 && 
-                             fabs(vel_y) <= 1.0);
-    
-    if (!spinning_in_place) {
+    bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh &&
+                              fabs(vel_x) <= 1.0 &&
+                              fabs(vel_y) <= 1.0);
+
+    if (!spinning_in_place)
+    {
         start_spin_time = state->_timestamp * 1e9;
         spinning_detected = false;
-    } else if (!spinning_detected) {
+    }
+    else if (!spinning_detected)
+    {
         double spin_duration = (state->_timestamp * 1e9 - start_spin_time) * 1e-9;
-        if (spin_duration > fast_yaw_timeout_s) {
+        if (spin_duration > fast_yaw_timeout_s)
+        {
             too_much_spinning = true;
             spinning_detected = true;
         }
     }
-    
+
     // Return true if any condition is met
-    return vio_manager_bad || quality_bad || stable_quality_bad || 
+    return vio_manager_bad || quality_bad || stable_quality_bad ||
            stable_features_bad || too_fast || too_uncertain || too_much_spinning;
 }

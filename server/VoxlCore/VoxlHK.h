@@ -192,13 +192,13 @@ namespace voxl
          * @return true if auto-reset should be triggered, false otherwise
          */
         bool should_auto_reset(std::shared_ptr<ov_msckf::State> state,
-                              int quality,
-                              int n_features,
-                              double V_uncertainty,
-                              double yawrate,
-                              double current_velocity,
-                              double vel_x,
-                              double vel_y);
+                               int quality,
+                               int n_features,
+                               double V_uncertainty,
+                               double yawrate,
+                               double current_velocity,
+                               double vel_x,
+                               double vel_y);
 
     private:
         /**
@@ -244,20 +244,22 @@ namespace voxl
      * and performance monitoring. It runs at 30Hz and continuously monitors
      * the system health.
      */
-    class HealthCheck {
+    class HealthCheck
+    {
     public:
         /**
          * @brief Get singleton instance
          * @return Reference to the singleton HealthCheck instance
          */
-        static HealthCheck& getInstance() {
+        static HealthCheck &getInstance()
+        {
             static HealthCheck instance;
             return instance;
         }
 
         // Delete copy constructor and assignment operator for singleton
-        HealthCheck(const HealthCheck&) = delete;
-        HealthCheck& operator=(const HealthCheck&) = delete;
+        HealthCheck(const HealthCheck &) = delete;
+        HealthCheck &operator=(const HealthCheck &) = delete;
 
         /**
          * @brief Start the health check system
@@ -282,11 +284,11 @@ namespace voxl
 
         /**
          * @brief Clear specific error codes
-         * 
+         *
          * Clears the specified error codes from the global error state.
          * This is useful when errors are resolved and should no longer
          * be reported.
-         * 
+         *
          * @param error_mask Bit mask of error codes to clear
          */
         static void clearErrorCodes(uint32_t error_mask);
