@@ -38,9 +38,17 @@
 #include <string.h>
 #include <stdlib.h> // for atoi()
 #include <math.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <cJSON.h>
+#include <cstring>
+#include <iostream>
 
 #include <modal_pipe_client.h>
 #include <modal_start_stop.h>
+
+#include "voxl_common_config.h"
 
 #define CLIENT_NAME		"voxl-inspect-vins"
 
@@ -53,6 +61,12 @@ static int en_error_code = 1;
 static int en_n_feature_points = 1;
 static int en_gravity_vector = 0;
 static int en_extrinsics = 0;
+static int en_wrt_body_frame = 0;
+static float R_imu_to_body[3][3] = {
+	{1.0f, 0.0f, 0.0f},
+	{0.0f, 1.0f, 0.0f},
+	{0.0f, 0.0f, 1.0f}
+};
 static int en_newline = 0;
 static int en_quality = 1;
 static int en_state = 1;
@@ -84,6 +98,7 @@ by voxl-vision-hub and being sent to the autopilot and represents the\n\
 COM of the drone in local FRD frame.\n\
 \n\
 Position and rotation will always print. Additional options are:\n\
+-b, --body_frame			print values wrt body frame\n\
 -a, --imu_angular_vel       print imu_angular_vel\n\
 -g, --gravity_vector        print gravity_vector\n\
 -h, --help                  print this help message\n\
@@ -96,6 +111,64 @@ Position and rotation will always print. Additional options are:\n\
 	return;
 }
 
+
+enum class Axis { Roll, Pitch, Yaw };
+
+static void generate_rotation_matrix(float angle_rad, Axis axis, float R[3][3])
+{
+    float c = std::cos(angle_rad);
+    float s = std::sin(angle_rad);
+
+    // Initialize to identity
+    std::memset(R, 0, sizeof(float) * 9);
+    R[0][0] = R[1][1] = R[2][2] = 1.0f;
+
+    switch (axis) {
+        case Axis::Roll: // Rotation around X
+            R[1][1] =  c; R[1][2] = -s;
+            R[2][1] =  s; R[2][2] =  c;
+            break;
+        case Axis::Pitch: // Rotation around Y
+            R[0][0] =  c; R[0][2] =  s;
+            R[2][0] = -s; R[2][2] =  c;
+            break;
+        case Axis::Yaw: // Rotation around Z
+            R[0][0] =  c; R[0][1] = -s;
+            R[1][0] =  s; R[1][1] =  c;
+            break;
+    }
+}
+
+static void mat3x3_multiply(const float A[3][3], const float B[3][3], float C[3][3])
+{
+    for (int i = 0; i < 3; ++i) {         // rows of A
+        for (int j = 0; j < 3; ++j) {     // columns of B
+            C[i][j] = 0.0f;
+            for (int k = 0; k < 3; ++k) { // shared dimension
+                C[i][j] += A[i][k] * B[k][j];
+            }
+        }
+    }
+}
+
+static void mat3x3_vec3_multiply(const float A[3][3], const float x[3], float y[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        y[i] = 0.0f;
+        for (int j = 0; j < 3; ++j) {
+            y[i] += A[i][j] * x[j];
+        }
+    }
+}
+
+static void apply_body_rotation(const float vin[3], float vout[3])
+{
+	if(en_wrt_body_frame) {
+		mat3x3_vec3_multiply(R_imu_to_body, vin, vout);
+	} else {
+		memcpy(vout, vin, sizeof(float) * 3);
+	}
+}
 
 /*
  * Convert from Rotation matrix representing transformation from
@@ -190,13 +263,24 @@ static void _print_data(vio_data_t d)
 	if(en_dt) printf("%7.1f |", dt_ms);
 
 	// always print translation and rotation
-	printf("%8.2f%8.2f%8.2f|", (double)d.T_imu_wrt_vio[0], (double)d.T_imu_wrt_vio[1], (double)d.T_imu_wrt_vio[2]);
-	float roll, pitch, yaw;
-	_rotation_to_tait_bryan(d.R_imu_to_vio, &roll, &pitch, &yaw);
-	printf("%6.1f %6.1f %6.1f|", (double)roll*RAD_TO_DEG, (double)pitch*RAD_TO_DEG, (double)yaw*RAD_TO_DEG);
+	float T_out[3];
+	apply_body_rotation(d.T_imu_wrt_vio, T_out);
+	printf("%8.2f%8.2f%8.2f|", (double)T_out[0], (double)T_out[1], (double)T_out[2]);
 
+	float roll, pitch, yaw;
+	if (en_wrt_body_frame) {
+		float R_imu_to_vio[3][3];
+		mat3x3_multiply(d.R_imu_to_vio, R_imu_to_body, R_imu_to_vio);
+		_rotation_to_tait_bryan(R_imu_to_vio, &roll, &pitch, &yaw);
+	} else {
+		_rotation_to_tait_bryan(d.R_imu_to_vio, &roll, &pitch, &yaw);
+	}
+	printf("%6.1f %6.1f %6.1f|", (double)roll*RAD_TO_DEG, (double)pitch*RAD_TO_DEG, (double)yaw*RAD_TO_DEG);
+	
 	if(en_vel_imu_wrt_vio){
-		printf("%6.2f %6.2f %6.2f|", (double)d.vel_imu_wrt_vio[0], (double)d.vel_imu_wrt_vio[1], (double)d.vel_imu_wrt_vio[2]);
+		float vel_out[3];
+		apply_body_rotation(d.vel_imu_wrt_vio, vel_out);
+		printf("%6.2f %6.2f %6.2f|", (double)vel_out[0], (double)vel_out[1], (double)vel_out[2]);
 	}
 
 	if(en_imu_angular_vel){
@@ -255,6 +339,7 @@ static int _parse_opts(int argc, char* argv[])
 		{"imu_angular_vel",		no_argument,		0, 'a'},
 		{"gravity_vector",		no_argument,		0, 'g'},
 		{"help",				no_argument,		0, 'h'},
+		{"body_frame",          no_argument,        0, 'b'},
 		{"extrinsics",			no_argument,		0, 'm'},
 		{"newline",				no_argument,		0, 'n'},
 		{"timestamp_ns",		no_argument,		0, 't'},
@@ -263,17 +348,66 @@ static int _parse_opts(int argc, char* argv[])
 		{0, 0, 0, 0}
 	};
 
-	while(1){
+	int body_frame_set = 0;
+
+	while(1)
+	{
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "aghmntvz", long_options, &option_index);
+		int c = getopt_long(argc, argv, "aghbmntvz", long_options, &option_index);
 
 		if(c == -1) break; // Detect the end of the options.
+
+		int body_frame_set = 0;
 
 		switch(c){
 		case 0:
 			// for long args without short equivalent that just set a flag
 			// nothing left to do so just break.
 			if (long_options[option_index].flag != 0) break;
+			break;
+
+		case 'b':
+			vcc_extrinsic_t all_extrinsics[VCC_MAX_EXTRINSICS_IN_CONFIG];
+			int n_extrinsics_read;
+			if(vcc_read_extrinsic_conf_file(VCC_EXTRINSICS_PATH, all_extrinsics, &n_extrinsics_read, VCC_MAX_EXTRINSICS_IN_CONFIG)){
+				fprintf(stderr, "ERROR in %s failed to read extrinsics file\n", __FUNCTION__);
+				return -1;
+			}
+			
+			double RPY_parent_to_child[3];
+			for(int i = 0; i < n_extrinsics_read; i++) {
+				if(strcmp(all_extrinsics[i].parent, "body") == 0 && strcmp(all_extrinsics[i].child, "imu_apps") == 0) {
+					body_frame_set = 1;
+					RPY_parent_to_child[0] = all_extrinsics[i].RPY_parent_to_child[0] * DEG_TO_RAD;
+					RPY_parent_to_child[1] = all_extrinsics[i].RPY_parent_to_child[1] * DEG_TO_RAD;
+					RPY_parent_to_child[2] = all_extrinsics[i].RPY_parent_to_child[2] * DEG_TO_RAD;
+					break;
+				}
+			}
+
+			if (body_frame_set == 0) {
+				fprintf(stderr, "ERROR in %s: body frame extrinsics not found in %s\n", __FUNCTION__, VCC_EXTRINSICS_PATH);
+				return -1;
+			}
+				
+			float Rx[3][3], Ry[3][3], Rz[3][3], tmp[3][3];
+			generate_rotation_matrix(RPY_parent_to_child[0], Axis::Roll,  Rx);
+			generate_rotation_matrix(RPY_parent_to_child[1], Axis::Pitch, Ry);
+			generate_rotation_matrix(RPY_parent_to_child[2], Axis::Yaw,   Rz);
+			
+			mat3x3_multiply(Rx, Ry, tmp);
+			mat3x3_multiply(tmp, Rz, R_imu_to_body);
+			
+			float R_transposed[3][3];
+			for (int i = 0; i < 3; ++i) {
+				for (int j = 0; j < 3; ++j) {
+					R_transposed[i][j] = R_imu_to_body[j][i];
+				}
+			}
+			
+			memcpy(R_imu_to_body, R_transposed, sizeof(R_imu_to_body));
+			en_wrt_body_frame = 1;
+				
 			break;
 
 		case 'a':

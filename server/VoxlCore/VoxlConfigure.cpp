@@ -247,7 +247,7 @@ namespace voxl
 
             camchain_config[cam_key]["distortion_model"] = vio_cams[i].cal.is_fisheye ? "equidistant" : "radtan";
             
-            // TODO: ADD EXTRINSICS
+            // Set extrinsics as a 4x4 matrix
             YAML::Node extrinsics = YAML::Node(YAML::NodeType::Sequence);
             
             vcc_extrinsic_t ext = vio_cams[i].extrinsic;
@@ -259,10 +259,8 @@ namespace voxl
             const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_cp(&ext.R_child_to_parent[0][0]);
 
             Eigen::Matrix4d T_child_parent = Eigen::Matrix4d::Identity();
-            T_child_parent.block<3,3>(0,0) =  R_cp.transpose();                  // rotation
-            T_child_parent.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;      // translation
-            
-            std::cout << "se3 T_cam_imu =\n" << T_child_parent << '\n';
+            T_child_parent.block<3,3>(0,0) =  R_cp.transpose();             // rotation
+            T_child_parent.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;    // translation
 
             for (int row = 0; row < 4; ++row) {
                 YAML::Node row_node = YAML::Node(YAML::NodeType::Sequence);
@@ -272,14 +270,6 @@ namespace voxl
                 extrinsics.push_back(row_node);
             }
             camchain_config[cam_key]["T_cam_imu"] = extrinsics;
-
-            Eigen::Matrix<double, 3, 1> translation;
-            translation[0] = vio_cams[i].extrinsic.T_child_wrt_parent[0];
-            translation[1] = -1 * vio_cams[i].extrinsic.T_child_wrt_parent[1];
-            translation[2] = -1 * vio_cams[i].extrinsic.T_child_wrt_parent[2];
-
-            std::cout << "Translation vector: " << translation.transpose() << std::endl;
-
 
             // ADD THIS CAMERA TO OUR INFO VECTOR
             cam_info_vec.push_back(cam);
