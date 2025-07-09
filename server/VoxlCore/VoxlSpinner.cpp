@@ -372,7 +372,7 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
-	std::string config_path = "/etc/modalai/VoxlConfig/starling2/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
+	std::string config_path = std::string(folder_base) + "/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
 	// Create the VIO Manager -- Core OpenVINS state
 	auto vio_manager_options = VioManagerOptions();
 	auto parser = std::make_shared<ov_core::YamlParser>(config_path);

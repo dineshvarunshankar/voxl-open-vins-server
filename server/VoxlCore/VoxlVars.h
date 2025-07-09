@@ -526,4 +526,11 @@ extern int camera_pipe_channels[MAX_CAM_CNT];
  */
 extern voxl::img_ringbuf_packet *img_ringbuf;
 
+
+// ============================================================================
+// SETUP EXPERIMENTAL VARIABLES
+// ============================================================================
+
+extern bool sync_config; ///< Flag to indicate if configuration synchronization is enabled
+
 #endif // VOXL_VARS_H

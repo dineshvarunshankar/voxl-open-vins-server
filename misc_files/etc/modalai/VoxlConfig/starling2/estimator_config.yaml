@@ -78,7 +78,7 @@ filepath_gt: "/tmp/ov_groundtruth.txt"
 # our front-end feature tracking parameters
 # we have a KLT and descriptor based (KLT is better implemented...)
 use_klt: true # if true we will use KLT, otherwise use a ORB descriptor + robust matching
-use_gpu: true
+use_gpu: false
 num_pts: 50 # number of points (per camera) we will extract and try to track
 fast_threshold: 15 # threshold for fast extraction (warning: lower threshs can be expensive)
 grid_x: 5 # extraction sub-grid count for horizontal direction (uniform tracking)
@@ -107,9 +107,9 @@ downsize_aruco: true
 
 # camera noises and chi-squared threshold multipliers
 up_msckf_sigma_px: 1.0
-up_msckf_chi2_multipler: 1.0
+up_msckf_chi2_multipler: 20.0
 up_slam_sigma_px: 1.4
-up_slam_chi2_multipler: 20.0
+up_slam_chi2_multipler: 40.0
 up_aruco_sigma_px: 1.0
 up_aruco_chi2_multipler: 3.5
 

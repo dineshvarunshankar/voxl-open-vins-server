@@ -96,6 +96,9 @@ char folder_base[CHAR_BUF_SIZE] = "/etc/modalai/VoxlConfig/starling2";
 /** @brief Enable debug output */
 int en_debug = 0;
 
+/** @brief Enable force merge unsynchronized camera data */
+bool en_force_merge_unsynced = true;
+
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
 // ============================================================================
@@ -145,3 +148,6 @@ int camera_pipe_channels[MAX_CAM_CNT] = {0};
 
 /** @brief Image ring buffer for processing */
 voxl::img_ringbuf_packet *img_ringbuf = nullptr;
+
+
+bool sync_config = false; ///< Flag to indicate if configuration synchronization is enabled

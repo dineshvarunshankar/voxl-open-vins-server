@@ -148,18 +148,20 @@ namespace voxl
             if (max_cams != n_cams)
             {
                 config["max_cameras"] = n_cams;
-                try
-                {
-                    std::ofstream fout(yaml_estimator_path);
-                    // Write YAML header first
-                    fout << "%YAML:1.0" << std::endl
-                         << std::endl;
-                    fout << config;
-                }
-                catch (const std::exception &e)
-                {
-                    std::cerr << "Failed to write YAML: " << e.what() << std::endl;
-                    return -1;
+                if(sync_config){
+                    try
+                    {
+                        std::ofstream fout(yaml_estimator_path);
+                        // Write YAML header first
+                        fout << "%YAML:1.0" << std::endl
+                            << std::endl;
+                        fout << config;
+                    }
+                    catch (const std::exception &e)
+                    {
+                        std::cerr << "Failed to write YAML: " << e.what() << std::endl;
+                        return -1;
+                    }
                 }
             }
         }
@@ -275,18 +277,20 @@ namespace voxl
             cam_info_vec.push_back(cam);
         }
         // NOW SAVE CAMCHAIN YAML FILE
-        try
-        {
-            std::ofstream fout(yaml_camchain_path);
-            // Write YAML header first
-            fout << "%YAML:1.0" << std::endl
-                 << std::endl;
-            fout << camchain_config;
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "Failed to write YAML: " << e.what() << std::endl;
-            return -1;
+        if(sync_config){
+            try
+            {
+                std::ofstream fout(yaml_camchain_path);
+                // Write YAML header first
+                fout << "%YAML:1.0" << std::endl
+                    << std::endl;
+                fout << camchain_config;
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "Failed to write YAML: " << e.what() << std::endl;
+                return -1;
+            }
         }
 
         // BLIND TAKEOFF FEATURE PREPARATION
