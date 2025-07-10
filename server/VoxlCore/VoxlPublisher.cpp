@@ -11,6 +11,8 @@
 #include "VoxlHK.h"
 using namespace voxl;
 
+#define STR_MATCH(s, lit)  (strncmp((s), (lit), strlen(lit)) == 0)
+
 // ============================================================================
 // PUBLISHER CLASS IMPLEMENTATION
 // ============================================================================
@@ -71,6 +73,45 @@ void Publisher::stop()
 
     // Clean up resources if needed
 }
+
+
+
+/**
+ * @brief Control-pipe callback for VIO commands
+ *
+ * This function is invoked every time a message
+ * is received on the VIO **control pipe**.  
+ *
+ * @param ch      Channel id supplied by the pipe framework.
+ * @param string  Pointer to the received buffer.
+ * @param bytes   Number of valid bytes in @p string.
+ * @param context User context pointer supplied during registration.
+ *
+ * @note Matching is performed with the `STR_MATCH()` macro, which compares the
+ *       prefix of @p string against the command literal.
+ */
+void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch, 
+                                        char *string,
+                                        int bytes, 
+                                        __attribute__((unused)) void *context)
+{
+    if (STR_MATCH(string, RESET_VIO_HARD))
+    {
+
+    }
+    else if (STR_MATCH(string, RESET_VIO_SOFT))
+    {
+    
+    }
+    else
+    {
+        // Unrecognized command, log an error or handle appropriately
+        printf("Unrecognized control command: %.*s\n", bytes, string);
+    }
+    
+    return;
+}
+
 
 /**
  * @brief Publish VIO data to external systems

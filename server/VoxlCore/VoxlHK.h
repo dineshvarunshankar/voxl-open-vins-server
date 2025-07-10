@@ -155,6 +155,13 @@ namespace voxl
         void start();
 
         /**
+         * @brief Control pipe callback function 
+         * 
+         * Callback function to handle control pipe messages
+         */
+        static void ov_vio_control_pipe_cb(int ch, char *string, int bytes, void *context);
+
+        /**
          * @brief Publish VIO data
          *
          * Publishes the current VIO state and tracking information to external

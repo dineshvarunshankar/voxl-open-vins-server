@@ -268,9 +268,8 @@ static int create_server_pipes(void)
 	pipe_server_update_info(EXTENDED_CH);
 
 	// SET CONTROL CALLBACKS FOR EXTENDED PIPE
-	//  pipe_server_set_control_cb(EXTENDED_CH, _control_pipe_cb, NULL);
-	//  pipe_server_set_available_control_commands(EXTENDED_CH,
-	//  		OV_VIO_CONTROL_COMMANDS);
+	pipe_server_set_control_cb(EXTENDED_CH, voxl::Publisher::getInstance().ov_vio_control_pipe_cb, NULL);
+	pipe_server_set_available_control_commands(EXTENDED_CH, OV_VIO_CONTROL_COMMANDS);
 
 	// OV SIMPLE
 	pipe_info_t info_simple =
@@ -283,7 +282,7 @@ static int create_server_pipes(void)
 			0						   // server_pid
 		};
 
-	if (pipe_server_create(SIMPLE_CH, info_simple, 0))
+	if (pipe_server_create(SIMPLE_CH, info_simple, flags))
 	{
 		printf("pipe_server_create(SIMPLE_CH, info_simple, flags) failed\n");
 		_quit(-1);
@@ -295,9 +294,8 @@ static int create_server_pipes(void)
 	pipe_server_update_info(SIMPLE_CH);
 
 	// SET CONTROL CALLBACKS FOR SIMPLE PIPE
-	//  pipe_server_set_control_cb(SIMPLE_CH, _control_pipe_cb, NULL);
-	//  pipe_server_set_available_control_commands(SIMPLE_CH,
-	//  		OV_VIO_CONTROL_COMMANDS);
+	pipe_server_set_control_cb(SIMPLE_CH, voxl::Publisher::getInstance().ov_vio_control_pipe_cb, NULL);
+	pipe_server_set_available_control_commands(SIMPLE_CH, OV_VIO_CONTROL_COMMANDS);
 
 	// OV STATUS
 	pipe_info_t info_status =
@@ -310,7 +308,7 @@ static int create_server_pipes(void)
 			0						   // server_pid
 		};
 
-	if (pipe_server_create(OVSTATUS_CH, info_status, 0))
+	if (pipe_server_create(OVSTATUS_CH, info_status, flags))
 	{
 		printf("pipe_server_create(SIMPLE_CH, info_status, flags) failed\n");
 		_quit(-1);
