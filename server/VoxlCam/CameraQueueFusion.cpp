@@ -223,12 +223,8 @@ void CameraQueueFusion::fusionLoop()
 
         for (const auto &cam : voxl::CameraManager::getInstance().getAllCameras())
         {
-            auto *mono = dynamic_cast<voxl::MonoCamera *>(cam.get());
-            if (!mono)
-                continue;
-
             ov_core::CameraData msg;
-            while (mono->popCameraData(msg))
+            while (cam->popCameraData(msg))
             {
                 batch.push_back(std::move(msg));
             }

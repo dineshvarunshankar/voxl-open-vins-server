@@ -25,6 +25,7 @@
 // Local includes
 #include "CameraBase.h"
 #include "MonoCameraMinimal.h"
+#include "StereoCameraMinimal.h"
 #include "CameraQueueFusion.h"
 
 namespace voxl

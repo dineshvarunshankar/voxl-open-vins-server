@@ -404,6 +404,15 @@ extern float fast_yaw_thresh;
 extern float fast_yaw_timeout_s;
 
 /**
+ * @brief Using stereo camera configuration
+ *
+ * Flag to indicate whether the system is configured
+ * to use stereo cameras for depth estimation.
+ */
+
+extern int using_stereo;
+
+/**
  * @brief Base folder for yaml configuration files
  *
  * Base folder for storing YAML configuration files

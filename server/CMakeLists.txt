@@ -81,6 +81,7 @@ set(SRC_FILES
     VoxlCam/CameraManager.cpp
     VoxlCam/CameraQueueFusion.cpp
     VoxlCam/MonoCameraMinimal.cpp
+    VoxlCam/StereoCameraMinimal.cpp
     
     # VoxlIMU
     VoxlIMU/ImuMinimal.cpp

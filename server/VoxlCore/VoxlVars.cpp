@@ -90,6 +90,9 @@ float fast_yaw_thresh = 0.0f;
 /** @brief Fast yaw timeout (seconds) */
 float fast_yaw_timeout_s = 0.0f;
 
+/** @brief using_stereo */
+int using_stereo = 0;
+
 /** @brief Base folder for yaml configuration files */
 char folder_base[CHAR_BUF_SIZE] = "/etc/modalai/VoxlConfig/starling2";  
 

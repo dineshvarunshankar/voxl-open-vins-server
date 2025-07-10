@@ -92,6 +92,21 @@ namespace voxl
         const cam_info &get_camera_info() const { return camera_info_; }
 
         /**
+         * @brief Pop camera data from the queue
+         *
+         * Retrieves the next available camera data from the internal queue.
+         * This method is used to get processed image data for VIO processing.
+         *
+         * The method uses a lock-free SPSC (Single Producer, Single Consumer)
+         * queue for efficient thread-safe data transfer between the camera
+         * callback thread and the VIO processing thread.
+         *
+         * @param out Reference to store the popped data
+         * @return true if data was popped, false if queue is empty
+         */
+        const bool popCameraData(ov_core::CameraData &out) { return camera_queue.pop(out); }
+
+        /**
          * @brief Get the camera pipe channel
          * @return Pipe channel number
          */

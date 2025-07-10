@@ -1,12 +1,12 @@
 /**
- * @file MonoCameraMinimal.cpp
- * @brief Monocular camera implementation for VOXL OpenVINS
+ * @file StereoCameraMinimal.cpp
+ * @brief Stereo camera implementation for VOXL OpenVINS
  * @author Zauberflote
  * @date 2025
  * @version 1.0
  *
- * This file implements the MonoCamera class, which specializes the CameraBase
- * for monocular camera configurations. It handles single camera image processing
+ * This file implements the StereoCamera class, which specializes the CameraBase
+ * for stereo camera configurations. It handles single camera image processing
  * and integration with the VIO system.
  *
  * The implementation provides:
@@ -18,20 +18,20 @@
  * - Thread-safe data handling
  */
 
-#include "MonoCameraMinimal.h"
+#include "StereoCameraMinimal.h"
 
 namespace voxl
 {
 
     /**
-     * @brief Constructor for MonoCamera
+     * @brief Constructor for StereoCamera
      *
-     * Initializes a monocular camera instance by calling the base class
+     * Initializes a stereo camera instance by calling the base class
      * constructor with the provided camera configuration information.
      *
      * @param camera_info Camera configuration and calibration information
      */
-    MonoCamera::MonoCamera(const cam_info &camera_info)
+    StereoCamera::StereoCamera(const cam_info &camera_info)
         : CameraBase(camera_info)
     {
     }
@@ -39,7 +39,7 @@ namespace voxl
     /**
      * @brief Process incoming image data
      *
-     * Overrides the base class method to handle monocular camera-specific
+     * Overrides the base class method to handle stereo camera-specific
      * image processing. This method is called by the pipe callback when
      * new image data arrives.
      *
@@ -54,7 +54,7 @@ namespace voxl
      * @param meta Image metadata containing timestamp and format information
      * @param frame Pointer to image data buffer
      */
-    void MonoCamera::process_image(const camera_image_metadata_t &meta, char *frame)
+    void StereoCamera::process_image(const camera_image_metadata_t &meta, char *frame)
     {
 
         // Update flags quickly
@@ -67,10 +67,10 @@ namespace voxl
 
         // Update dimensions
         current_height = meta.height;
-        current_width = meta.width;
+        current_width  = meta.width;
 
         // Process only supported formats with fast path
-        if (meta.format == IMAGE_FORMAT_RAW8)
+        if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
         {
             process_raw8(meta, frame);
         }
@@ -100,17 +100,25 @@ namespace voxl
      * @param meta Image metadata containing timestamp and dimensions
      * @param frame Pointer to image data
      */
-    void MonoCamera::process_raw8(const camera_image_metadata_t &meta, char *frame)
+    void StereoCamera::process_raw8(const camera_image_metadata_t &meta, char *frame)
     {
         // TODO: FIX INTERCHANCHABLE META AND CURR_MESSAGE USAGE, KEEP IT CONSISTENT, RESPECT HALACHAH
         //  Use static buffer to avoid allocations in the hot path
         curr_message_.camid = get_channel();
         curr_message_.metadata = meta;
 
+
+        // SPLIT THE IMAGE HERE
+        const int full_w   = meta.width;
+        const int full_h   = meta.height;           // height of one camera
+        const size_t bytes_per_row = full_w;        // CV_8UC1: one byte per pixel
+        const size_t bytes_one_img = bytes_per_row * full_h;
+
         memcpy(curr_message_.image_pixels, reinterpret_cast<uint8_t *>(frame), meta.size_bytes);
 
         // OpenCV view (no copy)
-        cv::Mat image(current_height, current_width, CV_8UC1, curr_message_.image_pixels);
+        cv::Mat imgL(current_height, current_width, CV_8UC1, curr_message_.image_pixels);                    // cam-0
+        cv::Mat imgR(current_height, current_width, CV_8UC1, curr_message_.image_pixels + bytes_one_img);    // cam-1
 
         if (use_mask_.rows != current_height || use_mask_.cols != current_width)
         {
@@ -119,10 +127,13 @@ namespace voxl
 
         ov_core::CameraData message;
         message.timestamp = (meta.timestamp_ns) * 1e-09; // TODO: check  if we should consider adding exposure time/2  --> NAIVELY ADDING BRING CHAOS (Multi-cam) DO IT AT YOUR OWN RISK
-        message.sensor_ids.push_back(get_id());
 
-        // clone might be optional --> depends on consumer thread ownership guarantees TODO: CHECK THIS LATER ON
-        message.images.emplace_back(image.clone());
+        message.sensor_ids.push_back(get_id() + 0);
+        message.images.emplace_back(imgL.clone()); // clone might be optional --> depends on consumer thread ownership guarantees TODO: CHECK THIS LATER ON
+        message.masks.emplace_back(use_mask_);
+
+        message.sensor_ids.push_back(get_id() + 1);
+        message.images.emplace_back(imgR.clone());
         message.masks.emplace_back(use_mask_);
 
         if (!camera_queue.push(message))
@@ -149,7 +160,7 @@ namespace voxl
      *
      * @return true if system is resetting, false otherwise
      */
-    bool MonoCamera::is_system_resetting() const
+    bool StereoCamera::is_system_resetting() const
     {
         return is_resetting;
     }
@@ -163,7 +174,7 @@ namespace voxl
      *
      * @return true if system is ready, false otherwise
      */
-    bool MonoCamera::is_system_ready() const
+    bool StereoCamera::is_system_ready() const
     {
         return is_imu_connected && main_running;
     }

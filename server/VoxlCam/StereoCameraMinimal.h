@@ -1,17 +1,17 @@
 /**
- * @file MonoCameraMinimal.h
- * @brief Monocular camera implementation for VOXL OpenVINS
+ * @file StereoCameraMinimal.h
+ * @brief Stereo camera implementation for VOXL OpenVINS
  * @author Zauberflote
  * @date 2025
  * @version 1.0
  *
- * This header defines the MonoCamera class, which specializes the CameraBase
- * for monocular camera configurations. It handles single camera image processing
+ * This header defines the StereoCamera class, which specializes the CameraBase
+ * for stereo camera configurations. It handles single camera image processing
  * and integration with the VIO system.
  */
 
-#ifndef MONOCAMERAMINIMAL_H
-#define MONOCAMERAMINIMAL_H
+#ifndef STEREOCAMERAMINIMAL_H
+#define STEREOCAMERAMINIMAL_H
 #pragma once
 #include "CameraBase.h"
 #include "CameraQueueFusion.h"
@@ -24,13 +24,13 @@ namespace voxl
 {
 
     /**
-     * @class MonoCamera
-     * @brief Handles monocular camera input
+     * @class StereoCamera
+     * @brief Handles stereo camera input
      *
-     * This class specializes CameraBase for monocular camera configurations.
+     * This class specializes CameraBase for stereo camera configurations.
      * It processes images from a single camera and feeds them to the VIO system.
      *
-     * The MonoCamera class provides:
+     * The StereoCamera class provides:
      * - Single camera image processing
      * - RAW8 format support
      * - ION buffer processing
@@ -39,29 +39,29 @@ namespace voxl
      *
      * Key features:
      * - Inherits from CameraBase for common functionality
-     * - Implements specific image processing for monocular setups
+     * - Implements specific image processing for stereo setups
      * - Integrates with the camera queue fusion system
      * - Handles various image formats and buffer types
      */
-    class MonoCamera : public CameraBase
+    class StereoCamera : public CameraBase
     {
     public:
         /**
          * @brief Constructor
          * @param camera_info Camera configuration information
          */
-        explicit MonoCamera(const cam_info &camera_info);
+        explicit StereoCamera(const cam_info &camera_info);
 
         /**
          * @brief Destructor
          */
-        ~MonoCamera() override = default;
+        ~StereoCamera() override = default;
 
     protected:
         /**
          * @brief Process incoming image data
          *
-         * Overrides the base class method to handle monocular camera-specific
+         * Overrides the base class method to handle stereo camera-specific
          * image processing. This method is called by the pipe callback when
          * new image data arrives.
          *
@@ -110,4 +110,4 @@ namespace voxl
     };
 
 } // namespace voxl
-#endif // MONOCAMERAMINIMAL_H
+#endif // STEREOCAMERAMINIMAL_H

@@ -126,27 +126,29 @@ namespace voxl
             return false;
         }
 
-        std::vector<cam_info> mono_cameras;
-
+        std::vector<cam_info> cameras;
         for (const auto &config : camera_configs)
         {
             if (config.mode == MONO)
             {
-                mono_cameras.push_back(config);
+                if (!createAndConnectCamera<MonoCamera>(config))
+                {
+                    shutdown();
+                    return false;
+                }
+            }
+            else if (config.mode == STEREO)
+            {
+                if (!createAndConnectCamera<StereoCamera>(config))
+                {
+                    shutdown();
+                    return false;
+                }
             }
             else
             {
                 std::cerr << "Unsupported or disabled camera mode: " << camera_mode_as_string(config.mode)
                           << " for camera: " << config.name << std::endl;
-            }
-        }
-
-        for (const auto &config : mono_cameras)
-        {
-            if (!createAndConnectCamera<MonoCamera>(config))
-            {
-                shutdown();
-                return false;
             }
         }
 
@@ -159,7 +161,7 @@ namespace voxl
 
         if (true)
         {
-            std::cout << "Successfully initialized " << cameras_.size() << " mono cameras" << std::endl;
+            std::cout << "Successfully initialized " << cameras_.size() << " cameras" << std::endl;
         }
 
         // Start the camera fusion thread once all cameras are initialized

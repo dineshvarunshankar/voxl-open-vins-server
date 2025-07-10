@@ -189,7 +189,7 @@ namespace voxl
             strcpy(cam.name, vio_cams[i].name);
             strcpy(cam.tracking_name, vio_cams[i].pipe_for_tracking);
             strcpy(cam.preview_name, vio_cams[i].pipe_for_preview);
-            cam.mode = MONO;
+            cam.mode = using_stereo ? STEREO : MONO;
             cam.cam_id = i;
 
             // GRAB LIST OF REALIBLE CAMERAS FOR TAKEOFF
@@ -360,6 +360,7 @@ namespace voxl
         json_fetch_float_with_default(parent, "fast_yaw_thresh", &fast_yaw_thresh, 5.0f);
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
         json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/etc/modalai/VoxlConfig/starling2");
+        json_fetch_int_with_default(parent, "using_stereo", &using_stereo, 0);
         if (json_get_parse_error_flag())
         {
             fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);
