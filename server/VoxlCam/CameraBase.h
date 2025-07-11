@@ -104,7 +104,7 @@ namespace voxl
          * @param out Reference to store the popped data
          * @return true if data was popped, false if queue is empty
          */
-        const bool popCameraData(ov_core::CameraData &out) { return camera_queue.pop(out); }
+        bool popCameraData(ov_core::CameraData &out) { return camera_queue.pop(out); }
 
         /**
          * @brief Get the camera pipe channel
