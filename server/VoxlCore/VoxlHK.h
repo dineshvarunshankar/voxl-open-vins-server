@@ -31,10 +31,12 @@
 #include <state/StateHelper.h>
 #include <types/Landmark.h>
 #include <types/Type.h>
+#include <feat/Feature.h>
 #include <cmath>
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <Eigen/Eigenvalues>
 // Local includes
 #include "VoxlVars.h"
 #include "VoxlCommon.h"
@@ -173,7 +175,8 @@ namespace voxl
          */
         void publish(std::shared_ptr<ov_msckf::State> state,
                      std::shared_ptr<ov_core::TrackBase> trackbase,
-                     Eigen::Matrix3d corr_mat);
+                     Eigen::Matrix3d corr_mat,
+                     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map = {});
 
         /**
          * @brief Stop the publisher
@@ -206,6 +209,24 @@ namespace voxl
                                double current_velocity,
                                double vel_x,
                                double vel_y);
+
+        /**
+         * @brief Calculate Quality of the VIO state
+         *
+         * This function computes the quality score based on the features used at
+         * the current timestamp. The quality calculation considers:
+         * 1. Grid distribution: 5x5 grid per camera with 50 features target (2 per grid)
+         * 2. SLAM features: weighted by covariance largest eigenvalue and quality field
+         * 3. MSCKF features: weighted by quality field and number of measurements
+         * 
+         * @param used_features_map Map of used features at the current timestamp
+         * @param slam_features Map of SLAM features from the state
+         * @param state Current VIO state for covariance access
+         * @return Quality score (0-100, higher is better)
+         */
+        double calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map, 
+                          std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
+                          std::shared_ptr<ov_msckf::State> state);
 
     private:
         /**
