@@ -22,6 +22,9 @@
 // CORE VIO MANAGER
 // ============================================================================
 
+/** @brief VIO manager options */
+ov_msckf::VioManagerOptions vio_manager_options;
+
 /** @brief Main VIO manager instance */
 std::unique_ptr<ov_msckf::VioManager> vio_manager;
 
@@ -38,8 +41,20 @@ std::atomic<uint8_t> vio_state(0);
 /** @brief VIO error codes */
 std::atomic<uint32_t> vio_error_codes(0);
 
+/** @brief Flag indicating that system should reset */
+std::atomic<bool> reset_requested(false);
+
 /** @brief Flag indicating if system is currently resetting */
 std::atomic<bool> is_resetting(false);
+
+/** @brief Number of callbacks inside the system */
+std::atomic<uint32_t> active_callbacks{0};      
+
+/** @brief Mutex used by reset thread */
+std::mutex reset_mtx;
+
+/** @brief Reset conditional variable */
+std::condition_variable_any reset_cv;
 
 /** @brief Flag indicating if system is armed */
 std::atomic<bool> is_armed(false);

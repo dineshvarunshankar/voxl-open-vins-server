@@ -64,6 +64,17 @@ namespace voxl
         // Early return if system not ready
         if (!is_system_ready())
             return;
+            
+        // if we are resetting, just return
+        if (is_resetting.load(std::memory_order_relaxed)) return;
+
+        // indicate that we are processing IMU data
+        active_callbacks.fetch_add(1, std::memory_order_acquire);
+        if (is_resetting.load(std::memory_order_relaxed))
+        {
+            active_callbacks.fetch_sub(1, std::memory_order_release);
+            return;
+        }
 
         // Update dimensions
         current_height = meta.height;
@@ -79,6 +90,15 @@ namespace voxl
             // Rare case, can be slower
             fprintf(stderr, "Unsupported image format: %d\n", meta.format);
             vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+        }
+
+        // check if in flight processing count reaches zero
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+        {
+            // If we are resetting, notify the reset condition variable
+            // This will wake up the reset thread to continue processing
+            std::lock_guard<std::mutex> lk(reset_mtx);
+            reset_cv.notify_one();
         }
     }
 

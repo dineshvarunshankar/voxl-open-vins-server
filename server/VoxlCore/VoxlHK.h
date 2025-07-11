@@ -354,6 +354,22 @@ namespace voxl
          */
         void checkAutoResetConditions();
 
+        /**
+         * @brief Handle VINS reset command
+         *
+         * This function is invoked when a reset command is received.
+         * It performs the necessary actions to reset the VIO system.
+         */
+        void checkVINSResetRequest();
+
+        /**
+         * @brief Perform a hard reset of the VIO system
+         * 
+         * This function creates a fresh instance of the 
+         * VIO manager and reinitializes the system.,
+         */
+        int doHardReset();
+
         // ============================================================================
         // PRIVATE MEMBER VARIABLES
         // ============================================================================
@@ -384,6 +400,13 @@ namespace voxl
 
         /** @brief Mutex for thread safety */
         mutable std::mutex health_mutex_;
+
+        /** @brief Timeout interval before we can reset again */
+        const uint64_t INIT_FAILURE_TIMEOUT_NS = 2000000000; // 2 seconds
+        
+        /** @brief Timestamp of last reset */
+        uint64_t time_of_last_reset = 0;
+
     };
 
 } // namespace voxl

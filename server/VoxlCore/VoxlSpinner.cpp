@@ -371,9 +371,11 @@ int main(int argc, char *argv[])
 		_quit(-1);
 	}
 	std::string config_path = std::string(folder_base) + "/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
+
 	// Create the VIO Manager -- Core OpenVINS state
-	auto vio_manager_options = VioManagerOptions();
+	vio_manager_options = VioManagerOptions();
 	auto parser = std::make_shared<ov_core::YamlParser>(config_path);
+	
 	// THIS GETS OVERWRITTEN BY THE YAML
 	std::string verbosity = "SILENT";
 	parser->parse_config("verbosity", verbosity);
@@ -381,6 +383,8 @@ int main(int argc, char *argv[])
 	ov_core::Printer::setPrintLevel(ov_core::Printer::SILENT);
 
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
+
+	voxl::Publisher::getInstance().start();
 
 	/* make sure another instance isn't running
 	 * if return value is -3 then a background process is running with

@@ -157,12 +157,22 @@ std::mutex imu_lock_mutex;
 void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
     // MPA CALLBACK FOR IMU
+    if (is_resetting.load(std::memory_order_relaxed)) return; // if we are resetting, just return
+
     // MODALAI IMU IS READ BASED ON A FIFO QUEUE TRIGGERED BY THE CAMERAS
     int n_packets = 0;
     imu_data_t *arr = pipe_validate_imu_data_t(data, bytes, &n_packets);
     if (!arr || n_packets <= 0)
     {
         vio_error_codes |= ERROR_CODE_IMU_MISSING;
+        return;
+    }
+    
+    // indicate that we are processing IMU data
+    active_callbacks.fetch_add(1, std::memory_order_acquire);
+    if (is_resetting.load(std::memory_order_relaxed))
+    {
+        active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
     }
 
@@ -230,6 +240,15 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 
             voxl::Publisher::getInstance().publish(cached_state, cached_trackbase, frame_transform.correction_matrix);
         }
+    }
+
+    // check if in flight processing count reaches zero
+    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+    {
+        // If we are resetting, notify the reset condition variable
+        // This will wake up the reset thread to continue processing
+        std::lock_guard<std::mutex> lk(reset_mtx);
+        reset_cv.notify_one();
     }
 }
 

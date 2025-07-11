@@ -107,6 +107,7 @@ void HealthCheck::healthCheckLoop()
         checkSystemConnectivity();
         monitorSystemPerformance();
         checkAutoResetConditions();
+        checkVINSResetRequest();
 
         // Update counters
         health_check_count_++;
@@ -364,11 +365,12 @@ void HealthCheck::checkAutoResetConditions()
         should_reset = true;
         reset_reason = "Frame processing stalled";
     }
-    else if (current_error_codes & ERROR_CODE_BAD_TIMESTAMP)
-    {
-        should_reset = true;
-        reset_reason = "Bad timestamps";
-    }
+    // TODO: Check if this is necessary as it gets spammed on reset
+    // else if (current_error_codes & ERROR_CODE_BAD_TIMESTAMP)
+    // {
+    //     should_reset = true;
+    //     reset_reason = "Bad timestamps";
+    // }
 
     if (should_reset)
     {
@@ -376,9 +378,117 @@ void HealthCheck::checkAutoResetConditions()
         std::cerr << "[HEALTH] Current error codes: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
 
         // Set reset flag (this would trigger reset in main loop)
-        is_resetting.store(true);
+        reset_requested.store(true);
     }
 }
+
+/**
+ * @brief Check for VINS reset request
+ *
+ * This function checks if a reset has been requested and handles the reset process.
+ * It ensures that only one reset operation can be in progress at a time.
+ */
+void HealthCheck::checkVINSResetRequest()
+{
+    // atomically check if a reset has been requested, if not, return 
+    if (!reset_requested.exchange(false, std::memory_order_acq_rel)) return;            
+    
+    // check time since last reset
+    int64_t current_time = _apps_time_monotonic_ns();
+    uint64_t time_since_reset = current_time - time_of_last_reset;
+    if (time_since_reset <= INIT_FAILURE_TIMEOUT_NS)
+    {
+        std::cout << "[HEALTH] Reset requested but last reset was too recent (" 
+                  << (time_since_reset / 1000000) << "ms ago), ignoring request" << std::endl;
+        return;
+    } 
+        
+
+    // If reset is requested, check if we are already resetting
+    if (is_resetting.exchange(true, std::memory_order_acq_rel))
+    {
+        std::cout << "[HEALTH] Reset already in progress, ignoring request\n";
+        return;
+    }
+
+    if (en_debug) std::cout << "[HEALTH] Reset requested, preparing to reset VIO system" << std::endl; 
+                
+    int rc = 0;
+    try
+    {
+        rc = doHardReset();
+    }
+    catch(const std::exception& e)
+    {
+        fprintf(stderr, "[ERROR] Exception during reset: %s\n", e.what());
+        rc = -1;
+    }
+                
+    if (rc == 0)
+    {
+        std::cout << "[HEALTH] VIO system reset successfully" << std::endl;
+    }
+    else
+    {
+        std::cerr << "[HEALTH] VIO system reset failed with code: " << rc << std::endl;
+    }
+    
+    time_of_last_reset = _apps_time_monotonic_ns();
+
+    is_resetting.store(false, std::memory_order_release);
+    reset_cv.notify_all();
+    return;
+}
+
+int HealthCheck::doHardReset()
+{
+    // wait until all callbacks have finished processing
+    {
+        std::unique_lock<std::mutex> lk(reset_mtx);
+        reset_cv.wait(lk, [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
+    }
+
+    printf("[HEALTH] Hard reset in progress\n");
+
+    // verify vio manager exists
+    if (!vio_manager)
+    {
+        std::cerr << "[HEALTH] ERROR: VIO manager not initialized, cannot reset" << std::endl;
+        return -1;
+    }
+
+    // Create references for old and new VIO manager
+    std::unique_ptr<ov_msckf::VioManager> old_vio_manager;
+    std::unique_ptr<ov_msckf::VioManager> new_vio_manager;
+
+    try 
+    {
+        new_vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+        
+        if (!new_vio_manager)
+        {
+            fprintf(stderr, "[ERROR] Failed to create new VIO manager object\n");
+            throw std::runtime_error("Failed to create new VIO manager");
+        }
+
+        old_vio_manager = std::move(vio_manager);
+        vio_manager     = std::move(new_vio_manager);
+    } 
+    catch (const std::exception& e)
+    {
+        fprintf(stderr, "[ERROR] Exception during VIO manager creation: %s\n", e.what());
+        
+        vio_manager = std::move(old_vio_manager); // restore
+        return -1;
+    }
+
+    // destroy old VIO manager
+    old_vio_manager.reset();
+
+    return 0;
+}
+
+
 
 /**
  * @brief Clear specific error codes

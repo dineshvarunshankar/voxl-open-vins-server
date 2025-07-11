@@ -97,7 +97,15 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
 {
     if (STR_MATCH(string, RESET_VIO_HARD))
     {
+        if (reset_requested.load() || is_resetting.load())
+        {
+            fprintf(stderr, "[WARNING] Already resetting VIO, ignoring hard reset command.\n");
+            return;
+        }
 
+        reset_requested.store(true);
+		fprintf(stderr, "[ERROR] Client requested hard reset\n");
+        return;
     }
     else if (STR_MATCH(string, RESET_VIO_SOFT))
     {

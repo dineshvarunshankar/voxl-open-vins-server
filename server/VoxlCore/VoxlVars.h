@@ -29,6 +29,7 @@
 #include <vector>
 #include <mutex>
 #include <cstdint>
+#include <condition_variable>
 
 // Third-party includes
 #include <core/VioManager.h>
@@ -233,6 +234,15 @@ namespace voxl
 // CORE VIO MANAGER
 // ============================================================================
 
+
+/** @brief VIO manager options 
+ * 
+ * Options for configuring the VIO manager instance.
+ * This includes settings for state initialization, estimator options,
+ * and other operational parameters.
+*/
+extern ov_msckf::VioManagerOptions vio_manager_options;
+
 /**
  * @brief Global VIO manager instance
  *
@@ -271,6 +281,12 @@ extern std::atomic<uint8_t> vio_state;
  */
 extern std::atomic<uint32_t> vio_error_codes;
 
+/** @brief Should reset floag
+ * 
+ * Flag indicating that system should reset
+ */
+extern std::atomic<bool> reset_requested;
+
 /**
  * @brief VIO reset state flag
  *
@@ -278,6 +294,30 @@ extern std::atomic<uint32_t> vio_error_codes;
  * undergoing a reset operation.
  */
 extern std::atomic<bool> is_resetting;
+
+/** 
+ * @brief Number of callbacks inside the system
+ * 
+ * Atomic counter for tracking the number of in-flight
+ * callbacks or operations currently being processed that need
+ * to be accounted for during reset.
+ */
+extern std::atomic<uint32_t> active_callbacks;      
+
+/**
+ * @brief Mutex for reset
+ *
+ * Synchronisation mutex used *only* for the reset hand-off
+ */
+extern std::mutex reset_mtx;
+
+/** 
+ * @brief Reset conditional variable 
+ * 
+ * Condition variable used to synchronize reset operations,
+ * the reset thread will wait on active_callbacks to reach zero before proceeding.
+ * */
+extern std::condition_variable_any reset_cv;
 
 /**
  * @brief System armed state
