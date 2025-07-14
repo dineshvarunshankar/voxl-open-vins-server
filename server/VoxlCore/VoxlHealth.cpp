@@ -257,7 +257,7 @@ void HealthCheck::checkSystemConnectivity()
         {
             std::cout << "[HEALTH] IMU connected" << std::endl;
             // Clear IMU-related errors when connection is restored
-            clearErrorCodes(ERROR_CODE_IMU_MISSING | ERROR_CODE_DROPPED_IMU);
+            clearErrorCodes(0, true);
         }
         else
         {
@@ -315,21 +315,32 @@ void HealthCheck::monitorSystemPerformance()
         health_check_count_ = 0; // Reset counter
     }
 
-    // Check for timestamp issues
-    int64_t time_since_imu = current_time_ns - last_imu_timestamp_ns;
-    int64_t time_since_camera = current_time_ns - last_cam_time;
+    // // Check for timestamp issues only after VIO manager is initialized to avoid
+    // // false IMU/CAM missing errors during the heavy initialization phase.
+    // if (!vio_manager || !vio_manager->initialized()) {
+    //     return;
+    // }
 
-    if (time_since_imu > 1000000000)
-    { // 1 second
-        std::cerr << "[HEALTH] WARNING: No IMU data for " << (time_since_imu / 1000000) << "ms" << std::endl;
-        vio_error_codes |= ERROR_CODE_IMU_MISSING;
-    }
+    // // Check for timestamp issues
+    // if (last_imu_timestamp_ns != 0)
+    //     {
+    //         int64_t time_since_imu = current_time_ns - last_imu_timestamp_ns;
+    //         if (time_since_imu*1e-9 > 2) //2 seconds
+    //         {
+    //             std::cerr << "[HEALTH] WARNING: No IMU data for " << (time_since_imu / 1000000) << "ms" << std::endl;
+    //             vio_error_codes |= ERROR_CODE_IMU_MISSING;
+    //         }
+    //     }
 
-    if (time_since_camera > 1000000000)
-    { // 1 second
-        std::cerr << "[HEALTH] WARNING: No camera data for " << (time_since_camera / 1000000) << "ms" << std::endl;
-        vio_error_codes |= ERROR_CODE_CAM_MISSING;
-    }
+    // if (last_cam_time != 0)
+    //     {
+    //         int64_t time_since_camera = current_time_ns - last_cam_time;
+    //         if (time_since_camera > 1000000000)
+    //         {
+    //             std::cerr << "[HEALTH] WARNING: No camera data for " << (time_since_camera / 1000000) << "ms" << std::endl;
+    //             vio_error_codes |= ERROR_CODE_CAM_MISSING;
+    //         }
+    //     }
 }
 
 /**
@@ -345,38 +356,25 @@ void HealthCheck::checkAutoResetConditions()
         return; // Auto-reset disabled
     }
 
+    // Suppress auto-reset for a grace period after a hard reset to allow sensors to come back online
+    int64_t now = _apps_time_monotonic_ns();
+    if (now - time_of_last_reset < INIT_FAILURE_TIMEOUT_NS )
+    {
+        return;
+    }
+
+    // Also skip auto-reset logic while the VIO manager is still initializing. OpenVINS may
+    // require several seconds of IMU/vision data and heavy optimization before the
+    // "initialized()" flag is set; triggering another reset in that window leads to a loop.
+    if (!vio_manager || !vio_manager->initialized()) {
+        return;
+    }
+
     uint32_t current_error_codes = vio_error_codes.load();
-    bool should_reset = false;
-    std::string reset_reason;
-
-    // Check for critical errors that warrant immediate reset
-    if (current_error_codes & ERROR_CODE_COVARIANCE)
-    {
-        should_reset = true;
-        reset_reason = "Covariance matrix issues";
-    }
-    else if (current_error_codes & ERROR_CODE_IMU_OOB)
-    {
-        should_reset = true;
-        reset_reason = "IMU out of bounds";
-    }
-    else if (current_error_codes & ERROR_CODE_STALLED)
-    {
-        should_reset = true;
-        reset_reason = "Frame processing stalled";
-    }
-    // TODO: Check if this is necessary as it gets spammed on reset
-    // else if (current_error_codes & ERROR_CODE_BAD_TIMESTAMP)
-    // {
-    //     should_reset = true;
-    //     reset_reason = "Bad timestamps";
-    // }
-
-    if (should_reset)
-    {
-        std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: " << reset_reason << std::endl;
-        std::cerr << "[HEALTH] Current error codes: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
-
+    
+    if (current_error_codes != 0) {
+        std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
+        clearErrorCodes(0, true);
         // Set reset flag (this would trigger reset in main loop)
         reset_requested.store(true);
     }
@@ -427,6 +425,10 @@ void HealthCheck::checkVINSResetRequest()
     if (rc == 0)
     {
         std::cout << "[HEALTH] VIO system reset successfully" << std::endl;
+
+        // Clear last sensor timestamps; they will be filled when fresh data arrives
+        last_imu_timestamp_ns = 0;
+        last_cam_time        = 0;
     }
     else
     {
@@ -447,14 +449,22 @@ int HealthCheck::doHardReset()
         std::unique_lock<std::mutex> lk(reset_mtx);
         reset_cv.wait(lk, [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
     }
-
+    Publisher::getInstance().set_first_packet(true);
+    clearErrorCodes(0, true);
     printf("[HEALTH] Hard reset in progress\n");
 
-    // verify vio manager exists
-    if (!vio_manager)
-    {
-        std::cerr << "[HEALTH] ERROR: VIO manager not initialized, cannot reset" << std::endl;
-        return -1;
+    // ensure we have a valid and initialized VIO manager; if not, create one directly
+    if (!vio_manager || !vio_manager->initialized()) {
+        if (en_debug) std::cout << "[HEALTH] VIO manager was uninitialized, creating a fresh instance" << std::endl;
+
+        try {
+            vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+        } catch (const std::exception &e) {
+            fprintf(stderr, "[ERROR] Failed to create VIO manager during reset: %s\n", e.what());
+            return -1;
+        }
+
+        return 0; // fresh manager created, nothing else to reset
     }
 
     // Create references for old and new VIO manager
@@ -499,11 +509,18 @@ int HealthCheck::doHardReset()
  *
  * @param error_mask Bit mask of error codes to clear
  */
-void HealthCheck::clearErrorCodes(uint32_t error_mask)
+void HealthCheck::clearErrorCodes(uint32_t error_mask, bool clear_all)
 {
-    uint32_t current_errors = vio_error_codes.load();
-    uint32_t new_errors = current_errors & ~error_mask;
-    vio_error_codes.store(new_errors);
+    if (clear_all)
+    {
+        vio_error_codes.store(0);
+    }
+    else
+    {
+        uint32_t current_errors = vio_error_codes.load();
+        uint32_t new_errors = current_errors & ~error_mask;
+        vio_error_codes.store(new_errors);
+    }
 
     if (en_debug)
     {

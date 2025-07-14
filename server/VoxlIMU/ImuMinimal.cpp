@@ -34,6 +34,7 @@ namespace
     // CACHE SHARED PTR TO AVOID REPEATED ALLOCATION AT HIGH FREQUENCY
     std::shared_ptr<ov_msckf::State> cached_state;
     std::shared_ptr<ov_core::TrackBase> cached_trackbase;
+    std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
     // THIS IS HERE TO ACCOMODATE THE FACT THAT THE IMU IS NOT ALWAYS MOUNTED IN THE SAME ORIENTATION
     // VISION HUB ALSO EXPECTS DATA TO BE IN FRD AND IMU FRAME-ORIENTATION
@@ -157,21 +158,24 @@ std::mutex imu_lock_mutex;
 void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
     // MPA CALLBACK FOR IMU
-    if (is_resetting.load(std::memory_order_relaxed)) return; // if we are resetting, just return
+    // if (is_resetting.load()) return; // if we are resetting, just return
 
     // MODALAI IMU IS READ BASED ON A FIFO QUEUE TRIGGERED BY THE CAMERAS
     int n_packets = 0;
     imu_data_t *arr = pipe_validate_imu_data_t(data, bytes, &n_packets);
-    if (!arr || n_packets <= 0)
-    {
-        vio_error_codes |= ERROR_CODE_IMU_MISSING;
-        return;
-    }
+
     
     // indicate that we are processing IMU data
     active_callbacks.fetch_add(1, std::memory_order_acquire);
     if (is_resetting.load(std::memory_order_relaxed))
     {
+        active_callbacks.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+    if (!arr || n_packets <= 0)
+    {
+        vio_error_codes |= ERROR_CODE_IMU_MISSING;
+        // Decrement callback counter before returning to keep active_callbacks balanced
         active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
     }
@@ -211,6 +215,12 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     if (imu_batch.empty())
     {
         vio_error_codes |= ERROR_CODE_DROPPED_IMU;
+        // Decrement callback counter before returning to keep active_callbacks balanced
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+        {
+            std::lock_guard<std::mutex> lk(reset_mtx);
+            reset_cv.notify_one();
+        }
         return; // CHECK IF THE BATCH IS EMPTY
     }
     // FEED BATCH TO OVINS
@@ -237,8 +247,9 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             // }
 
             cached_trackbase = vio_manager->get_track_feats();
+            cached_features_map = vio_manager->get_used_features_map();
 
-            voxl::Publisher::getInstance().publish(cached_state, cached_trackbase, frame_transform.correction_matrix);
+            voxl::Publisher::getInstance().publish(cached_state, cached_trackbase, frame_transform.correction_matrix, cached_features_map);
         }
     }
 

@@ -349,8 +349,8 @@ namespace voxl
         memset(string_holder, '\0', CHAR_BUF_SIZE);
         json_fetch_bool_with_default(parent, "en_auto_reset", &en_auto_reset, 1);
         json_fetch_float_with_default(parent, "auto_reset_max_velocity", &auto_reset_max_velocity, 20.0f);
-        json_fetch_float_with_default(parent, "auto_reset_max_v_cov_instant", &auto_reset_max_v_cov_instant, 0.1f);
-        json_fetch_float_with_default(parent, "auto_reset_max_v_cov", &auto_reset_max_v_cov, 0.1f);
+        json_fetch_float_with_default(parent, "auto_reset_max_v_cov_instant", &auto_reset_max_v_cov_instant, 0.2f);
+        json_fetch_float_with_default(parent, "auto_reset_max_v_cov", &auto_reset_max_v_cov, 0.2f);
         json_fetch_float_with_default(parent, "auto_reset_max_v_cov_timeout_s", &auto_reset_max_v_cov_timeout_s, 0.5f);
         json_fetch_int_with_default(parent, "auto_reset_min_features", &auto_reset_min_features, 1);
         json_fetch_float_with_default(parent, "auto_reset_min_feature_timeout_s", &auto_reset_min_feature_timeout_s, 3.0f);

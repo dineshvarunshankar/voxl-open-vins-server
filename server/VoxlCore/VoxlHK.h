@@ -228,6 +228,16 @@ namespace voxl
                           std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
                           std::shared_ptr<ov_msckf::State> state);
 
+        /**
+         * @brief Set the first packet flag
+         * 
+         * This function sets the first packet flag to the provided value.
+         * 
+         * @param first_packet The value to set the first packet flag to
+         */
+        void set_first_packet(bool first_packet_){
+            first_packet = first_packet_;
+        };
     private:
         /**
          * @brief Private constructor for singleton pattern
@@ -318,8 +328,12 @@ namespace voxl
          * be reported.
          *
          * @param error_mask Bit mask of error codes to clear
+         * @param clear_all If true, clear all error codes
          */
-        static void clearErrorCodes(uint32_t error_mask);
+        static void clearErrorCodes(uint32_t error_mask){
+            clearErrorCodes(error_mask, false);
+        }
+        static void clearErrorCodes(uint32_t error_mask, bool clear_all);
 
     private:
         /**

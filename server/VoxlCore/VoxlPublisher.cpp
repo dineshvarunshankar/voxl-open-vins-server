@@ -419,24 +419,26 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     R_uncertainty += covariance_posori(5, 5) * covariance_posori(5, 5);
     R_uncertainty = sqrt(R_uncertainty);
 
-    // // Map velocity uncertainty to quality (0-100 scale)
-    // double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
-   
+    // Get used features map from VioManager if not provided and NOT RESETTING!!
+    double calculated_quality;
+    if (!is_resetting.load(std::memory_order_relaxed) && vio_manager->initialized())
+    {
 
-    // // Calculate position-based quality
-    // double max_allowable_cep = 0.1; // 10cm CEP threshold
-    // double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
-    // pos_quality = std::max(0.0, std::min(100.0, pos_quality));
-
-    // Use the lower of the two qualities
-    // vio_packet.quality = static_cast<int32_t>(std::min(v_cov_quality, pos_quality));
-    // Get used features map from VioManager if not provided
-    if (used_features_map.empty()) {
-        used_features_map = vio_manager->get_used_features_map();
+        // Calculate quality using the new feature-based method
+        calculated_quality = calcQuality(used_features_map, SLAM_FEATS, state);
     }
+    else
+    {
+        // Map velocity uncertainty to quality (0-100 scale)
+        double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
     
-    // Calculate quality using the new feature-based method
-    double calculated_quality = calcQuality(used_features_map, SLAM_FEATS, state);
+
+        // Calculate position-based quality
+        double max_allowable_cep = 0.1; // 10cm CEP threshold
+        double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
+        pos_quality = std::max(0.0, std::min(100.0, pos_quality));
+        calculated_quality = std::min(v_cov_quality, pos_quality);
+    }
     
     // Set the quality in the packet
     vio_packet.quality = static_cast<int32_t>(calculated_quality);
@@ -762,7 +764,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     auto slam_feat = slam_features[feature->featid];
                     
                     printf("[QUALITY_DEBUG] Feature %zu (SLAM) - Grid[%d][%d] - Quality field: %.3f\n", 
-                           feature->featid, grid_x, grid_y, feature->quality);
+                           feature->featid, grid_x, grid_y, slam_feat->_quality);
                     //ATTENTION: COULD SOLVE THIS IN A BATCH MANNER, BUT FOR NOW DO THE FOR LOOP DIRECTLY
                     // Get covariance for this SLAM feature
                     Eigen::MatrixXd slam_cov;
@@ -783,7 +785,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     double cov_quality = std::max(0.0, 1.0 - max_eigenvalue);
                     
                     // Combine with feature quality field (if available)
-                    double feat_quality_field = (feature->quality >= 0) ? feature->quality : 0.5;
+                    double feat_quality_field = (slam_feat->_quality >= 0) ? slam_feat->_quality : 0.0;
                     
                     // Weight SLAM features more heavily
                     feature_quality = 0.7 * cov_quality + 0.3 * feat_quality_field;

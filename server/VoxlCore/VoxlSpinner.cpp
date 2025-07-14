@@ -384,7 +384,7 @@ int main(int argc, char *argv[])
 
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
 
-	voxl::Publisher::getInstance().start();
+	
 
 	/* make sure another instance isn't running
 	 * if return value is -3 then a background process is running with
@@ -443,6 +443,7 @@ int main(int argc, char *argv[])
 	// zeroTimeOut = boost::posix_time::microsec_clock::local_time();
 
 	usleep(100000); // 100ms
+	voxl::Publisher::getInstance().start();
 
 	while (main_running)
 	{
