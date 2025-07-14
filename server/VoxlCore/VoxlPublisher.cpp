@@ -810,7 +810,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     }
                     
                     // Use feature quality field (if available)
-                    double feat_quality_field = (feature->quality >= 0) ? feature->quality : 0.5;
+                    double feat_quality_field = (feature->quality >= 0) ? feature->quality : 0.0;
                     
                     // MSCKF features weighted less than SLAM features
                     feature_quality = 0.3 * feat_quality_field * measurement_weight;
