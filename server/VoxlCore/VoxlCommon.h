@@ -205,6 +205,7 @@ typedef struct cam_info
     int width;                                       ///< Image width in pixels
     int height;                                      ///< Image height in pixels
     bool is_fisheye;                                 ///< Flag indicating if camera uses fisheye lens
+    bool is_occluded_on_takeoff;                     ///< Flag indicating if camera is occluded on takeoff
     size_t cam_id;                                   ///< Unique camera identifier
 } cam_info;
 

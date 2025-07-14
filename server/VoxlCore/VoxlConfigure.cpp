@@ -201,9 +201,12 @@ namespace voxl
             if (!vio_cams[i].is_occluded_on_ground)
             {
                 takeoff_cams.push_back(i);
+                cam.is_occluded_on_takeoff = 0;
             }
-            if (vio_cams[i].is_occluded_on_ground)
+            if (vio_cams[i].is_occluded_on_ground){
                 is_there_an_occlluded_cam = 1;
+                cam.is_occluded_on_takeoff = vio_cams[i].is_occluded_on_ground;
+            }
 
             // GRAB INTRINSICS AND DISTORTION MODEL
             // THIS WHOLE SECTION CAN BE REMOVED -- PENDING CHECK
@@ -361,6 +364,9 @@ namespace voxl
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
         json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/etc/modalai/VoxlConfig/starling2");
         json_fetch_int_with_default(parent, "using_stereo", &using_stereo, 0);
+        json_fetch_float_with_default(parent, "takeoff_alt_threshold", &takeoff_alt_threshold, 0.5f);
+        json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_left", (int *)&occlude_stereo_left, 0);
+        json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_right", (int *)&occlude_stereo_right, 0);
         json_fetch_bool_with_default(parent, "sync_config", (int *)&sync_config, 1);
         if (json_get_parse_error_flag())
         {

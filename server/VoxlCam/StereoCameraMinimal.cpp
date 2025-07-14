@@ -127,7 +127,6 @@ namespace voxl
         curr_message_.camid = get_channel();
         curr_message_.metadata = meta;
 
-
         // SPLIT THE IMAGE HERE
         const int full_w   = meta.width;
         const int full_h   = meta.height;           // height of one camera
@@ -140,10 +139,24 @@ namespace voxl
         cv::Mat imgL(current_height, current_width, CV_8UC1, curr_message_.image_pixels);                    // cam-0
         cv::Mat imgR(current_height, current_width, CV_8UC1, curr_message_.image_pixels + bytes_one_img);    // cam-1
 
-        if (use_mask_.rows != current_height || use_mask_.cols != current_width)
-        {
-            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
+        // Check if dimensions changed and update masks efficiently
+        const bool dimensions_changed = (use_mask_.rows != current_height || use_mask_.cols != current_width);
+        if (dimensions_changed) {
+            mask_dimensions_changed_ = true;
         }
+
+        // Determine if masks should be active based on occlusion and altitude for each camera independently
+        // For stereo cameras, each camera might have different occlusion characteristics
+        const bool should_mask_left = occlude_stereo_left && 
+                                     std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        
+        // Right camera might have different occlusion logic - for now using same logic
+        // but this can be extended based on individual camera characteristics
+        const bool should_mask_right = occlude_stereo_right && 
+                                      std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        
+        // Update masks only when necessary with independent logic
+        update_masks_if_needed(should_mask_left, should_mask_right);
 
         ov_core::CameraData message;
         message.timestamp = (meta.timestamp_ns) * 1e-09; // TODO: check  if we should consider adding exposure time/2  --> NAIVELY ADDING BRING CHAOS (Multi-cam) DO IT AT YOUR OWN RISK
@@ -154,7 +167,7 @@ namespace voxl
 
         message.sensor_ids.push_back(get_id() + 1);
         message.images.emplace_back(imgR.clone());
-        message.masks.emplace_back(use_mask_);
+        message.masks.emplace_back(use_mask2_);
 
         if (!camera_queue.push(message))
         {
@@ -169,6 +182,44 @@ namespace voxl
         {
             // Notify fusion system that camera data is ready
             CameraQueueFusion::getInstance().markCameraReady(get_id());
+        }
+    }
+
+    void StereoCamera::update_masks_if_needed(bool should_mask_left, bool should_mask_right)
+    {
+        // Check if we need to update the masks
+        const bool needs_update_left = !current_mask_state_left_.has_value() || 
+                                 current_mask_state_left_.value() != should_mask_left ||
+                                 mask_dimensions_changed_;
+        
+        const bool needs_update_right = !current_mask_state_right_.has_value() || 
+                                 current_mask_state_right_.value() != should_mask_right ||
+                                 mask_dimensions_changed_;
+        
+        if (!needs_update_left && !needs_update_right) {
+            return;
+        }
+
+        // Update mask state
+        current_mask_state_left_ = should_mask_left;
+        current_mask_state_right_ = should_mask_right;
+        mask_dimensions_changed_ = false;
+
+        // Create or update both masks efficiently
+        if (should_mask_left) {
+            // Use cv::Scalar constructor for better performance
+            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(255));
+        } else {
+            // Use cv::Scalar constructor for better performance  
+            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
+        }
+
+        if (should_mask_right) {
+            // Use cv::Scalar constructor for better performance
+            use_mask2_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(255));
+        } else {
+            // Use cv::Scalar constructor for better performance  
+            use_mask2_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
         }
     }
 

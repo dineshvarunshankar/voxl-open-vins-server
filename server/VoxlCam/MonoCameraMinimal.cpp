@@ -20,6 +20,7 @@
 
 #include "MonoCameraMinimal.h"
 
+
 namespace voxl
 {
 
@@ -126,16 +127,23 @@ namespace voxl
         //  Use static buffer to avoid allocations in the hot path
         curr_message_.camid = get_channel();
         curr_message_.metadata = meta;
-
         memcpy(curr_message_.image_pixels, reinterpret_cast<uint8_t *>(frame), meta.size_bytes);
 
         // OpenCV view (no copy)
         cv::Mat image(current_height, current_width, CV_8UC1, curr_message_.image_pixels);
 
-        if (use_mask_.rows != current_height || use_mask_.cols != current_width)
-        {
-            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
+        // Check if dimensions changed and update mask efficiently
+        const bool dimensions_changed = (use_mask_.rows != current_height || use_mask_.cols != current_width);
+        if (dimensions_changed) {
+            mask_dimensions_changed_ = true;
         }
+
+        // Determine if mask should be active based on occlusion and altitude
+        const bool should_mask = camera_info_.is_occluded_on_takeoff && 
+                                std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        
+        // Update mask only when necessary
+        update_mask_if_needed(should_mask);
 
         ov_core::CameraData message;
         message.timestamp = (meta.timestamp_ns) * 1e-09; // TODO: check  if we should consider adding exposure time/2  --> NAIVELY ADDING BRING CHAOS (Multi-cam) DO IT AT YOUR OWN RISK
@@ -158,6 +166,31 @@ namespace voxl
         {
             // Notify fusion system that camera data is ready
             CameraQueueFusion::getInstance().markCameraReady(get_id());
+        }
+    }
+
+    void MonoCamera::update_mask_if_needed(bool should_mask)
+    {
+        // Check if we need to update the mask
+        const bool needs_update = !current_mask_state_.has_value() || 
+                                 current_mask_state_.value() != should_mask ||
+                                 mask_dimensions_changed_;
+        
+        if (!needs_update) {
+            return;
+        }
+
+        // Update mask state
+        current_mask_state_ = should_mask;
+        mask_dimensions_changed_ = false;
+
+        // Create or update mask efficiently
+        if (should_mask) {
+            // Use cv::Scalar constructor for better performance
+            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(255));
+        } else {
+            // Use cv::Scalar constructor for better performance  
+            use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
         }
     }
 

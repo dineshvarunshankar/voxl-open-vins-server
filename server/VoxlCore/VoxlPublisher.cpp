@@ -196,7 +196,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_packet.T_imu_wrt_vio[i] = static_cast<float>(p_I_G(i));
         vio_packet.vel_imu_wrt_vio[i] = static_cast<float>(v_I_G(i));
     }
-
+    alt_z.store(static_cast<float>(p_I_G(2)), std::memory_order_release);
     for (int i = 0; i < 3; i++)
     {
         for (int j = 0; j < 3; j++)

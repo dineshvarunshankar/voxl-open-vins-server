@@ -151,6 +151,18 @@ volatile int64_t last_cam_time = 0;
 /** @brief Number of cameras currently in use */
 int cameras_used = 0;
 
+/** @brief Altitude z */
+std::atomic<float> alt_z(0.0f);
+
+/** @brief Takeoff altitude threshold */
+float takeoff_alt_threshold = 0.5f;
+
+/** @brief Occlude stereo left */
+bool occlude_stereo_left = false;
+
+/** @brief Occlude stereo right */
+bool occlude_stereo_right = false;
+
 // ============================================================================
 // PIPE COMMUNICATION VARIABLES
 // ============================================================================

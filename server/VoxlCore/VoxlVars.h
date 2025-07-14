@@ -551,6 +551,22 @@ extern volatile int64_t last_cam_time;
  */
 extern int cameras_used;
 
+/**
+ * @brief Altitude z
+ * 
+ * Atomic variable for the altitude z
+ */
+extern std::atomic<float> alt_z;
+
+/** @brief Takeoff altitude threshold */
+extern float takeoff_alt_threshold;
+
+/** @brief Occlude stereo left */
+extern bool occlude_stereo_left;
+
+/** @brief Occlude stereo right */
+extern bool occlude_stereo_right;
+
 // ============================================================================
 // PIPE CHANNEL VARIABLES
 // ============================================================================

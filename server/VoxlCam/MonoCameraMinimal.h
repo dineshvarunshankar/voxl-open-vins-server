@@ -19,6 +19,7 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include <deque>
+#include <optional>
 
 namespace voxl
 {
@@ -83,6 +84,16 @@ namespace voxl
         void process_raw8(const camera_image_metadata_t &meta, char *frame);
 
         /**
+         * @brief Update mask based on current system state
+         *
+         * Efficiently updates the mask only when necessary, avoiding
+         * unnecessary allocations and copies.
+         *
+         * @param should_mask Whether the mask should be active
+         */
+        void update_mask_if_needed(bool should_mask);
+
+        /**
          * @brief Check if system is in reset state
          *
          * Determines whether the VIO system is currently in a reset state,
@@ -107,6 +118,12 @@ namespace voxl
 
         /** @brief Current image width in pixels */
         int current_width;
+
+        /** @brief Current mask state to avoid unnecessary updates */
+        std::optional<bool> current_mask_state_;
+
+        /** @brief Flag indicating if mask dimensions have changed */
+        bool mask_dimensions_changed_{false};
     };
 
 } // namespace voxl
