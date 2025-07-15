@@ -174,7 +174,6 @@ namespace voxl
          * @param corr_mat Correction matrix for coordinate transformations
          */
         void publish(std::shared_ptr<ov_msckf::State> state,
-                     std::shared_ptr<ov_core::TrackBase> trackbase,
                      Eigen::Matrix3d corr_mat,
                      std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map = {});
 

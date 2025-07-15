@@ -141,11 +141,9 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
  * - Applying proper quaternion and rotation matrix transformations
  *
  * @param state Current VIO state containing pose, velocity, and covariance
- * @param trackbase Current tracking information for feature data
  * @param corr_mat Correction matrix for coordinate transformations (currently unused)
  */
 void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
-                        std::shared_ptr<ov_core::TrackBase> trackbase,
                         Eigen::Matrix3d corr_mat,
                         std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map)
 {
@@ -482,59 +480,137 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
     {
-        std::unordered_map<size_t, std::vector<cv::KeyPoint>> pts = trackbase->get_last_obs();
-        std::unordered_map<size_t, std::vector<size_t>> ids = trackbase->get_last_ids();
-
         ext_vio_data_t ext_vio_packet;
         ext_vio_packet.v = vio_packet;
         ext_vio_packet.n_total_features = 0;
 
-        for (const auto &pair : pts)
+        double current_timestamp = state->_timestamp;
+        auto timestamp_iter = used_features_map.find(current_timestamp);
+        
+        if (timestamp_iter != used_features_map.end())
         {
-            int cam_id = pair.first;
-            const auto &kp_vec = pts[cam_id];
-            const auto &id_vec = ids[cam_id];
-
-            Eigen::Matrix3d R_I_C = ov_core::quat_2_Rot(state->_calib_IMUtoCAM[cam_id]->quat()).transpose();
-
-            for (size_t i_local = 0; i_local < id_vec.size(); i_local++)
+            const auto &features = timestamp_iter->second;
+        
+            // Group features by camera ID
+            std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
+            for (const auto &feature : features)
             {
-                size_t id = id_vec[i_local];
-
-                if (SLAM_FEATS.find(id) != SLAM_FEATS.end())
+                // Get camera ID from feature measurements
+                for (const auto &cam_meas : feature->timestamps)
                 {
-                    if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
-                        break;
+                    int cam_id = static_cast<int>(cam_meas.first);
+                    features_by_camera[cam_id].push_back(feature);
+                }
+            }
+            
+            ov_type::LandmarkRepresentation::Representation msckf_ref = state->_options.feat_rep_msckf;
+            
+            // Process each camera's features
+            for (const auto &camera_pair : features_by_camera)
+            {
+                int cam_id = camera_pair.first;
+                const auto &cam_features = camera_pair.second;
 
-                    int i_global = ext_vio_packet.n_total_features++;
+                Eigen::Matrix3d R_I_C = ov_core::quat_2_Rot(state->_calib_IMUtoCAM[cam_id]->quat()).transpose();
+                Eigen::Vector3d p_I_C = state->_calib_IMUtoCAM[cam_id]->pos();
 
-                    ext_vio_packet.features[i_global].id = id;
-                    ext_vio_packet.features[i_global].cam_id = cam_id;
-
-                    ext_vio_packet.features[i_global].pix_loc[0] = pts[cam_id][i_local].pt.x;
-                    ext_vio_packet.features[i_global].pix_loc[1] = pts[cam_id][i_local].pt.y;
-
-                    Eigen::Vector3d p_FinG;
-                    if (SLAM_FEATS[id]->_feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
+                for (const auto &feature : cam_features)
+                {
+                    // Check if this feature has measurements for this camera at current timestamp
+                    if (feature->timestamps.find(cam_id) == feature->timestamps.end() ||
+                        feature->uvs.find(cam_id) == feature->uvs.end())
                     {
-                        p_FinG = SLAM_FEATS[id]->get_xyz(true); // GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
-                        p_FinG = ov2frd * p_FinG;
+                        continue;
                     }
-                    else if (SLAM_FEATS[id]->_feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
+
+                    // Find the measurement index for the current timestamp
+                    const auto &timestamps = feature->timestamps.at(cam_id);
+                    auto time_iter = std::find(timestamps.begin(), timestamps.end(), current_timestamp);
+                    if (time_iter == timestamps.end())
                     {
-                        // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
-                        Eigen::Vector3d p_FinA = SLAM_FEATS[id]->get_xyz(false);
-                        Eigen::Vector3d T_I_C(0, 0, 0); // translation from imu to camera position
-                        p_FinG = R_I_G * (R_I_C * p_FinA + T_I_C) + p_I_G;
+                        continue;
                     }
+                    
+                    size_t meas_idx = std::distance(timestamps.begin(), time_iter);
+                    const auto &uv_meas = feature->uvs.at(cam_id)[meas_idx];
+
+
+                    // check if feature id found in SLAM set
+                    if (SLAM_FEATS.find(feature->featid) != SLAM_FEATS.end())
+                    {
+                        if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
+                            break;
+
+                        int i_global = ext_vio_packet.n_total_features++;
+
+                        ext_vio_packet.features[i_global].id = feature->featid;
+                        ext_vio_packet.features[i_global].cam_id = cam_id;
+
+                        // Extract pixel location from UV measurement
+                        ext_vio_packet.features[i_global].pix_loc[0] = uv_meas(0);
+                        ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
+
+                        Eigen::Vector3d p_FinG;
+                        if (SLAM_FEATS[feature->featid]->_feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
+                        {
+                            p_FinG = SLAM_FEATS[feature->featid]->get_xyz(true); // GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
+                            p_FinG = ov2frd * p_FinG;
+                        }
+                        else if (SLAM_FEATS[feature->featid]->_feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
+                        {
+                            // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
+                            Eigen::Vector3d p_FinA = SLAM_FEATS[feature->featid]->get_xyz(false);
+                            Eigen::Vector3d T_I_C(0, 0, 0); // translation from imu to camera position
+                            p_FinG = R_I_G * (R_I_C * p_FinA + p_I_C) + p_I_G;
+                        }
+                        else
+                        {
+                            printf("[WARNING] SLAM feat representation: %d not recognized, 3D point locations are likely invalid\n", SLAM_FEATS[feature->featid]->_feat_representation);
+                        }
+
+                        ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
+                        ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
+                        ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+
+                        ext_vio_packet.features[i_global].point_quality = HIGH;
+                    }
+                    // if not found in SLAM, then it is an MSCKF feature
                     else
                     {
-                        printf("[WARNING] feat representation not recognized, 3D point locations are likely invalid\n");
-                    }
+                        if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
+                            break;
 
-                    ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
-                    ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
-                    ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+                        int i_global = ext_vio_packet.n_total_features++;
+
+                        ext_vio_packet.features[i_global].id = feature->featid;
+                        ext_vio_packet.features[i_global].cam_id = cam_id;
+
+                        // Extract pixel location from UV measurement
+                        ext_vio_packet.features[i_global].pix_loc[0] = uv_meas(0);
+                        ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
+
+                        Eigen::Vector3d p_FinA = feature->p_FinA;
+                        Eigen::Vector3d p_FinG = feature->p_FinG;
+
+                        if (msckf_ref == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
+                        {
+                            p_FinG = ov2frd * p_FinG;
+                        }
+                        else if (msckf_ref == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
+                        {
+                            // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
+                            p_FinG = R_I_G * (R_I_C * p_FinA + p_I_C) + p_I_G;
+                        }
+                        else
+                        {
+                            printf("[WARNING] MSCKF feat representation: %s not recognized, 3D point locations are likely invalid\n", ov_type::LandmarkRepresentation::as_string(msckf_ref).c_str());
+                        }
+                        ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
+                        ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
+                        ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+
+                        ext_vio_packet.features[i_global].point_quality = MEDIUM;
+                    }
                 }
             }
         }
@@ -678,29 +754,32 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
     const int CLONES = 11;  // Number of clones for MSCKF weighting
     const double MAX_GRID_SCORE = 100.0;  // Maximum score when 50% of grids are filled
     const double GRID_FILL_THRESHOLD = 0.5;  // 50% of grids should be filled for max score
+    const int en_qual_debug = 0;
     
     double total_quality = 0.0;
     int total_grids_filled = 0;
     int total_grids = 0;
     
     // Debug: Print total features available
-    printf("[QUALITY_DEBUG] Total features in used_features_map: %zu\n", used_features_map.size());
-    printf("[QUALITY_DEBUG] Total SLAM features in state: %zu\n", slam_features.size());
+    if (en_qual_debug) {
+        printf("[QUALITY_DEBUG] Total features in used_features_map: %zu\n", used_features_map.size());
+        printf("[QUALITY_DEBUG] Total SLAM features in state: %zu\n", slam_features.size());
+    }
     
     // Get the current timestamp to find the most recent features
     double current_timestamp = state->_timestamp;
-    printf("[QUALITY_DEBUG] Current timestamp: %.6f\n", current_timestamp);
+    if (en_qual_debug) printf("[QUALITY_DEBUG] Current timestamp: %.6f\n", current_timestamp);
     
     // Find the features for the current timestamp
     auto timestamp_iter = used_features_map.find(current_timestamp);
     if (timestamp_iter == used_features_map.end()) {
         // No features for current timestamp, return low quality
-        printf("[QUALITY_DEBUG] No features found for current timestamp, returning low quality\n");
+        if (en_qual_debug) printf("[QUALITY_DEBUG] No features found for current timestamp, returning low quality\n");
         return 10.0;
     }
     
     const auto &features = timestamp_iter->second;
-    printf("[QUALITY_DEBUG] Features found for current timestamp: %zu\n", features.size());
+    if (en_qual_debug) printf("[QUALITY_DEBUG] Features found for current timestamp: %zu\n", features.size());
     
     // Group features by camera ID
     std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
@@ -712,9 +791,12 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         }
     }
     
-    printf("[QUALITY_DEBUG] Features grouped by camera:\n");
-    for (const auto &cam_pair : features_by_camera) {
-        printf("[QUALITY_DEBUG]   Camera %d: %zu features\n", cam_pair.first, cam_pair.second.size());
+    if (en_qual_debug) 
+    {
+        printf("[QUALITY_DEBUG] Features grouped by camera:\n");
+        for (const auto &cam_pair : features_by_camera) {
+            printf("[QUALITY_DEBUG]   Camera %d: %zu features\n", cam_pair.first, cam_pair.second.size());
+        }
     }
     
     // Count active SLAM and MSCKF features
@@ -726,7 +808,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         int cam_id = camera_pair.first;
         const auto &cam_features = camera_pair.second;
         
-        printf("[QUALITY_DEBUG] Processing camera %d with %zu features\n", cam_id, cam_features.size());
+        if (en_qual_debug) printf("[QUALITY_DEBUG] Processing camera %d with %zu features\n", cam_id, cam_features.size());
         
         // Initialize 5x5 grid for this camera
         std::vector<std::vector<int>> grid(GRID_SIZE, std::vector<int>(GRID_SIZE, 0));
@@ -744,6 +826,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                 !feature->uvs_norm.at(cam_id).empty()) {
                 
                 const auto &uv_norm = feature->uvs_norm.at(cam_id).back();
+                if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu - Camera %d - UV Norm: (%.3f, %.3f)\n", 
+                                            feature->featid, cam_id, uv_norm(0), uv_norm(1));
                 
                 // Convert normalized coordinates to grid coordinates
                 // Assuming normalized coordinates are in [-1, 1] range
@@ -763,8 +847,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     cam_slam_count++;
                     auto slam_feat = slam_features[feature->featid];
                     
-                    printf("[QUALITY_DEBUG] Feature %zu (SLAM) - Grid[%d][%d] - Quality field: %.3f\n", 
-                           feature->featid, grid_x, grid_y, slam_feat->_quality);
+                    if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu (SLAM) - Grid[%d][%d] - Quality field: %.3f, uniq_cam: %d, anchor_cam: %d\n", 
+                                                feature->featid, grid_x, grid_y, slam_feat->_quality, slam_feat->_unique_camera_id, slam_feat->_anchor_cam_id);
                     //ATTENTION: COULD SOLVE THIS IN A BATCH MANNER, BUT FOR NOW DO THE FOR LOOP DIRECTLY
                     // Get covariance for this SLAM feature
                     Eigen::MatrixXd slam_cov;
@@ -789,9 +873,10 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     
                     // Weight SLAM features more heavily
                     feature_quality = 0.7 * cov_quality + 0.3 * feat_quality_field;
-                    
-                    printf("[QUALITY_DEBUG]   SLAM Feature %zu - Max eigenvalue: %.6f, Cov quality: %.3f, Final quality: %.3f\n", 
-                           feature->featid, max_eigenvalue, cov_quality, feature_quality);
+                    // feature->quality = feature_quality; // Store in feature
+
+                    if (en_qual_debug) printf("[QUALITY_DEBUG]   SLAM Feature %zu - Max eigenvalue: %.6f, Cov quality: %.3f, Final quality: %.3f\n", 
+                                        feature->featid, max_eigenvalue, cov_quality, feature_quality);
                     
                 } else {
                     // This is an MSCKF feature
@@ -815,8 +900,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     // MSCKF features weighted less than SLAM features
                     feature_quality = 0.3 * feat_quality_field * measurement_weight;
                     
-                    printf("[QUALITY_DEBUG] Feature %zu (MSCKF) - Grid[%d][%d] - Quality field: %.3f, Measurements: %d, Weight: %.3f, Final quality: %.3f\n", 
-                           feature->featid, grid_x, grid_y, feat_quality_field, num_measurements, measurement_weight, feature_quality);
+                    if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu (MSCKF) - Grid[%d][%d] - Quality field: %.3f, Measurements: %d, Weight: %.3f, Final quality: %.3f\n", 
+                                                feature->featid, grid_x, grid_y, feat_quality_field, num_measurements, measurement_weight, feature_quality);
                 }
                 
                 // Add feature to grid
@@ -828,13 +913,13 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         total_active_slam += cam_slam_count;
         total_active_msckf += cam_msckf_count;
         
-        printf("[QUALITY_DEBUG] Camera %d summary - SLAM: %d, MSCKF: %d\n", cam_id, cam_slam_count, cam_msckf_count);
+        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d summary - SLAM: %d, MSCKF: %d\n", cam_id, cam_slam_count, cam_msckf_count);
         
         // Calculate grid distribution score for this camera
         int grids_with_features = 0;
         double camera_grid_score = 0.0;
         
-        printf("[QUALITY_DEBUG] Camera %d grid analysis:\n", cam_id);
+        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d grid analysis:\n", cam_id);
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
                 if (grid[i][j] > 0) {
@@ -852,8 +937,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     }
                     camera_grid_score += grid_cell_quality;
                     
-                    printf("[QUALITY_DEBUG]   Grid[%d][%d]: %d features, avg quality: %.3f\n", 
-                           i, j, grid[i][j], grid_quality[i][j] / grid[i][j]);
+                    if (en_qual_debug) printf("[QUALITY_DEBUG]   Grid[%d][%d]: %d features, avg quality: %.3f\n", 
+                                                i, j, grid[i][j], grid_quality[i][j] / grid[i][j]);
                 }
             }
         }
@@ -873,7 +958,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         // Combine grid distribution with feature quality
         double camera_score = 0.6 * grid_distribution_score + 0.4 * camera_grid_score;
         
-        printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n", 
+        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n", 
                cam_id, grid_fill_ratio, grid_distribution_score, camera_grid_score, camera_score);
         
         total_quality += camera_score;
@@ -881,7 +966,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         total_grids += GRID_SIZE * GRID_SIZE;
     }
     
-    printf("[QUALITY_DEBUG] Overall feature counts - Active SLAM: %d, Active MSCKF: %d\n", total_active_slam, total_active_msckf);
+    if (en_qual_debug) printf("[QUALITY_DEBUG] Overall feature counts - Active SLAM: %d, Active MSCKF: %d\n", total_active_slam, total_active_msckf);
     
     // Calculate final quality score
     double final_quality = 0.0;
@@ -893,7 +978,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
     // Ensure quality is within bounds
     final_quality = std::max(0.0, std::min(100.0, total_quality));
     
-    printf("[QUALITY_DEBUG] Final quality calculation - Total quality: %.3f, Num cameras: %zu, Final quality: %.3f\n", 
+    if (en_qual_debug) printf("[QUALITY_DEBUG] Final quality calculation - Total quality: %.3f, Num cameras: %zu, Final quality: %.3f\n", 
            total_quality, features_by_camera.size(), final_quality);
     
     return final_quality;

@@ -33,7 +33,6 @@ namespace
 
     // CACHE SHARED PTR TO AVOID REPEATED ALLOCATION AT HIGH FREQUENCY
     std::shared_ptr<ov_msckf::State> cached_state;
-    std::shared_ptr<ov_core::TrackBase> cached_trackbase;
     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
     // THIS IS HERE TO ACCOMODATE THE FACT THAT THE IMU IS NOT ALWAYS MOUNTED IN THE SAME ORIENTATION
@@ -246,10 +245,9 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             cached_state = vio_manager->get_state();
             // }
 
-            cached_trackbase = vio_manager->get_track_feats();
             cached_features_map = vio_manager->get_used_features_map();
 
-            voxl::Publisher::getInstance().publish(cached_state, cached_trackbase, frame_transform.correction_matrix, cached_features_map);
+            voxl::Publisher::getInstance().publish(cached_state, frame_transform.correction_matrix, cached_features_map);
         }
     }
 
