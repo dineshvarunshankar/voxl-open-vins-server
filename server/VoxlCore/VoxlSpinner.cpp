@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sched.h>
+#include <getopt.h>
 
 // ============================================================================
 // FORWARD DECLARATIONS
@@ -84,6 +85,17 @@ static int connect_client_pipes(void);
  * @return 0 on success, -1 on failure
  */
 static int create_server_pipes(void);
+
+/**
+ * @brief Print usage information for command line options
+ *
+ * Displays help information about available command line options
+ * and their usage. This function is called when invalid options
+ * are provided or when the help option is requested.
+ *
+ * @param program_name Name of the program (argv[0])
+ */
+static void print_usage(const char *program_name);
 
 // ============================================================================
 // UTILITY FUNCTIONS
@@ -317,6 +329,31 @@ static int create_server_pipes(void)
 	return 0;
 }
 
+/**
+ * @brief Print usage information for command line options
+ *
+ * Displays help information about available command line options
+ * and their usage. This function is called when invalid options
+ * are provided or when the help option is requested.
+ *
+ * @param program_name Name of the program (argv[0])
+ */
+static void print_usage(const char *program_name)
+{
+	printf("Usage: %s [OPTIONS]\n", program_name);
+	printf("VOXL OpenVINS Server - Visual Inertial Odometry System\n\n");
+	printf("Options:\n");
+	printf("  -d, --debug     Enable debug output and detailed logging\n");
+	printf("  -v, --verbose   Enable verbose output and status information\n");
+	printf("  -c, --config    Configuration only mode (load and validate config)\n");
+	printf("  -h, --help      Display this help message\n\n");
+	printf("Examples:\n");
+	printf("  %s              Run server with default settings\n", program_name);
+	printf("  %s -d           Run server with debug output enabled\n", program_name);
+	printf("  %s -v -c        Load configuration only with verbose output\n", program_name);
+	printf("  %s --debug --verbose  Run with both debug and verbose output\n", program_name);
+}
+
 // ============================================================================
 // MAIN FUNCTION
 // ============================================================================
@@ -353,7 +390,53 @@ using namespace ov_msckf;
  */
 int main(int argc, char *argv[])
 {
-	// TODO PARSE OPTS
+	// Parse command line options
+	int opt;
+	const char *short_options = "dvhc";
+	struct option long_options[] = {
+		{"debug", no_argument, 0, 'd'},
+		{"verbose", no_argument, 0, 'v'},
+		{"help", no_argument, 0, 'h'},
+		{"config", no_argument, 0, 'c'},
+		{0, 0, 0, 0}
+	};
+
+	while ((opt = getopt_long(argc, argv, short_options, long_options, NULL)) != -1) {
+		switch (opt) {
+			case 'd':
+				en_debug = 1;
+				if (en_verbose) {
+					printf("Debug mode enabled\n");
+				}
+				break;
+			case 'v':
+				en_verbose = 1;
+				if (en_verbose) {
+					printf("Verbose mode enabled\n");
+				}
+				break;
+			case 'c':
+				config_only = 1;
+				if (en_verbose) {
+					printf("Configuration only mode enabled\n");
+				}
+				break;
+			case 'h':
+				print_usage(argv[0]);
+				_quit(-1);
+				break; // This break is unreachable but prevents compiler warning
+			default:
+				print_usage(argv[0]);
+				break;
+		}
+	}
+
+	// Check for any non-option arguments
+	if (optind < argc) {
+		printf("Error: Unexpected arguments provided\n");
+		print_usage(argv[0]);
+		return 1;
+	}
 
 	// Load the config files
 	if (voxl::read_server_config() < 0)
@@ -361,8 +444,14 @@ int main(int argc, char *argv[])
 		printf("config_file_read() < 0\n");
 		_quit(-1);
 	}
-	// //TODO CONFIG ONLY CASE
-	// config_file_print();
+
+	// If configuration only mode is enabled, exit after loading config
+	if (config_only) {
+		if (en_verbose) {
+			printf("Configuration loaded successfully. Exiting due to config-only mode.\n");
+		}
+		return 0;
+	}
 
 	// read camera multicam setup and configs
 	if (voxl::sync_cam_config() < 0)
@@ -370,6 +459,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR cam_config_file_read\n");
 		_quit(-1);
 	}
+	if (en_verbose) {
+		printf("Camera configuration synchronized successfully\n");
+	}
+
 	std::string config_path = std::string(folder_base) + "/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
 
 	// Create the VIO Manager -- Core OpenVINS state
@@ -380,7 +473,11 @@ int main(int argc, char *argv[])
 	std::string verbosity = "SILENT";
 	parser->parse_config("verbosity", verbosity);
 	vio_manager_options.print_and_load(parser);
-	ov_core::Printer::setPrintLevel(ov_core::Printer::SILENT);
+	if (en_verbose) {
+		ov_core::Printer::setPrintLevel(ov_core::Printer::DEBUG);
+	} else {
+		ov_core::Printer::setPrintLevel(ov_core::Printer::SILENT);
+	}
 
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
 

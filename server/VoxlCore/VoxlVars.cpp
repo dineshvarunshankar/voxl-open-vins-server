@@ -114,6 +114,12 @@ char folder_base[CHAR_BUF_SIZE] = "/etc/modalai/VoxlConfig/starling2";
 /** @brief Enable debug output */
 int en_debug = 0;
 
+/** @brief Enable verbose output */
+int en_verbose = 0;
+
+/** @brief Configuration only mode */
+int config_only = 0;
+
 
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES

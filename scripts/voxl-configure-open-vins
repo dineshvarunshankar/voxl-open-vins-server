@@ -42,7 +42,7 @@ print_usage () {
 	echo "voxl-configure-open-vins disable"
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
-	echo "voxl-configure-open-vins experimentalz"
+	echo "voxl-configure-open-vins d8v4"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -104,28 +104,14 @@ reset_config_file_to_default () {
 	${NAME} -c
 }
 
-enable_experimentalZ () {
 
+enable_d8v4_config () {
 	reset_config_file_to_default
-    set_param auto_reset_max_v_cov_timeout_s 5 #30
-    set_param auto_reset_min_features 1
-    set_param auto_reset_min_feature_timeout_s 3 #30
-    set_param auto_fallback_timeout_s 3
-    set_param max_clone_size 11
-    set_param max_slam_features 35
-    set_param max_slam_in_update 15
-    set_param max_msckf_in_update 30
-    set_param msckf_chi2_multiplier 40
-    set_param refine_features true
-    set_param msckf_sigma_px 1.8
-    set_param slam_sigma_px 1.8
-    set_param num_features_to_track 40
-    set_param grid_x 5
-    set_param grid_y 5
-    set_param pyr_levels 6
+	set_param using_stereo 1
+	set_param sync_config 0
+	set_param yaml_folder "/etc/modalai/VoxlConfig/d0008-v4"
 	enable_service_and_exit
 }
-
 
 
 ################################################################################
@@ -162,8 +148,8 @@ case ${arg} in
 	"enable")
 		enable_service_and_exit
 		;;
-	"experimentalz")
-		enable_experimentalZ
+	"d8v4")
+		enable_d8v4_config
 		;;
 	*)
 		echo "invalid option"

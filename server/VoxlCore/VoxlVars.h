@@ -467,6 +467,23 @@ extern char folder_base[CHAR_BUF_SIZE];
  */
 extern int en_debug;
 
+/**
+ * @brief Enable verbose output
+ *
+ * Flag to enable verbose logging and detailed status information
+ * for monitoring and debugging purposes.
+ */
+extern int en_verbose;
+
+/**
+ * @brief Configuration only mode
+ *
+ * Flag to enable configuration-only mode where the server
+ * only loads and validates configuration without starting
+ * the main processing loop.
+ */
+extern int config_only;
+
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
 // ============================================================================
