@@ -11,6 +11,7 @@
 DEPS_QRB5165="
 libmodal-json
 libmodal-pipe
+libmodal-flow
 libmodal-cv
 voxl-mavlink
 voxl-opencv

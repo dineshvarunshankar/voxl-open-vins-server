@@ -28,6 +28,7 @@
 #include "CameraManager.h"
 #include <modal_pipe.h>
 #include <modal_json.h>
+#include <modal_flow.h>
 #include <voxl_common_config.h>
 #include "VoxlCommon.h"
 #include "VoxlVars.h"
@@ -462,6 +463,12 @@ int main(int argc, char *argv[])
 	if (en_verbose) {
 		printf("Camera configuration synchronized successfully\n");
 	}
+
+	auto& oclMgr = VoxlOCLManager::instance();
+	if (oclMgr.init()) {
+        std::cerr << "OpenCL init failed!\n";
+        return -1;
+    }
 
 	std::string config_path = std::string(folder_base) + "/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
 
