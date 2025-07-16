@@ -43,6 +43,7 @@ print_usage () {
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
 	echo "voxl-configure-open-vins d8v4"
+	echo "voxl-configure-open-vins starling2"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -113,6 +114,15 @@ enable_d8v4_config () {
 	enable_service_and_exit
 }
 
+enable_starling2_config () {
+	echo "enabling starling2 config"
+	echo "ASSUMING 3 CAMERAS ARE CONNECTED"
+	reset_config_file_to_default
+	set_param sync_config 0
+	set_param yaml_folder "/etc/modalai/VoxlConfig/starling2"
+	enable_service_and_exit
+}
+
 
 ################################################################################
 ## actual start of execution, handle optional arguments first
@@ -150,6 +160,9 @@ case ${arg} in
 		;;
 	"d8v4")
 		enable_d8v4_config
+		;;
+	"starling2")
+		enable_starling2_config
 		;;
 	*)
 		echo "invalid option"
