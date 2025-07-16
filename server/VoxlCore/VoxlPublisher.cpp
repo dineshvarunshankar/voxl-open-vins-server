@@ -162,7 +162,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // GLOBAL VELOCITY IN IMU FRAME FOLLOWS: v_I = {I}q_{G} \otimes v_G \otimes {G}q_{I}
     Eigen::Matrix3d R_I_G = ov_core::quat_2_Rot(q_I_G);
     auto RPY = ov_core::rot2rpy(R_I_G);
-    printf("gravity axis: %d, gravity direction: %d\n", static_cast<int>(frame_transform.gravity_axis), static_cast<int>(frame_transform.gravity_direction));
+    // printf("gravity axis: %d, gravity direction: %d\n", static_cast<int>(frame_transform.gravity_axis), static_cast<int>(frame_transform.gravity_direction));
     //AT THIS POINT, BETTER TO ROTATE IT USING THE CORRECTION MATRIX...
     //EXECUTE THE FORBIDDEN TECHNIQUE:
     //CHECK IF THE IMU IS MOUNTED IN THE CORRECT WAY, I.E., 
