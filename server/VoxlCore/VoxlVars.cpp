@@ -17,6 +17,8 @@
 #include <mutex>
 #include <vector>
 #include <string>
+#include <cmath>
+#include <algorithm>
 
 // ============================================================================
 // CORE VIO MANAGER
@@ -138,6 +140,9 @@ std::vector<cam_info> cam_info_vec;
 /** @brief Timestamp of last IMU data (nanoseconds) */
 volatile int64_t last_imu_timestamp_ns = 0;
 
+/** @brief Global frame transform instance */
+voxl::FrameTransform frame_transform;
+
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES
 // ============================================================================
@@ -185,3 +190,63 @@ voxl::img_ringbuf_packet *img_ringbuf = nullptr;
 
 
 bool sync_config = true; ///< Flag to indicate if configuration synchronization is enabled
+
+// ============================================================================
+// FRAME TRANSFORM IMPLEMENTATION
+// ============================================================================
+
+void voxl::FrameTransform::update(const imu_data_t &data)
+{
+    if (is_initialized)
+        return; // CHECK IF WE HAVE ALREADY DONE THIS
+
+    // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
+    // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
+    std::array<double, 3> accel{data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]};
+    auto max_it = std::max_element(accel.begin(), accel.end(),
+                                   [](double a, double b)
+                                   { return std::abs(a) < std::abs(b); });
+
+    gravity_axis = static_cast<Axis>(std::distance(accel.begin(), max_it));
+    gravity_direction = *max_it > 0 ? Direction::POSITIVE : Direction::NEGATIVE;
+
+    // NOW COMPUTE CORRECTION MATRIX BASED ON GRAVITY AXIS AND DIRECTION
+    // CASES ARE HARD-CODED BUT YOU CAN EDIT AND ADD MORE CASES AS NEEDED
+    switch (gravity_axis)
+    {
+    case Axis::X:
+        if (data.accl_ms2[2] < 0)
+        {
+            correction_matrix = Eigen::AngleAxisd(
+                                    (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
+                                    Eigen::Vector3d::UnitY())
+                                    .toRotationMatrix();
+        }
+        else
+        {
+            correction_matrix = Eigen::AngleAxisd(
+                                    -(gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
+                                    Eigen::Vector3d::UnitY())
+                                    .toRotationMatrix() *
+                                Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+        }
+        break;
+    case Axis::Y:
+        correction_matrix = Eigen::AngleAxisd(
+                                (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
+                                Eigen::Vector3d::UnitX())
+                                .toRotationMatrix();
+        break;
+    case Axis::Z:
+        if (gravity_direction == Direction::POSITIVE)
+        {
+            correction_matrix = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+        }
+        break;
+    }
+
+    is_initialized = true;
+    printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
+           static_cast<int>(gravity_axis),
+           static_cast<int>(gravity_direction));
+}

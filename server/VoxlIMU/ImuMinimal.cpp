@@ -35,95 +35,7 @@ namespace
     std::shared_ptr<ov_msckf::State> cached_state;
     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
-    // THIS IS HERE TO ACCOMODATE THE FACT THAT THE IMU IS NOT ALWAYS MOUNTED IN THE SAME ORIENTATION
-    // VISION HUB ALSO EXPECTS DATA TO BE IN FRD AND IMU FRAME-ORIENTATION
-    //  -- FOR SPECIAL SETUPS THIS IS YOUR BREAD AND BUTTER, BUT MAKE SURE YOUR EXTRINSICS ARE CORRECT FOR YOUR SETUP
-    struct FrameTransform
-    {
-        // WE NEED TO FIND THE AXIS WHERE GRAVITY IS MOST PREDOMINANT AND ITS DIRECTION
-        // THEN WE CAN COMPUTE THE CORRECTION MATRIX
-        enum class Axis
-        {
-            X,
-            Y,
-            Z
-        };
-        enum class Direction
-        {
-            POSITIVE,
-            NEGATIVE
-        };
-
-        // ASSUME IMU IS MOUNTED ALIGNED WITH THE BODY FRAME
-        Axis gravity_axis{Axis::Z};
-        Direction gravity_direction{Direction::NEGATIVE};
-        bool is_initialized{false};
-        Eigen::Matrix3d correction_matrix{Eigen::Matrix3d::Identity()};
-
-        // PROVE THE ASSUMPTION
-        void update(const imu_data_t &data)
-        {
-            if (is_initialized)
-                return; // CHECK IF WE HAVE ALREADY DONE THIS
-
-            // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
-            // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
-            std::array<double, 3> accel{data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]};
-            auto max_it = std::max_element(accel.begin(), accel.end(),
-                                           [](double a, double b)
-                                           { return std::abs(a) < std::abs(b); });
-
-            gravity_axis = static_cast<Axis>(std::distance(accel.begin(), max_it));
-            gravity_direction = *max_it > 0 ? Direction::POSITIVE : Direction::NEGATIVE;
-
-            // NOW COMPUTE CORRECTION MATRIX BASED ON GRAVITY AXIS AND DIRECTION
-            // CASES ARE HARD-CODED BUT YOU CAN EDIT AND ADD MORE CASES AS NEEDED
-            switch (gravity_axis)
-            {
-            case Axis::X:
-                if (data.accl_ms2[2] < 0)
-                {
-                    correction_matrix = Eigen::AngleAxisd(
-                                            (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                            Eigen::Vector3d::UnitY())
-                                            .toRotationMatrix();
-                }
-                else
-                {
-                    correction_matrix = Eigen::AngleAxisd(
-                                            -(gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                            Eigen::Vector3d::UnitY())
-                                            .toRotationMatrix() *
-                                        Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-                }
-                break;
-            case Axis::Y:
-                correction_matrix = Eigen::AngleAxisd(
-                                        (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                        Eigen::Vector3d::UnitX())
-                                        .toRotationMatrix();
-                break;
-            case Axis::Z:
-                if (gravity_direction == Direction::POSITIVE)
-                {
-                    correction_matrix = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-                }
-                break;
-            }
-
-            is_initialized = true;
-            printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
-                   static_cast<int>(gravity_axis),
-                   static_cast<int>(gravity_direction));
-        }
-
-        Eigen::Vector3d transform(const Eigen::Vector3d &v) const
-        {
-            return correction_matrix * v;
-        }
-    };
-
-    FrameTransform frame_transform;
+    // FrameTransform is now defined in VoxlVars.h and instantiated globally
 }
 
 /** @brief Mutex for IMU data access synchronization */
@@ -247,7 +159,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 
             cached_features_map = vio_manager->get_used_features_map();
 
-            voxl::Publisher::getInstance().publish(cached_state, frame_transform.correction_matrix, cached_features_map);
+            voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
         }
     }
 

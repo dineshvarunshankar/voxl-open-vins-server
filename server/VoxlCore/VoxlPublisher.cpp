@@ -141,10 +141,8 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
  * - Applying proper quaternion and rotation matrix transformations
  *
  * @param state Current VIO state containing pose, velocity, and covariance
- * @param corr_mat Correction matrix for coordinate transformations (currently unused)
  */
 void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
-                        Eigen::Matrix3d corr_mat,
                         std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map)
 {
     vio_packet.magic_number = VIO_MAGIC_NUMBER;
@@ -164,10 +162,35 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // GLOBAL VELOCITY IN IMU FRAME FOLLOWS: v_I = {I}q_{G} \otimes v_G \otimes {G}q_{I}
     Eigen::Matrix3d R_I_G = ov_core::quat_2_Rot(q_I_G);
     auto RPY = ov_core::rot2rpy(R_I_G);
-    RPY(0) = -RPY(0);
-    RPY(1) = -M_PI + RPY(1);
-    RPY(2) = +M_PI - RPY(2);
-    R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
+    printf("gravity axis: %d, gravity direction: %d\n", static_cast<int>(frame_transform.gravity_axis), static_cast<int>(frame_transform.gravity_direction));
+    //AT THIS POINT, BETTER TO ROTATE IT USING THE CORRECTION MATRIX...
+    //EXECUTE THE FORBIDDEN TECHNIQUE:
+    //CHECK IF THE IMU IS MOUNTED IN THE CORRECT WAY, I.E., 
+    //GRAVITY IS POINTING DOWN Z
+    //IF NOT, EXECUTE THE FORBIDDEN TECHNIQUE:
+    float grav_vec[3];
+    if (frame_transform.gravity_axis == FrameTransform::Axis::Z && frame_transform.gravity_direction == FrameTransform::Direction::POSITIVE){
+        //FORBIDDEN TECHNIQUE (STINGER CASE)
+        RPY(0) = -RPY(0);
+        RPY(1) = M_PI - RPY(1);
+        RPY(2) = -M_PI + RPY(2);
+        R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
+        // GRAVITY VECTOR
+        grav_vec[0] = 0;
+        grav_vec[1] = 0;
+        grav_vec[2] = static_cast<float>(-9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+    } else {
+        //CLASSIC CASE: STARLING2, STARLING MAX, D8V4, D8V5
+        RPY(0) = -RPY(0);
+        RPY(1) = -M_PI + RPY(1);
+        RPY(2) = M_PI - RPY(2);
+        R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
+        // GRAVITY VECTOR
+        grav_vec[0] = 0;
+        grav_vec[1] = 0;
+        grav_vec[2] = static_cast<float>(9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+    }
+    memcpy(vio_packet.gravity_vector, grav_vec, sizeof(float) * 3);
 
     // NOW CONVERT IT TO FRD FRAME
     auto ov2frd = R_OV_FRD(); // TODO: PASS AN ARG FOR HINTING THE RIGHT BOARD ORIENTATION ETC
@@ -244,9 +267,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     vio_packet.velocity_covariance[6] = static_cast<float>(covariance_posori(7, 7));
     vio_packet.velocity_covariance[11] = static_cast<float>(covariance_posori(8, 8));
 
-    // GRAVITY VECTOR
-    float grav_vec[3] = {0, 0, static_cast<float>(9.81)}; // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
-    memcpy(vio_packet.gravity_vector, grav_vec, sizeof(float) * 3);
+
 
     // NOW LET'S HANDLE THE EXTRINSICS CAMERA TO IMU
     Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(state->_calib_IMUtoCAM[0]->quat()).transpose();

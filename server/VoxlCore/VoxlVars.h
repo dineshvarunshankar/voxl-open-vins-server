@@ -59,6 +59,45 @@ namespace voxl
         camera_image_metadata_t metadata;     ///< Image metadata (timestamp, format, etc.)
         uint8_t image_pixels[MAX_IMAGE_SIZE]; ///< Raw image pixel data
     } img_ringbuf_packet;
+
+    /**
+     * @struct FrameTransform
+     * @brief Structure for handling IMU frame transformations
+     *
+     * This structure handles the transformation of IMU data to accommodate
+     * different IMU mounting orientations. It automatically detects the gravity
+     * axis and direction to compute the appropriate correction matrix.
+     */
+    struct FrameTransform
+    {
+        // WE NEED TO FIND THE AXIS WHERE GRAVITY IS MOST PREDOMINANT AND ITS DIRECTION
+        // THEN WE CAN COMPUTE THE CORRECTION MATRIX
+        enum class Axis
+        {
+            X,
+            Y,
+            Z
+        };
+        enum class Direction
+        {
+            POSITIVE,
+            NEGATIVE
+        };
+
+        // ASSUME IMU IS MOUNTED ALIGNED WITH THE BODY FRAME
+        Axis gravity_axis{Axis::Z};
+        Direction gravity_direction{Direction::NEGATIVE};
+        bool is_initialized{false};
+        Eigen::Matrix3d correction_matrix{Eigen::Matrix3d::Identity()};
+
+        // PROVE THE ASSUMPTION
+        void update(const imu_data_t &data);
+
+        Eigen::Vector3d transform(const Eigen::Vector3d &v) const
+        {
+            return correction_matrix * v;
+        }
+    };
 }
 
 // ============================================================================
@@ -523,6 +562,14 @@ extern volatile int64_t last_imu_timestamp_ns;
  * between multiple threads.
  */
 extern std::mutex imu_lock_mutex;
+
+/**
+ * @brief Global frame transform instance
+ *
+ * Global instance of the frame transform structure used for
+ * handling IMU frame transformations across the system.
+ */
+extern voxl::FrameTransform frame_transform;
 
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES

@@ -170,11 +170,9 @@ namespace voxl
          * systems through the configured pipe interfaces.
          *
          * @param state Current VIO state
-         * @param trackbase Current tracking information
-         * @param corr_mat Correction matrix for coordinate transformations
+         * @param used_features_map Map of used features at current timestamp
          */
         void publish(std::shared_ptr<ov_msckf::State> state,
-                     Eigen::Matrix3d corr_mat,
                      std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map = {});
 
         /**
