@@ -92,11 +92,10 @@ namespace voxl
             vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
         }
         
-        // check if in flight processing count reaches zero
-        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+        // check if in flight processing count reaches zero and if a reset is requested
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
         {
-            // If we are resetting, notify the reset condition variable
-            // This will wake up the reset thread to continue processing
+            // Notify the reset thread to continue processing
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
         }

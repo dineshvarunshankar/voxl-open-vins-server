@@ -1,10 +1,12 @@
-cmake_minimum_required(VERSION 3.3)
+cmake_minimum_required(VERSION 3.22)
 
 project(voxl-open-vins-server)
 
 # Set the C++ standard
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+
 
 # Set the C Standard
 set(CMAKE_C_STANDARD 99)

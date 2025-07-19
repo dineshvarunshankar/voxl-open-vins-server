@@ -127,7 +127,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     {
         vio_error_codes |= ERROR_CODE_DROPPED_IMU;
         // Decrement callback counter before returning to keep active_callbacks balanced
-        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
         {
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
@@ -164,7 +164,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     }
 
     // check if in flight processing count reaches zero
-    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
     {
         // If we are resetting, notify the reset condition variable
         // This will wake up the reset thread to continue processing

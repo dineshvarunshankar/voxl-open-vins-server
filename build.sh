@@ -5,7 +5,7 @@ TOOLCHAIN_QRB5165_1_32="/opt/cross_toolchain/qrb5165_ubun1_18.04_arm32.toolchain
 TOOLCHAIN_QRB5165_1_64="/opt/cross_toolchain/qrb5165_ubun1_18.04_aarch64.toolchain.cmake"
 
 # placeholder in case more cmake opts need to be added later
-EXTRA_OPTS=""
+EXTRA_OPTS="" #'-DCMAKE_EXE_LINKER_FLAGS="-lpthread"'
 
 ## this list is just for tab-completion
 AVAILABLE_PLATFORMS="qrb5165 native"

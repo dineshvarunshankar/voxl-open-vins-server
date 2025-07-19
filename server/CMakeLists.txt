@@ -10,7 +10,7 @@ message(STATUS "qrb build: " ${BUILD_QRB5165})
 # Set the compiler flags - Enable C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS ON)
 
 add_compile_options(-Wall -Wextra -Wuninitialized -Wno-unused-variable -Wno-double-promotion -Wno-unused-parameter -Wmissing-declarations -Wno-unused-function -Wno-maybe-uninitialized)
 
@@ -53,7 +53,7 @@ install(FILES
 find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
 find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
 find_library(MODAL_FLOW_LIBRARY modal_flow REQUIRED HINTS /usr/lib64)
-find_library(LIB_CERES NAMES libceres.so.1 REQUIRED HINTS /usr/lib /usr/lib64)
+find_library(LIB_CERES NAMES libceres.so.2.0.0 REQUIRED HINTS /usr/lib /usr/lib64)
 find_library(OPENCL_LIBRARY NAMES OpenCL libOpenCL.so HINTS /usr/lib64)
 find_library(MODALCV    modalcv    HINTS  /usr/lib64)
 find_library(VOXL_COMMON_CONFIG voxl_common_config HINTS  /usr/lib64)
