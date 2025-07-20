@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Modal AI Inc. 2022
+# Modal AI Inc. 2025
 # author: james@modalai.com
 
 

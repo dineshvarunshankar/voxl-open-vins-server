@@ -3,7 +3,7 @@ Version: 0.3.15
 Section: base
 Priority: optional
 Architecture: arm64
-Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,voxl-opencv,voxl-ceres-solver
+Depends: libmodal-pipe,libmodal-json,voxl-mpa-tools,libmodal-flow,voxl-ceres-solver
 Conflicts: voxl-open-vins
 Replaces: voxl-open-vins
 Provides: voxl-open-vins-server,voxl-open-vins

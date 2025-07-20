@@ -8,7 +8,7 @@
 # try to reload services, but don't fail if it can't
 set +e
 if [ -f /bin/systemctl ]; then
-    systemctl daemon-reload
+	systemctl daemon-reload
 fi
 
 ## always exit 0 to keep opkg happy in voxl-emulator

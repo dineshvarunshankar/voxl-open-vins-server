@@ -2,10 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 
 include(GNUInstallDirs)
 
-option(BUILD_QRB5165 "Build the qrb5165 binary" OFF)
 
 
-message(STATUS "qrb build: " ${BUILD_QRB5165})
 
 # Set the compiler flags - Enable C++17
 set(CMAKE_CXX_STANDARD 17)
@@ -50,13 +48,10 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 # Find extras
-find_library(MODAL_PIPE_LIBRARY modal_pipe REQUIRED HINTS /usr/lib64)
-find_library(MODAL_JSON_LIBRARY modal_json REQUIRED HINTS /usr/lib64)
+
+
 find_library(MODAL_FLOW_LIBRARY modal_flow REQUIRED HINTS /usr/lib64)
-find_library(LIB_CERES NAMES libceres.so.2.0.0 REQUIRED HINTS /usr/lib /usr/lib64)
 find_library(OPENCL_LIBRARY NAMES OpenCL libOpenCL.so HINTS /usr/lib64)
-find_library(MODALCV    modalcv    HINTS  /usr/lib64)
-find_library(VOXL_COMMON_CONFIG voxl_common_config HINTS  /usr/lib64)
 
 
 
@@ -131,13 +126,13 @@ target_link_libraries(${SERVERNAME}
     ov_init_lib
     yaml-cpp
     pthread
-    ${MODAL_JSON_LIBRARY}
-    ${MODAL_PIPE_LIBRARY}
+    modal_json
+    modal_pipe
     ${MODAL_FLOW_LIBRARY}
-    ${LIB_CERES}
-    ${VOXL_COMMON_CONFIG}
+    ceres
+    voxl_common_config
     ${OpenCV_LIBRARIES}
-    ${MODALCV}
+    modalcv
     ${OPENCL_LIBRARY}
     boost_system boost_date_time boost_filesystem
 )

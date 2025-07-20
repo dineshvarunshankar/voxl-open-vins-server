@@ -1,6 +1,6 @@
 _voxl-configure-open-vins(){
 
-    local OPTS=('disable help factory_enable enable')
+    local OPTS=('disable help factory_enable enable d8v4 starling2')
 
     COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then

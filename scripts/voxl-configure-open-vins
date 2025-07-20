@@ -1,4 +1,4 @@
-\#!/bin/bash
+#!/bin/bash
 ################################################################################
 # Copyright 2024 ModalAI Inc.
 #
@@ -66,7 +66,14 @@ set_param () {
 	val="${val%\"}"
 	val="${val#\"}"
 
-	sed -E -i "/\"$var\":/c\	\"$var\":	$val," ${CONFIG_FILE}
+	if grep -qE "\"$var\":.*," "$CONFIG_FILE"; then
+		# Line ends with a comma — safe to replace with a comma
+		sed -E -i "s/\"$var\":.*/\"$var\": $val,/" "$CONFIG_FILE"
+	else
+		# Last line (no comma) — replace without a comma
+		sed -E -i "s/\"$var\":.*/\"$var\": $val/" "$CONFIG_FILE"
+	fi
+
 }
 
 ## set string parameters which need quotes in json
@@ -109,8 +116,8 @@ reset_config_file_to_default () {
 enable_d8v4_config () {
 	reset_config_file_to_default
 	set_param using_stereo 1
-	set_param sync_config 0
-	set_param yaml_folder "/etc/modalai/VoxlConfig/d0008-v4"
+	set_param sync_config false
+	set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/d0008-v4"
 	enable_service_and_exit
 }
 
@@ -118,8 +125,8 @@ enable_starling2_config () {
 	echo "enabling starling2 config"
 	echo "ASSUMING 3 CAMERAS ARE CONNECTED"
 	reset_config_file_to_default
-	set_param sync_config 0
-	set_param yaml_folder "/etc/modalai/VoxlConfig/starling2"
+	set_param sync_config false
+	set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/starling2"
 	enable_service_and_exit
 }
 

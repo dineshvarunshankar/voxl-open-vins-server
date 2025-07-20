@@ -3,15 +3,13 @@
 # 32 and 64-bit toolchains available in voxl-cross 4
 TOOLCHAIN_QRB5165_1_32="/opt/cross_toolchain/qrb5165_ubun1_18.04_arm32.toolchain.cmake"
 TOOLCHAIN_QRB5165_1_64="/opt/cross_toolchain/qrb5165_ubun1_18.04_aarch64.toolchain.cmake"
+TOOLCHAIN_QRB5165_2_64="/opt/cross_toolchain/qrb5165_ubun2_20.04_aarch64.toolchain.cmake"
+TOOLCHAIN_QCS6490_64="/opt/cross_toolchain/qcs6490_ubun_24.04_aarch64.toolchain.cmake"
 
-# placeholder in case more cmake opts need to be added later
-EXTRA_OPTS="" #'-DCMAKE_EXE_LINKER_FLAGS="-lpthread"'
 
 ## this list is just for tab-completion
-AVAILABLE_PLATFORMS="qrb5165 native"
+AVAILABLE_PLATFORMS="qrb5165 qrb5165-2 qcs6490 native"
 
-# qrb5165 compiler definition, used for qrb5165 specific usage
-BUILD_QRB5165="ON"
 
 print_usage(){
 	echo ""
@@ -20,13 +18,22 @@ print_usage(){
 	echo " Usage:"
 	echo ""
 	echo "  ./build.sh qrb5165"
-	echo "        Build 64-bit binaries for qrb5165"
+	echo "        Build 64-bit binaries for qrb5165 1.X system images"
+	echo ""
+	echo "  ./build.sh qrb5165-2"
+	echo "        Build 64-bit binaries for qrb5165 2.X system images"
+	echo ""
+	echo "  ./build.sh qcs6490"
+	echo "        not supported yet!"
+	echo "        Build 64-bit binaries for qcs6490 24.04 system images"
 	echo ""
 	echo "  ./build.sh native"
-	echo "        Build with the native gcc/g++ compilers."
+	echo "        Build with the native gcc/g++ compilers for testing code"
+	echo "        locally on a desktop computer."
 	echo ""
 	echo ""
 }
+
 
 
 check_docker() {
@@ -59,26 +66,46 @@ check_docker() {
 }
 
 
+OPTS="-DCMAKE_BUILD_TYPE=Release"
+
+
 case "$1" in
 	qrb5165)
 		check_docker "4.0"
 		mkdir -p build64
 		cd build64
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
-				-DPLATFORM=QRB5165 \
-				-DEN_ION_BUF=ON \
-				-DCMAKE_BUILD_TYPE=Release \
-				${EXTRA_OPTS} \
-				../
+				-DEN_ION_BUF=ON ${OPTS} ../
 		make -j$(nproc) 
 		cd ../
 		;;
 
-	native)
-		check_docker "4.0"
+	qrb5165-2)
+		check_docker "4.3"
 		mkdir -p build
 		cd build
-		cmake ${EXTRA_OPTS}  -DCMAKE_BUILD_TYPE=Release ../
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
+				-DEN_ION_BUF=OFF ${OPTS} ../
+		make -j$(nproc)
+		cd ../
+		;;
+
+	qcs6490)
+		echo "WARNING qcs6490 target isn't working yet, needs blas and lapack first"
+		check_docker "4.3"
+		mkdir -p build
+		cd build
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
+				-DEN_ION_BUF=OFF ${OPTS} ../
+		make -j$(nproc)
+		cd ../
+		;;
+
+	native)
+		mkdir -p build
+		cd build
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
+				-DEN_ION_BUF=OFF ${OPTS} ../
 		make -j$(nproc)
 		cd ../
 		;;

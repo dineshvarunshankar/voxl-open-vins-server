@@ -77,10 +77,9 @@ namespace voxl
      * - Populates global camera information vector
      *
      * The function updates several YAML files:
-     * - /etc/modalai/VoxlConfig/starling2/estimator_config.yaml
-     * - /etc/modalai/VoxlConfig/starling2/kalibr_imucam_chain.yaml
+     * - estimator_config.yaml
+     * - kalibr_imucam_chain.yaml
      *
-     * TODO: Add support for extrinsic calibration parameters
      *
      * @return 0 on success, -1 on failure
      * @see read_server_config()
@@ -362,7 +361,7 @@ namespace voxl
         json_fetch_bool_with_default(parent, "en_cont_yaw_checks", (int *)&en_cont_yaw_checks, 0);
         json_fetch_float_with_default(parent, "fast_yaw_thresh", &fast_yaw_thresh, 5.0f);
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
-        json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/etc/modalai/VoxlConfig/starling2");
+        json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/usr/share/modalai/voxl-open-vins/VoxlConfig/starling2");
         json_fetch_int_with_default(parent, "using_stereo", &using_stereo, 0);
         json_fetch_float_with_default(parent, "takeoff_alt_threshold", &takeoff_alt_threshold, 0.5f);
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_left", (int *)&occlude_stereo_left, 0);
