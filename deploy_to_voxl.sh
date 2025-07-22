@@ -1,9 +1,9 @@
 #!/bin/bash
 ################################################################################
-# Copyright (c) 2022 ModalAI, Inc. All rights reserved.
+# Copyright (c) 2025 ModalAI, Inc. All rights reserved.
 #
-# Installs the ipk or deb package on target.
-# Requires the package to be built and an adb connection.
+# Installs the deb package on target.
+# Requires the package to be built and an adb or ssh connection.
 ################################################################################
 set -e
 
@@ -12,7 +12,7 @@ SSH_PWD="oelinux123"
 
 print_usage(){
 	echo ""
-	echo " Deploy an ipk or deb package to VOXL over adb or ssh"
+	echo " Deploy a deb package to VOXL over adb or ssh"
 	echo " You must run ./make_package.sh first to build the package."
 	echo ""
 	echo " Usage to push over adb:"
@@ -85,21 +85,19 @@ fi
 
 
 # count package files in current directory
-NUM_IPK=$(ls -1q *.ipk 2>/dev/null | wc -l)
 NUM_DEB=$(ls -1q *.deb 2>/dev/null | wc -l)
 
-if [[ $NUM_IPK -eq "0" && $NUM_DEB -eq "0" ]]; then
-	echo "ERROR: missing ipk and/or deb"
+if [[ $NUM_DEB -eq "0" ]]; then
+	echo "ERROR: missing deb"
 	echo "run make_package.sh first"
 	exit 1
-elif [[ $NUM_IPK -gt "1" || $NUM_DEB -gt "1" ]]; then
-	echo "ERROR: more than 1 ipk or deb file found"
+elif [[  $NUM_DEB -gt "1" ]]; then
+	echo "ERROR: more than 1 deb file found"
 	echo "make sure there is at most one of each in the current directory"
 	exit 1
 fi
 
 DPKG_CHECK_STRING='command -v dpkg &> /dev/null; echo -n $?'
-OPKG_CHECK_STRING='command -v opkg &> /dev/null; echo -n $?'
 
 if [ "$DEPLOY_MODE" == "ssh" ]; then
 	if ! command -v sshpass &> /dev/null ;then
@@ -112,7 +110,7 @@ if [ "$DEPLOY_MODE" == "ssh" ]; then
 
 	echo "searching for ssh device"
 	until ping -c1 $SEND_IP &>/dev/null; do :; done
-	echo "checking VOXL for dpkg/opkg"
+	echo "checking VOXL for dpkg"
 
 	if sshpass -p oelinux123 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$SEND_IP "$DPKG_CHECK_STRING" 2>/dev/null | grep -q 0 ; then
 		echo "dpkg detected";
@@ -120,14 +118,9 @@ if [ "$DEPLOY_MODE" == "ssh" ]; then
 		sshpass -p oelinux123 scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $FILE root@$SEND_IP:/data/$FILE &>/dev/null
 		sshpass -p oelinux123 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$SEND_IP "dpkg -i --force-downgrade --force-depends /data/$FILE" 2>/dev/null
 
-	elif sshpass -p oelinux123 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$SEND_IP "$OPKG_CHECK_STRING" 2>/dev/null | grep -q 0 ; then
-		echo "opkg detected";
-		FILE=$(ls -1q $PACKAGE*.ipk)
-		sshpass -p oelinux123 scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $FILE root@$SEND_IP:/data/$FILE &>/dev/null
-		sshpass -p oelinux123 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@$SEND_IP "opkg install --force-reinstall --force-downgrade --force-depends --force-overwrite /data/$FILE" 2>/dev/null
-
 	else
-		echo "ERROR neither dpkg nor opkg found on VOXL"
+		echo "[ERROR] dpkg not found on VOXL"
+		echo "Was the password for VOXL's root user changed? (this script assumes default of oelinux123)"
 		exit 1
 	fi
 
@@ -142,7 +135,7 @@ else
 
 	echo "searching for ADB device"
 	adb wait-for-device
-	echo "checking VOXL for dpkg/opkg"
+	echo "checking VOXL for dpkg"
 
 	if adb shell "$DPKG_CHECK_STRING" | grep -q 0 ; then
 		echo "dpkg detected";
@@ -150,14 +143,9 @@ else
 		adb push $FILE /data/$FILE
 		adb shell "dpkg -i --force-downgrade --force-depends /data/$FILE"
 
-	elif adb shell "$OPKG_CHECK_STRING" | grep -q 0 ; then
-		echo "opkg detected";
-		FILE=(*.ipk)
-		adb push $FILE /data/$FILE
-		adb shell "opkg install --force-reinstall --force-downgrade --force-depends --force-overwrite /data/$FILE"
-
 	else
-		echo "ERROR neither dpkg nor opkg found on VOXL"
+		echo "[ERROR] dpkg not found on VOXL"
+		echo "Was the password for VOXL's root user changed? (this script assumes default of oelinux123)"
 		exit 1
 	fi
 fi

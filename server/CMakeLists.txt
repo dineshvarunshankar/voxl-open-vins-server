@@ -1,8 +1,6 @@
-cmake_minimum_required(VERSION 3.22)
+
 
 include(GNUInstallDirs)
-
-
 
 
 # Set the compiler flags - Enable C++17
