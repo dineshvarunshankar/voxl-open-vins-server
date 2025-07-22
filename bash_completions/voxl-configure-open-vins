@@ -1,8 +1,8 @@
 _voxl-configure-open-vins(){
 
-    local OPTS=('disable help factory_enable enable d8v4 starling2')
+	local OPTS=('disable help factory_enable enable d8v4 starling2_3cam')
 
-    COMPREPLY=()
+	COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then
 		COMPREPLY=( $(compgen -W '${OPTS}' -- ${COMP_WORDS[COMP_CWORD]}) )
 		return 0

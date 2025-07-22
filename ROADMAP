@@ -1,2 +1,24 @@
+* health check should publish blank vio_data_t packets with qualit = -1 and error codes for imu and cam missing when openvins starts but is waiting for cam and imu data
+* if camera server stops while OV is running, vio data pipe needs to publish a failed state with quality -1
+* when camera server starts back up again, the following happens:
+
+[HEALTH] Performance - Health checks: 147, IMU timestamp: 960288166209, Camera timestamp: 862637591283
+ERROR: exceeded maximum velocity 5791.145028 vs 20.000000
+WARNING: Auto-reset conditions detected! Quality: 60, Features: 28, V_uncertainty: 558.145374
+[HEALTH] New errors detected: 0x100
+[DEBUG] Current error codes: 0x100, New errors: 0x100
+[HEALTH] ERROR: Exceeded velocity uncertainty
+[HEALTH] VIO state changed: 2 -> 0
+[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x100
+[ERROR] Exception during reset: Operation not permitted
+[HEALTH] VIO system reset failed with code: -1
+
+Segmentation fault:
+Fault thread: voxl-open-vins-(tid: 2783)
+Fault address: 0x10
+Address not mapped.
+Segmentation fault
+
+
 *  FIX FEAT PUBLISHER ON ANCHOR FRAME FEATS
 *  REMOVE CACHED TRACKBASE
