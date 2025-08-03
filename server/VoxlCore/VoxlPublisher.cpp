@@ -1004,3 +1004,24 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
     
     return final_quality;
 }
+
+void Publisher::publishBlank()
+{
+    // Zero out the VIO packet
+    memset(&vio_packet, 0, sizeof(vio_data_t));
+    vio_packet.magic_number = VIO_MAGIC_NUMBER;
+    vio_packet.timestamp_ns = _apps_time_monotonic_ns();
+
+    // Set error codes for missing sensors
+    uint32_t packet_error = 0;
+    if (!is_imu_connected.load()) packet_error |= ERROR_CODE_IMU_MISSING;
+    if (!is_cam_connected.load()) packet_error |= ERROR_CODE_CAM_MISSING;
+    vio_packet.error_code = packet_error;
+
+    // Indicate failed state
+    vio_packet.quality = -1;
+    vio_packet.state = VIO_STATE_FAILED;
+
+    // Publish blank packet on simple channel
+    pipe_server_write(SIMPLE_CH, (char *)&vio_packet, sizeof(vio_data_t));
+}

@@ -56,7 +56,7 @@ std::atomic<uint32_t> active_callbacks{0};
 std::mutex reset_mtx;
 
 /** @brief Reset conditional variable */
-std::condition_variable_any reset_cv;
+std::condition_variable reset_cv;
 
 /** @brief Flag indicating if system is armed */
 std::atomic<bool> is_armed(false);

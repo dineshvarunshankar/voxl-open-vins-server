@@ -235,6 +235,8 @@ namespace voxl
         void set_first_packet(bool first_packet_){
             first_packet = first_packet_;
         };
+        // ADD BLANK PUBLISHER TO INDICATE MISSING SENSORS
+        void publishBlank();
     private:
         /**
          * @brief Private constructor for singleton pattern

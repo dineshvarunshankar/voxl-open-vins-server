@@ -356,7 +356,7 @@ extern std::mutex reset_mtx;
  * Condition variable used to synchronize reset operations,
  * the reset thread will wait on active_callbacks to reach zero before proceeding.
  * */
-extern std::condition_variable_any reset_cv;
+extern std::condition_variable reset_cv;
 
 /**
  * @brief System armed state

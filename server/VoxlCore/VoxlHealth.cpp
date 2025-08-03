@@ -101,13 +101,24 @@ void HealthCheck::healthCheckLoop()
     while (running_.load() && main_running)
     {
         auto start_time = _apps_time_monotonic_ns();
-
-        // Perform health checks
-        analyzeErrorCodes();
+        // Update connectivity status first
         checkSystemConnectivity();
-        monitorSystemPerformance();
-        checkAutoResetConditions();
-        checkVINSResetRequest();
+
+        // Publish blank VIO data packets when sensors are missing
+        if (!is_imu_connected.load() || !is_cam_connected.load())
+        {
+            if (!is_imu_connected.load()) std::cerr << "[HEALTH] ERROR: IMU disconnected; publishing blank VIO data" << std::endl;
+            if (!is_cam_connected.load()) std::cerr << "[HEALTH] ERROR: Camera disconnected; publishing blank VIO data" << std::endl;
+            std::cout << "[HEALTH] Publishing blank VIO packet due to missing sensors" << std::endl;
+            Publisher::getInstance().publishBlank();
+        }
+        else
+        {
+            analyzeErrorCodes();
+            monitorSystemPerformance();
+            checkAutoResetConditions();
+            checkVINSResetRequest();
+        }
 
         // Update counters
         health_check_count_++;
@@ -247,6 +258,29 @@ void HealthCheck::analyzeErrorCodes()
  */
 void HealthCheck::checkSystemConnectivity()
 {
+    //THIS IS A REDO OF THE PAST SYSTEM CONNECTIVITY CHECK INSIDE monitorSystemPerformance --> THIS IS A BETTER APPROACH
+    // Detect stale sensor data 
+    const int64_t sensor_timeout_ns = 1000000000; // 1 second timeout --> MAYBE MAKE THIS SMALLER IF NEEDED BE  
+    int64_t now_ns = _apps_time_monotonic_ns();
+    // If no new IMU data within timeout, mark IMU as disconnected
+    if (last_imu_timestamp_ns != 0 && now_ns - last_imu_timestamp_ns > sensor_timeout_ns)
+    {
+        if (is_imu_connected.load()) {
+            std::cerr << "[HEALTH] Marking IMU as disconnected due to stale data (no data for " 
+                      << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms)" << std::endl;
+        }
+        is_imu_connected.store(false);
+    }
+    // If no new camera data within timeout, mark camera as disconnected
+    if (last_cam_time != 0 && now_ns - last_cam_time > sensor_timeout_ns)
+    {
+        if (is_cam_connected.load()) {
+            std::cerr << "[HEALTH] Marking camera as disconnected due to stale data (no data for " 
+                      << (now_ns - last_cam_time) / 1000000 << "ms)" << std::endl;
+        }
+        is_cam_connected.store(false);
+    }
+
     bool current_imu_connected = is_imu_connected.load();
     bool current_cam_connected = is_cam_connected.load();
 
@@ -256,8 +290,11 @@ void HealthCheck::checkSystemConnectivity()
         if (current_imu_connected)
         {
             std::cout << "[HEALTH] IMU connected" << std::endl;
-            // Clear IMU-related errors when connection is restored
+            // Clear IMU-related errors when connection is restored --> CURRENTLY CLEANING ALL ERRORS 
             clearErrorCodes(0, true);
+            // Request reset upon IMU reconnection
+            reset_requested.store(true);
+            std::cout << "[HEALTH] Reset requested due to IMU reconnection" << std::endl;
         }
         else
         {
@@ -274,7 +311,11 @@ void HealthCheck::checkSystemConnectivity()
         {
             std::cout << "[HEALTH] Camera connected" << std::endl;
             // Clear camera-related errors when connection is restored
+            //CAN PROBABLY CLEAR ALL ERRORS HERE...
             clearErrorCodes(ERROR_CODE_CAM_MISSING | ERROR_CODE_DROPPED_CAM);
+            // Request reset upon camera reconnection
+            reset_requested.store(true);
+            std::cout << "[HEALTH] Reset requested due to camera reconnection" << std::endl;
         }
         else
         {
@@ -419,6 +460,10 @@ void HealthCheck::checkVINSResetRequest()
     catch(const std::exception& e)
     {
         fprintf(stderr, "[ERROR] Exception during reset: %s\n", e.what());
+        // Check if it's a permission error
+        if (strstr(e.what(), "Operation not permitted") != nullptr) {
+            fprintf(stderr, "[ERROR] Permission denied during reset - this may be due to insufficient privileges\n");
+        }
         rc = -1;
     }
                 
@@ -433,6 +478,8 @@ void HealthCheck::checkVINSResetRequest()
     else
     {
         std::cerr << "[HEALTH] VIO system reset failed with code: " << rc << std::endl;
+        // Clear reset flags even on failure to prevent getting stuck --> PRIME MOVE HERE
+        reset_requested.store(false, std::memory_order_release);
     }
     
     time_of_last_reset = _apps_time_monotonic_ns();
@@ -447,7 +494,13 @@ int HealthCheck::doHardReset()
     // wait until all callbacks have finished processing
     {
         std::unique_lock<std::mutex> lk(reset_mtx);
-        reset_cv.wait(lk, [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
+        // Add timeout to prevent infinite blocking --> FOR NOW, 5 SECONDS 
+        bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5), 
+            [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
+        if (!wait_result) {
+            fprintf(stderr, "[ERROR] Timeout waiting for callbacks to finish during reset\n");
+            return -1;
+        }
     }
     Publisher::getInstance().set_first_packet(true);
     clearErrorCodes(0, true);
@@ -487,8 +540,14 @@ int HealthCheck::doHardReset()
     catch (const std::exception& e)
     {
         fprintf(stderr, "[ERROR] Exception during VIO manager creation: %s\n", e.what());
-        
-        vio_manager = std::move(old_vio_manager); // restore
+        if (old_vio_manager)
+        {
+            vio_manager = std::move(old_vio_manager); // restore previous manager
+        }
+        else
+        {
+            std::cerr << "[HEALTH] Warning: no previous VIO manager to restore" << std::endl;
+        }
         return -1;
     }
 
