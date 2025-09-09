@@ -41,6 +41,13 @@ namespace
 /** @brief Mutex for IMU data access synchronization */
 std::mutex imu_lock_mutex;
 
+
+#define TS_PRINT(msg) \
+    do { \
+        int64_t __ts = _apps_time_monotonic_ns(); \
+        printf("[TS %ld ns] %s\n", __ts, msg); \
+    } while(0)
+
 /**
  * @brief Handler for incoming IMU data
  *
@@ -68,15 +75,19 @@ std::mutex imu_lock_mutex;
  */
 void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
-    // MPA CALLBACK FOR IMU
-    // if (is_resetting.load()) return; // if we are resetting, just return
+    int64_t t_start = _apps_time_monotonic_ns();
+    int64_t t_prev  = t_start;
 
-    // MODALAI IMU IS READ BASED ON A FIFO QUEUE TRIGGERED BY THE CAMERAS
+    // printf("[TS %ld ns] IMU callback start, bytes=%d\n", t_start, bytes);
+
+    // ---- validate data ----
     int n_packets = 0;
     imu_data_t *arr = pipe_validate_imu_data_t(data, bytes, &n_packets);
+    int64_t t_validate = _apps_time_monotonic_ns();
+    // printf("[DT %8.3f ms] validate done, n_packets=%d\n",
+    //        (t_validate - t_prev)/1e6, n_packets);
+    // t_prev = t_validate;
 
-    
-    // indicate that we are processing IMU data
     active_callbacks.fetch_add(1, std::memory_order_acquire);
     if (is_resetting.load(std::memory_order_relaxed))
     {
@@ -86,19 +97,14 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     if (!arr || n_packets <= 0)
     {
         vio_error_codes |= ERROR_CODE_IMU_MISSING;
-        // Decrement callback counter before returning to keep active_callbacks balanced
         active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
     }
 
-    // CUSTOM IMU BATCH PROCESSING FUNCTION TO HALT THE MANY MUTEX LOCK OPS AT HIGH FREQUENCY INSIDE OVINS
-    // THIS PROCESSES THE IMU DATA BATCH WITH A SINGLE MUTEX LOCK
+    // ---- build batch ----
     std::vector<ov_core::ImuData> imu_batch;
-    // PRE-ALLOCATE
     imu_batch.reserve(n_packets);
 
-    // STILL SCAN THROUGH THE FIFO QUEUE -- TO CONVERT THEM TO THE OVINS FORMAT
-    // CAN CHANGE THIS INSIDE THE IMU-SERVER LATER ON IF NEEDED
     for (int i = 0; i < n_packets; ++i)
     {
         frame_transform.update(arr[i]);
@@ -107,71 +113,94 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         sample.timestamp = arr[i].timestamp_ns * 1e-9;
         sample.wm = Eigen::Vector3d(arr[i].gyro_rad[0], arr[i].gyro_rad[1], arr[i].gyro_rad[2]);
         sample.am = Eigen::Vector3d(arr[i].accl_ms2[0], arr[i].accl_ms2[1], arr[i].accl_ms2[2]);
-        // NO NEED TO ROTATE THE IMU DATA -- WE GOT IT COVERED IN THE CALIBRATION
-        if (last_imu_timestamp_ns == 0)
+
+        if (last_imu_timestamp_ns != 0 &&
+            (sample.timestamp * 1e9 <= last_imu_timestamp_ns))
         {
-        }
-        else if (sample.timestamp * 1e9 <= last_imu_timestamp_ns)
-        {
-            // Only flag error if timestamp is significantly in the past (more than 1ms)
             int64_t time_diff = last_imu_timestamp_ns - (sample.timestamp * 1e9);
-            if (time_diff > 1000000)
-            { // 1ms in nanoseconds
-                printf("[DEBUG] Setting ERROR_CODE_BAD_TIMESTAMP in IMU\n");
+            if (time_diff > 1000000) // 1 ms
+            {
+                printf("[DEBUG] IMU timestamp regression %ld ns\n", time_diff);
                 vio_error_codes |= ERROR_CODE_BAD_TIMESTAMP;
             }
         }
-        imu_batch.push_back(std::move(sample)); // MOVE THE SAMPLE TO THE BATCH
+        imu_batch.push_back(std::move(sample));
     }
+    int64_t t_batch = _apps_time_monotonic_ns();
+    // printf("[DT %8.3f ms] batch conversion done, count=%zu\n",
+    //        (t_batch - t_prev)/1e6, imu_batch.size());
+    // t_prev = t_batch;
+
     if (imu_batch.empty())
     {
         vio_error_codes |= ERROR_CODE_DROPPED_IMU;
-        // Decrement callback counter before returning to keep active_callbacks balanced
-        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 &&
+            reset_requested.load(std::memory_order_relaxed))
         {
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
         }
-        return; // CHECK IF THE BATCH IS EMPTY
+        return;
     }
-    // FEED BATCH TO OVINS
-    vio_manager->feed_measurement_batch_imu(imu_batch, 333); // SAMPLE FREQS: 200, 250, 333, 500, 1000
 
-    // SYNC CAMERA USING TIMESTAMP OF LAST IMU SAMPLE
+    // ---- feed IMU ----
+    vio_manager->feed_measurement_batch_imu(imu_batch, 333);
+    // int64_t t_feed_imu = _apps_time_monotonic_ns();
+    // printf("[DT %8.3f ms] fed IMU batch into VIO manager\n",
+    //        (t_feed_imu - t_prev)/1e6);
+    // t_prev = t_feed_imu;
+
+    // ---- sync camera ----
     last_imu_timestamp_ns = imu_batch.back().timestamp * 1e9;
-    // TODO: CLEAR IMPORTANT CONSIDERARTION: OVINS DOES NOT SUPPORT MULTI-CAM TIME OFFSET CALIBRATION --> That's mainly because of the central image queue design
-    // Independently calibrating camera offset can be supported by either modfiying the feed function in OVINS + state vars
-    // or manually keeping tabs on relative camera offsets and correcting at the CameraQueueFusion level, either solution is kosher but for now we will just use the average offset
     double ts_cutoff = (last_imu_timestamp_ns * 1e-9) -
                        vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
 
-    // GET THE CAMERA BATCH FROM OUR CENTRAL QUEUE
     std::vector<ov_core::CameraData> batch;
     if (CameraQueueFusion::getInstance().getSortedBatch(ts_cutoff, batch))
     {
-        for (const auto &frame : batch)
+        for (const auto &msg : batch)
         {
-            vio_manager->feed_measurement_camera(frame);
-            // Only update cached state if needed (could add additional logic here to determine when to update)
-            // if (!cached_state || vio_manager->initialized()) {
+            vio_manager->feed_measurement_camera(msg);
             cached_state = vio_manager->get_state();
-            // }
+
+            // release cl_mem objects
+            for (auto &frame : msg.img_frames) {
+                if (frame.img.handle_type == modal_flow::ExternalType::ClMem &&
+                    frame.img.external_handle != 0) {
+                    cl_mem handle = reinterpret_cast<cl_mem>(
+                        static_cast<uintptr_t>(frame.img.external_handle));
+
+                    cl_int err = clReleaseMemObject(handle);
+                    if (err != CL_SUCCESS) {
+                        fprintf(stderr, "Failed to release Frame cl_mem, err=%d\n", err);
+                    }
+                    // reset so no double free
+                    const_cast<modal_flow::ImageView&>(frame.img).external_handle = 0;
+                }
+            }
 
             cached_features_map = vio_manager->get_used_features_map();
-
             voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
         }
     }
+    int64_t t_cam = _apps_time_monotonic_ns();
+    // printf("[DT %8.3f ms] processed %zu camera frames\n",
+    //        (t_cam - t_prev)/1e6, batch.size());
+    // t_prev = t_cam;
 
-    // check if in flight processing count reaches zero
-    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
+    // ---- finish ----
+    int64_t t_end = _apps_time_monotonic_ns();
+    printf("[DT %8.3f ms] callback finished for %d msgs, total=%8.3f ms\n",
+           (t_end - t_prev)/1e6, batch.size(), (t_end - t_start)/1e6);
+
+    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 &&
+        reset_requested.load(std::memory_order_relaxed))
     {
-        // If we are resetting, notify the reset condition variable
-        // This will wake up the reset thread to continue processing
         std::lock_guard<std::mutex> lk(reset_mtx);
         reset_cv.notify_one();
     }
 }
+
 
 /**
  * @brief Callback for IMU disconnect events

@@ -66,7 +66,7 @@ check_docker() {
 }
 
 
-OPTS="-DCMAKE_BUILD_TYPE=Release"
+OPTS="-DCMAKE_BUILD_TYPE=Debug"
 
 
 case "$1" in

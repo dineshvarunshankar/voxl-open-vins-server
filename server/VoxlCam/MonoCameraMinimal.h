@@ -69,7 +69,7 @@ namespace voxl
          * @param meta Image metadata containing timestamp and format information
          * @param frame Pointer to image data buffer
          */
-        void process_image(const camera_image_metadata_t &meta, char *frame) override;
+        void process_image(const camera_image_metadata_t &meta, voxl::ImageType type, void *frame) override;
 
     private:
         /**
@@ -82,6 +82,17 @@ namespace voxl
          * @param frame Pointer to image data
          */
         void process_raw8(const camera_image_metadata_t &meta, char *frame);
+
+        /**
+         * @brief Process RAW8 image format from device
+         * 
+         * Handles the RAW8 image format, accounting for the fact that the
+         * buffer pointer references memory on the device
+         * 
+         * @param meta Image metdata
+         * @param frame Pointer to cl_mem image buffer 
+         */
+        void process_device_buf_raw8(const camera_image_metadata_t &meta, cl_mem frame);
 
         /**
          * @brief Update mask based on current system state

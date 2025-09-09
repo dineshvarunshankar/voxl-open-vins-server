@@ -19,7 +19,8 @@
  */
 
 #include "MonoCameraMinimal.h"
-
+#include <CL/cl.h>
+#include <CL/cl_ext.h>
 
 namespace voxl
 {
@@ -35,6 +36,18 @@ namespace voxl
     MonoCamera::MonoCamera(const cam_info &camera_info)
         : CameraBase(camera_info)
     {
+    }
+
+    static void release_cl_mem(void* mem)
+    {
+        if (mem)
+        {
+            cl_int err = clReleaseMemObject((cl_mem)mem);
+            if (err != CL_SUCCESS)
+            {
+                fprintf(stderr, "Failed to release cl_mem object %p, err=%d\n", mem, err);
+            }
+        }
     }
 
     /**
@@ -55,7 +68,7 @@ namespace voxl
      * @param meta Image metadata containing timestamp and format information
      * @param frame Pointer to image data buffer
      */
-    void MonoCamera::process_image(const camera_image_metadata_t &meta, char *frame)
+    void MonoCamera::process_image(const camera_image_metadata_t &meta, voxl::ImageType img_type, void* frame)
     {
 
         // Update flags quickly
@@ -63,17 +76,23 @@ namespace voxl
         last_cam_time = _apps_time_monotonic_ns();
 
         // Early return if system not ready
-        if (!is_system_ready())
+        if (!is_system_ready()) {
+            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
             return;
+        }
             
         // if we are resetting, just return
-        if (is_resetting.load(std::memory_order_relaxed)) return;
+        if (is_resetting.load(std::memory_order_relaxed)) {
+            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
+            return;
+        }
 
         // indicate that we are processing IMU data
         active_callbacks.fetch_add(1, std::memory_order_acquire);
         if (is_resetting.load(std::memory_order_relaxed))
         {
             active_callbacks.fetch_sub(1, std::memory_order_release);
+            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
             return;
         }
 
@@ -81,16 +100,33 @@ namespace voxl
         current_height = meta.height;
         current_width = meta.width;
 
-        // Process only supported formats with fast path
-        if (meta.format == IMAGE_FORMAT_RAW8)
+        if (img_type == voxl::ImageType::CV_MAT)
         {
-            process_raw8(meta, frame);
+            // Process only supported formats with fast path
+            if (meta.format == IMAGE_FORMAT_RAW8)
+            {
+                process_raw8(meta, (char*)frame);
+            }
+            else
+            {
+                // Rare case, can be slower
+                fprintf(stderr, "Unsupported image format: %d\n", meta.format);
+                vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+            }
         }
-        else
+        if (img_type == voxl::ImageType::CL_MEM)
         {
-            // Rare case, can be slower
-            fprintf(stderr, "Unsupported image format: %d\n", meta.format);
-            vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+            // Process only supported formats
+            if (meta.format == IMAGE_FORMAT_RAW8)
+            {
+                process_device_buf_raw8(meta, (cl_mem)frame);
+            }
+            else
+            {
+                // Rare case, can be slower
+                fprintf(stderr, "Unsupported image format: %d\n", meta.format);
+                vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+            }
         }
 
         // check if in flight processing count reaches zero and if a reset is requested
@@ -150,6 +186,62 @@ namespace voxl
 
         // clone might be optional --> depends on consumer thread ownership guarantees TODO: CHECK THIS LATER ON
         message.images.emplace_back(image.clone());
+        message.masks.emplace_back(use_mask_);
+
+        modal_flow::ImageView iv{{meta.width, meta.height, modal_flow::PixelFormat::R8, meta.stride}, message.images[0].data, modal_flow::ExternalType::None, 0};
+        modal_flow::Frame img_frame({get_id(), 0, iv});
+        message.img_frames.push_back(img_frame);
+
+        if (!camera_queue.push(message))
+        {
+            if (true)
+            {
+                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
+                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
+                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
+            }
+        }
+        else
+        {
+            // Notify fusion system that camera data is ready
+            CameraQueueFusion::getInstance().markCameraReady(get_id());
+        }
+    }
+
+    void MonoCamera::process_device_buf_raw8(const camera_image_metadata_t &meta, cl_mem frame)
+    {
+        curr_message_.camid = get_channel();
+        curr_message_.metadata = meta;
+
+
+        // Check if dimensions changed and update mask efficiently
+        const bool dimensions_changed = (use_mask_.rows != current_height || use_mask_.cols != current_width);
+        if (dimensions_changed) {
+            mask_dimensions_changed_ = true;
+        }
+
+        // Determine if mask should be active based on occlusion and altitude
+        const bool should_mask = camera_info_.is_occluded_on_takeoff && 
+                                std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        
+        // Update mask only when necessary
+        update_mask_if_needed(should_mask);
+
+        ov_core::CameraData message;
+        message.timestamp = (meta.timestamp_ns) * 1e-09; // TODO: check  if we should consider adding exposure time/2  --> NAIVELY ADDING BRING CHAOS (Multi-cam) DO IT AT YOUR OWN RISK
+        message.sensor_ids.push_back(get_id());
+
+        // modal_flow::ImageView ivA{{camA.width, camA.height, modal_flow::PixelFormat::R8, img_prev.step}, img_prev.data, modal_flow::ExternalType::None, 0};
+
+        modal_flow::ImageView iv{{meta.width, meta.height, modal_flow::PixelFormat::R8, meta.stride}, nullptr, modal_flow::ExternalType::ClMem, static_cast<uint64_t>(reinterpret_cast<std::uintptr_t>(frame))};
+        modal_flow::Frame img_frame({get_id(), 0, iv});
+
+        message.cl_images.emplace_back(frame);
+
+        message.img_frames.push_back(img_frame);
+
+        message.images.emplace_back(cv::Mat::zeros(meta.height, meta.width, CV_8UC1));
+
         message.masks.emplace_back(use_mask_);
 
         if (!camera_queue.push(message))

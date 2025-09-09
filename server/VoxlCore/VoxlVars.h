@@ -60,6 +60,12 @@ namespace voxl
         uint8_t image_pixels[MAX_IMAGE_SIZE]; ///< Raw image pixel data
     } img_ringbuf_packet;
 
+    enum class ImageType
+    {
+        CV_MAT,
+        CL_MEM
+    };
+
     /**
      * @struct FrameTransform
      * @brief Structure for handling IMU frame transformations

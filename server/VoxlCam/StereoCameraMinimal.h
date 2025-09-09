@@ -69,7 +69,7 @@ namespace voxl
          * @param meta Image metadata containing timestamp and format information
          * @param frame Pointer to image data buffer
          */
-        void process_image(const camera_image_metadata_t &meta, char *frame) override;
+        void process_image(const camera_image_metadata_t &meta, voxl::ImageType type, void *frame) override;
 
     private:
         /**

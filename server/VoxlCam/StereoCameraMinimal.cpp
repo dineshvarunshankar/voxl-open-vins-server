@@ -54,7 +54,7 @@ namespace voxl
      * @param meta Image metadata containing timestamp and format information
      * @param frame Pointer to image data buffer
      */
-    void StereoCamera::process_image(const camera_image_metadata_t &meta, char *frame)
+    void StereoCamera::process_image(const camera_image_metadata_t &meta, voxl::ImageType type, void *frame)
     {
 
         // Update flags quickly
@@ -81,15 +81,22 @@ namespace voxl
         current_width  = meta.width;
 
         // Process only supported formats with fast path
-        if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
+        if (type == voxl::ImageType::CV_MAT)
         {
-            process_raw8(meta, frame);
+            if (meta.format == IMAGE_FORMAT_STEREO_RAW8)
+            {
+                process_raw8(meta, (char*)frame);
+            }
+            else
+            {
+                // Rare case, can be slower
+                fprintf(stderr, "Unsupported image format: %d\n", meta.format);
+                vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+            }
         }
-        else
+        if (type == voxl::ImageType::CL_MEM)
         {
-            // Rare case, can be slower
-            fprintf(stderr, "Unsupported image format: %d\n", meta.format);
-            vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
+            fprintf(stderr, "Using CL_MEM is currently unsupported for stereo images\n");
         }
         
         // check if in flight processing count reaches zero and if a reset is requested
