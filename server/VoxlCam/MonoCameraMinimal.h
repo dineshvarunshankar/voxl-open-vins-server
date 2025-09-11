@@ -85,12 +85,12 @@ namespace voxl
 
         /**
          * @brief Process RAW8 image format from device
-         * 
+         *
          * Handles the RAW8 image format, accounting for the fact that the
          * buffer pointer references memory on the device
-         * 
+         *
          * @param meta Image metdata
-         * @param frame Pointer to cl_mem image buffer 
+         * @param frame Pointer to cl_mem image buffer
          */
         void process_device_buf_raw8(const camera_image_metadata_t &meta, cl_mem frame);
 

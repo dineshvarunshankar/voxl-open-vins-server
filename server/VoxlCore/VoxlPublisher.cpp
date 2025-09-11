@@ -11,7 +11,7 @@
 #include "VoxlHK.h"
 using namespace voxl;
 
-#define STR_MATCH(s, lit)  (strncmp((s), (lit), strlen(lit)) == 0)
+#define STR_MATCH(s, lit) (strncmp((s), (lit), strlen(lit)) == 0)
 
 // ============================================================================
 // PUBLISHER CLASS IMPLEMENTATION
@@ -74,13 +74,11 @@ void Publisher::stop()
     // Clean up resources if needed
 }
 
-
-
 /**
  * @brief Control-pipe callback for VIO commands
  *
  * This function is invoked every time a message
- * is received on the VIO **control pipe**.  
+ * is received on the VIO **control pipe**.
  *
  * @param ch      Channel id supplied by the pipe framework.
  * @param string  Pointer to the received buffer.
@@ -90,10 +88,10 @@ void Publisher::stop()
  * @note Matching is performed with the `STR_MATCH()` macro, which compares the
  *       prefix of @p string against the command literal.
  */
-void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch, 
-                                        char *string,
-                                        int bytes, 
-                                        __attribute__((unused)) void *context)
+void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
+                                       char *string,
+                                       int bytes,
+                                       __attribute__((unused)) void *context)
 {
     if (STR_MATCH(string, RESET_VIO_HARD))
     {
@@ -104,22 +102,20 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
         }
 
         reset_requested.store(true);
-		fprintf(stderr, "[ERROR] Client requested hard reset\n");
+        fprintf(stderr, "[ERROR] Client requested hard reset\n");
         return;
     }
     else if (STR_MATCH(string, RESET_VIO_SOFT))
     {
-    
     }
     else
     {
         // Unrecognized command, log an error or handle appropriately
         printf("Unrecognized control command: %.*s\n", bytes, string);
     }
-    
+
     return;
 }
-
 
 /**
  * @brief Publish VIO data to external systems
@@ -163,14 +159,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     Eigen::Matrix3d R_I_G = ov_core::quat_2_Rot(q_I_G);
     auto RPY = ov_core::rot2rpy(R_I_G);
     // printf("gravity axis: %d, gravity direction: %d\n", static_cast<int>(frame_transform.gravity_axis), static_cast<int>(frame_transform.gravity_direction));
-    //AT THIS POINT, BETTER TO ROTATE IT USING THE CORRECTION MATRIX...
-    //EXECUTE THE FORBIDDEN TECHNIQUE:
-    //CHECK IF THE IMU IS MOUNTED IN THE CORRECT WAY, I.E., 
-    //GRAVITY IS POINTING DOWN Z
-    //IF NOT, EXECUTE THE FORBIDDEN TECHNIQUE:
+    // AT THIS POINT, BETTER TO ROTATE IT USING THE CORRECTION MATRIX...
+    // EXECUTE THE FORBIDDEN TECHNIQUE:
+    // CHECK IF THE IMU IS MOUNTED IN THE CORRECT WAY, I.E.,
+    // GRAVITY IS POINTING DOWN Z
+    // IF NOT, EXECUTE THE FORBIDDEN TECHNIQUE:
     float grav_vec[3];
-    if (frame_transform.gravity_axis == FrameTransform::Axis::Z && frame_transform.gravity_direction == FrameTransform::Direction::POSITIVE){
-        //FORBIDDEN TECHNIQUE (STINGER CASE)
+    if (frame_transform.gravity_axis == FrameTransform::Axis::Z && frame_transform.gravity_direction == FrameTransform::Direction::POSITIVE)
+    {
+        // FORBIDDEN TECHNIQUE (STINGER CASE)
         RPY(0) = -RPY(0);
         RPY(1) = M_PI - RPY(1);
         RPY(2) = -M_PI + RPY(2);
@@ -179,8 +176,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         grav_vec[0] = 0;
         grav_vec[1] = 0;
         grav_vec[2] = static_cast<float>(-9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
-    } else {
-        //CLASSIC CASE: STARLING2, STARLING MAX, D8V4, D8V5
+    }
+    else
+    {
+        // CLASSIC CASE: STARLING2, STARLING MAX, D8V4, D8V5
         RPY(0) = -RPY(0);
         RPY(1) = -M_PI + RPY(1);
         RPY(2) = M_PI - RPY(2);
@@ -266,8 +265,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     vio_packet.velocity_covariance[0] = static_cast<float>(covariance_posori(6, 6));
     vio_packet.velocity_covariance[6] = static_cast<float>(covariance_posori(7, 7));
     vio_packet.velocity_covariance[11] = static_cast<float>(covariance_posori(8, 8));
-
-
 
     // NOW LET'S HANDLE THE EXTRINSICS CAMERA TO IMU
     Eigen::Matrix3d cam_out = ov_core::quat_2_Rot(state->_calib_IMUtoCAM[0]->quat()).transpose();
@@ -450,7 +447,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     {
         // Map velocity uncertainty to quality (0-100 scale)
         double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
-    
 
         // Calculate position-based quality
         double max_allowable_cep = 0.1; // 10cm CEP threshold
@@ -458,11 +454,9 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         pos_quality = std::max(0.0, std::min(100.0, pos_quality));
         calculated_quality = std::min(v_cov_quality, pos_quality);
     }
-    
+
     // Set the quality in the packet
     vio_packet.quality = static_cast<int32_t>(calculated_quality);
-
-
 
     // Ensure quality is within bounds
     if (vio_packet.quality > 100)
@@ -507,11 +501,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
         double current_timestamp = state->_timestamp;
         auto timestamp_iter = used_features_map.find(current_timestamp);
-        
+
         if (timestamp_iter != used_features_map.end())
         {
             const auto &features = timestamp_iter->second;
-        
+
             // Group features by camera ID
             std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
             for (const auto &feature : features)
@@ -523,9 +517,9 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                     features_by_camera[cam_id].push_back(feature);
                 }
             }
-            
+
             ov_type::LandmarkRepresentation::Representation msckf_ref = state->_options.feat_rep_msckf;
-            
+
             // Process each camera's features
             for (const auto &camera_pair : features_by_camera)
             {
@@ -551,10 +545,9 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                     {
                         continue;
                     }
-                    
+
                     size_t meas_idx = std::distance(timestamps.begin(), time_iter);
                     const auto &uv_meas = feature->uvs.at(cam_id)[meas_idx];
-
 
                     // check if feature id found in SLAM set
                     if (SLAM_FEATS.find(feature->featid) != SLAM_FEATS.end())
@@ -749,7 +742,6 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
            stable_features_bad || too_fast || too_uncertain || too_much_spinning;
 }
 
-
 /**
  * @brief Calculate Quality of the VIO state
  *
@@ -758,250 +750,289 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
  * 1. Grid distribution: 5x5 grid per camera with 50 features target (2 per grid)
  * 2. Active SLAM features: weighted by covariance largest eigenvalue and quality field
  * 3. MSCKF features: weighted by quality field and number of measurements
- * 
+ *
  * @param used_features_map Map of used features at the current timestamp
  * @param slam_features Map of SLAM features from the state
  * @param state Current VIO state for covariance access
  * @return Quality score (0-100, higher is better)
  */
-double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map, 
-                             std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
-                             std::shared_ptr<ov_msckf::State> state)
+double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map,
+                              std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
+                              std::shared_ptr<ov_msckf::State> state)
 {
     // Constants for quality calculation
-    const int GRID_SIZE = 5;  // 5x5 grid
-    const int TARGET_FEATURES_PER_CAM = 50;  // 50 features per camera
-    const int TARGET_FEATURES_PER_GRID = TARGET_FEATURES_PER_CAM / (GRID_SIZE * GRID_SIZE);  // 2 features per grid
-    const int CLONES = 11;  // Number of clones for MSCKF weighting
-    const double MAX_GRID_SCORE = 100.0;  // Maximum score when 50% of grids are filled
-    const double GRID_FILL_THRESHOLD = 0.5;  // 50% of grids should be filled for max score
+    const int GRID_SIZE = 5;                                                                // 5x5 grid
+    const int TARGET_FEATURES_PER_CAM = 50;                                                 // 50 features per camera
+    const int TARGET_FEATURES_PER_GRID = TARGET_FEATURES_PER_CAM / (GRID_SIZE * GRID_SIZE); // 2 features per grid
+    const int CLONES = 11;                                                                  // Number of clones for MSCKF weighting
+    const double MAX_GRID_SCORE = 100.0;                                                    // Maximum score when 50% of grids are filled
+    const double GRID_FILL_THRESHOLD = 0.5;                                                 // 50% of grids should be filled for max score
     const int en_qual_debug = 0;
-    
+
     double total_quality = 0.0;
     int total_grids_filled = 0;
     int total_grids = 0;
-    
+
     // Debug: Print total features available
-    if (en_qual_debug) {
+    if (en_qual_debug)
+    {
         printf("[QUALITY_DEBUG] Total features in used_features_map: %zu\n", used_features_map.size());
         printf("[QUALITY_DEBUG] Total SLAM features in state: %zu\n", slam_features.size());
     }
-    
+
     // Get the current timestamp to find the most recent features
     double current_timestamp = state->_timestamp;
-    if (en_qual_debug) printf("[QUALITY_DEBUG] Current timestamp: %.6f\n", current_timestamp);
-    
+    if (en_qual_debug)
+        printf("[QUALITY_DEBUG] Current timestamp: %.6f\n", current_timestamp);
+
     // Find the features for the current timestamp
     auto timestamp_iter = used_features_map.find(current_timestamp);
-    if (timestamp_iter == used_features_map.end()) {
+    if (timestamp_iter == used_features_map.end())
+    {
         // No features for current timestamp, return low quality
-        if (en_qual_debug) printf("[QUALITY_DEBUG] No features found for current timestamp, returning low quality\n");
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] No features found for current timestamp, returning low quality\n");
         return 10.0;
     }
-    
+
     const auto &features = timestamp_iter->second;
-    if (en_qual_debug) printf("[QUALITY_DEBUG] Features found for current timestamp: %zu\n", features.size());
-    
+    if (en_qual_debug)
+        printf("[QUALITY_DEBUG] Features found for current timestamp: %zu\n", features.size());
+
     // Group features by camera ID
     std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
-    for (const auto &feature : features) {
+    for (const auto &feature : features)
+    {
         // Get camera ID from feature measurements
-        for (const auto &cam_meas : feature->timestamps) {
+        for (const auto &cam_meas : feature->timestamps)
+        {
             int cam_id = static_cast<int>(cam_meas.first);
             features_by_camera[cam_id].push_back(feature);
         }
     }
-    
-    if (en_qual_debug) 
+
+    if (en_qual_debug)
     {
         printf("[QUALITY_DEBUG] Features grouped by camera:\n");
-        for (const auto &cam_pair : features_by_camera) {
+        for (const auto &cam_pair : features_by_camera)
+        {
             printf("[QUALITY_DEBUG]   Camera %d: %zu features\n", cam_pair.first, cam_pair.second.size());
         }
     }
-    
+
     // Count active SLAM and MSCKF features
     int total_active_slam = 0;
     int total_active_msckf = 0;
-    
+
     // Process each camera's features
-    for (const auto &camera_pair : features_by_camera) {
+    for (const auto &camera_pair : features_by_camera)
+    {
         int cam_id = camera_pair.first;
         const auto &cam_features = camera_pair.second;
-        
-        if (en_qual_debug) printf("[QUALITY_DEBUG] Processing camera %d with %zu features\n", cam_id, cam_features.size());
-        
+
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] Processing camera %d with %zu features\n", cam_id, cam_features.size());
+
         // Initialize 5x5 grid for this camera
         std::vector<std::vector<int>> grid(GRID_SIZE, std::vector<int>(GRID_SIZE, 0));
         std::vector<std::vector<double>> grid_quality(GRID_SIZE, std::vector<double>(GRID_SIZE, 0.0));
-        
+
         int cam_slam_count = 0;
         int cam_msckf_count = 0;
-        
+
         // Process features for this camera
-        for (const auto &feature : cam_features) {
+        for (const auto &feature : cam_features)
+        {
             // Get feature position in image for this camera
-            if (feature->timestamps.find(cam_id) != feature->timestamps.end() && 
-                !feature->uvs_norm.empty() && 
+            if (feature->timestamps.find(cam_id) != feature->timestamps.end() &&
+                !feature->uvs_norm.empty() &&
                 feature->uvs_norm.find(cam_id) != feature->uvs_norm.end() &&
-                !feature->uvs_norm.at(cam_id).empty()) {
-                
+                !feature->uvs_norm.at(cam_id).empty())
+            {
+
                 const auto &uv_norm = feature->uvs_norm.at(cam_id).back();
-                if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu - Camera %d - UV Norm: (%.3f, %.3f)\n", 
-                                            feature->featid, cam_id, uv_norm(0), uv_norm(1));
-                
+                if (en_qual_debug)
+                    printf("[QUALITY_DEBUG] Feature %zu - Camera %d - UV Norm: (%.3f, %.3f)\n",
+                           feature->featid, cam_id, uv_norm(0), uv_norm(1));
+
                 // Convert normalized coordinates to grid coordinates
                 // Assuming normalized coordinates are in [-1, 1] range
                 int grid_x = static_cast<int>((uv_norm(0) + 1.0) * 0.5 * GRID_SIZE);
                 int grid_y = static_cast<int>((uv_norm(1) + 1.0) * 0.5 * GRID_SIZE);
-                
+
                 // Clamp to valid grid range
                 grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
                 grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
-                
+
                 // Calculate feature quality based on whether it's SLAM or MSCKF
                 double feature_quality = 0.0;
-                
+
                 // Check if this is a SLAM feature
-                if (slam_features.find(feature->featid) != slam_features.end()) {
+                if (slam_features.find(feature->featid) != slam_features.end())
+                {
                     // This is an active SLAM feature
                     cam_slam_count++;
                     auto slam_feat = slam_features[feature->featid];
-                    
-                    if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu (SLAM) - Grid[%d][%d] - Quality field: %.3f, uniq_cam: %d, anchor_cam: %d\n", 
-                                                feature->featid, grid_x, grid_y, slam_feat->_quality, slam_feat->_unique_camera_id, slam_feat->_anchor_cam_id);
-                    //ATTENTION: COULD SOLVE THIS IN A BATCH MANNER, BUT FOR NOW DO THE FOR LOOP DIRECTLY
-                    // Get covariance for this SLAM feature
+
+                    if (en_qual_debug)
+                        printf("[QUALITY_DEBUG] Feature %zu (SLAM) - Grid[%d][%d] - Quality field: %.3f, uniq_cam: %d, anchor_cam: %d\n",
+                               feature->featid, grid_x, grid_y, slam_feat->_quality, slam_feat->_unique_camera_id, slam_feat->_anchor_cam_id);
+                    // ATTENTION: COULD SOLVE THIS IN A BATCH MANNER, BUT FOR NOW DO THE FOR LOOP DIRECTLY
+                    //  Get covariance for this SLAM feature
                     Eigen::MatrixXd slam_cov;
-                    if (slam_feat->id() >= 0) {
+                    if (slam_feat->id() >= 0)
+                    {
                         // Get the covariance block for this feature
                         std::vector<std::shared_ptr<ov_type::Type>> slam_feat_vec = {slam_feat};
                         slam_cov = ov_msckf::StateHelper::get_marginal_covariance(state, slam_feat_vec);
-                    } else {
+                    }
+                    else
+                    {
                         // Feature not in state yet, use default covariance
                         slam_cov = Eigen::MatrixXd::Identity(3, 3) * 0.1; // Default 10cm uncertainty
                     }
-                    
+
                     // Calculate largest eigenvalue of covariance
                     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(slam_cov);
                     double max_eigenvalue = eigensolver.eigenvalues().maxCoeff();
-                    
+
                     // Quality based on covariance (smaller is better)
                     double cov_quality = std::max(0.0, 1.0 - max_eigenvalue);
-                    
+
                     // Combine with feature quality field (if available)
                     double feat_quality_field = (slam_feat->_quality >= 0) ? slam_feat->_quality : 0.0;
-                    
+
                     // Weight SLAM features more heavily
                     feature_quality = 0.7 * cov_quality + 0.3 * feat_quality_field;
                     // feature->quality = feature_quality; // Store in feature
 
-                    if (en_qual_debug) printf("[QUALITY_DEBUG]   SLAM Feature %zu - Max eigenvalue: %.6f, Cov quality: %.3f, Final quality: %.3f\n", 
-                                        feature->featid, max_eigenvalue, cov_quality, feature_quality);
-                    
-                } else {
+                    if (en_qual_debug)
+                        printf("[QUALITY_DEBUG]   SLAM Feature %zu - Max eigenvalue: %.6f, Cov quality: %.3f, Final quality: %.3f\n",
+                               feature->featid, max_eigenvalue, cov_quality, feature_quality);
+                }
+                else
+                {
                     // This is an MSCKF feature
                     cam_msckf_count++;
-                    
+
                     // Count number of measurements for this feature
                     int num_measurements = 0;
-                    for (const auto &cam_meas : feature->timestamps) {
+                    for (const auto &cam_meas : feature->timestamps)
+                    {
                         num_measurements += static_cast<int>(cam_meas.second.size());
                     }
-                    
+
                     // Weight down if measurements/clones < 1
                     double measurement_weight = 1.0;
-                    if (num_measurements < CLONES) {
+                    if (num_measurements < CLONES)
+                    {
                         measurement_weight = static_cast<double>(num_measurements) / CLONES;
                     }
-                    
+
                     // Use feature quality field (if available)
                     double feat_quality_field = (feature->quality >= 0) ? feature->quality : 0.0;
-                    
+
                     // MSCKF features weighted less than SLAM features
                     feature_quality = 0.3 * feat_quality_field * measurement_weight;
-                    
-                    if (en_qual_debug) printf("[QUALITY_DEBUG] Feature %zu (MSCKF) - Grid[%d][%d] - Quality field: %.3f, Measurements: %d, Weight: %.3f, Final quality: %.3f\n", 
-                                                feature->featid, grid_x, grid_y, feat_quality_field, num_measurements, measurement_weight, feature_quality);
+
+                    if (en_qual_debug)
+                        printf("[QUALITY_DEBUG] Feature %zu (MSCKF) - Grid[%d][%d] - Quality field: %.3f, Measurements: %d, Weight: %.3f, Final quality: %.3f\n",
+                               feature->featid, grid_x, grid_y, feat_quality_field, num_measurements, measurement_weight, feature_quality);
                 }
-                
+
                 // Add feature to grid
                 grid[grid_y][grid_x]++;
                 grid_quality[grid_y][grid_x] += feature_quality;
             }
         }
-        
+
         total_active_slam += cam_slam_count;
         total_active_msckf += cam_msckf_count;
-        
-        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d summary - SLAM: %d, MSCKF: %d\n", cam_id, cam_slam_count, cam_msckf_count);
-        
+
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] Camera %d summary - SLAM: %d, MSCKF: %d\n", cam_id, cam_slam_count, cam_msckf_count);
+
         // Calculate grid distribution score for this camera
         int grids_with_features = 0;
         double camera_grid_score = 0.0;
-        
-        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d grid analysis:\n", cam_id);
-        for (int i = 0; i < GRID_SIZE; i++) {
-            for (int j = 0; j < GRID_SIZE; j++) {
-                if (grid[i][j] > 0) {
+
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] Camera %d grid analysis:\n", cam_id);
+        for (int i = 0; i < GRID_SIZE; i++)
+        {
+            for (int j = 0; j < GRID_SIZE; j++)
+            {
+                if (grid[i][j] > 0)
+                {
                     grids_with_features++;
-                    
+
                     // Calculate quality for this grid cell
                     double grid_cell_quality = 0.0;
-                    if (grid[i][j] >= TARGET_FEATURES_PER_GRID) {
+                    if (grid[i][j] >= TARGET_FEATURES_PER_GRID)
+                    {
                         // Grid has enough features, use average quality
                         grid_cell_quality = grid_quality[i][j] / grid[i][j];
-                    } else {
+                    }
+                    else
+                    {
                         // Grid has insufficient features, penalize
                         double fill_ratio = static_cast<double>(grid[i][j]) / TARGET_FEATURES_PER_GRID;
                         grid_cell_quality = (grid_quality[i][j] / grid[i][j]) * fill_ratio;
                     }
                     camera_grid_score += grid_cell_quality;
-                    
-                    if (en_qual_debug) printf("[QUALITY_DEBUG]   Grid[%d][%d]: %d features, avg quality: %.3f\n", 
-                                                i, j, grid[i][j], grid_quality[i][j] / grid[i][j]);
+
+                    if (en_qual_debug)
+                        printf("[QUALITY_DEBUG]   Grid[%d][%d]: %d features, avg quality: %.3f\n",
+                               i, j, grid[i][j], grid_quality[i][j] / grid[i][j]);
                 }
             }
         }
-        
+
         // Calculate grid distribution score
         double grid_fill_ratio = static_cast<double>(grids_with_features) / (GRID_SIZE * GRID_SIZE);
         double grid_distribution_score = 0.0;
-        
-        if (grid_fill_ratio >= GRID_FILL_THRESHOLD) {
+
+        if (grid_fill_ratio >= GRID_FILL_THRESHOLD)
+        {
             // 50% or more grids filled, give maximum score
             grid_distribution_score = MAX_GRID_SCORE;
-        } else {
+        }
+        else
+        {
             // Linear interpolation for partial fill
             grid_distribution_score = (grid_fill_ratio / GRID_FILL_THRESHOLD) * MAX_GRID_SCORE;
         }
-        
+
         // Combine grid distribution with feature quality
         double camera_score = 0.6 * grid_distribution_score + 0.4 * camera_grid_score;
-        
-        if (en_qual_debug) printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n", 
-               cam_id, grid_fill_ratio, grid_distribution_score, camera_grid_score, camera_score);
-        
+
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n",
+                   cam_id, grid_fill_ratio, grid_distribution_score, camera_grid_score, camera_score);
+
         total_quality += camera_score;
         total_grids_filled += grids_with_features;
         total_grids += GRID_SIZE * GRID_SIZE;
     }
-    
-    if (en_qual_debug) printf("[QUALITY_DEBUG] Overall feature counts - Active SLAM: %d, Active MSCKF: %d\n", total_active_slam, total_active_msckf);
-    
+
+    if (en_qual_debug)
+        printf("[QUALITY_DEBUG] Overall feature counts - Active SLAM: %d, Active MSCKF: %d\n", total_active_slam, total_active_msckf);
+
     // Calculate final quality score
     double final_quality = 0.0;
-    if (!features_by_camera.empty()) {
+    if (!features_by_camera.empty())
+    {
         // Average across all cameras
         final_quality = total_quality / features_by_camera.size();
     }
-    
+
     // Ensure quality is within bounds
     final_quality = std::max(0.0, std::min(100.0, total_quality));
-    
-    if (en_qual_debug) printf("[QUALITY_DEBUG] Final quality calculation - Total quality: %.3f, Num cameras: %zu, Final quality: %.3f\n", 
-           total_quality, features_by_camera.size(), final_quality);
-    
+
+    if (en_qual_debug)
+        printf("[QUALITY_DEBUG] Final quality calculation - Total quality: %.3f, Num cameras: %zu, Final quality: %.3f\n",
+               total_quality, features_by_camera.size(), final_quality);
+
     return final_quality;
 }
 
@@ -1014,8 +1045,10 @@ void Publisher::publishBlank()
 
     // Set error codes for missing sensors
     uint32_t packet_error = 0;
-    if (!is_imu_connected.load()) packet_error |= ERROR_CODE_IMU_MISSING;
-    if (!is_cam_connected.load()) packet_error |= ERROR_CODE_CAM_MISSING;
+    if (!is_imu_connected.load())
+        packet_error |= ERROR_CODE_IMU_MISSING;
+    if (!is_cam_connected.load())
+        packet_error |= ERROR_CODE_CAM_MISSING;
     vio_packet.error_code = packet_error;
 
     // Indicate failed state

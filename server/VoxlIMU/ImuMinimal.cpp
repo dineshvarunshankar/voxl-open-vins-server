@@ -41,12 +41,12 @@ namespace
 /** @brief Mutex for IMU data access synchronization */
 std::mutex imu_lock_mutex;
 
-
-#define TS_PRINT(msg) \
-    do { \
+#define TS_PRINT(msg)                             \
+    do                                            \
+    {                                             \
         int64_t __ts = _apps_time_monotonic_ns(); \
-        printf("[TS %ld ns] %s\n", __ts, msg); \
-    } while(0)
+        printf("[TS %ld ns] %s\n", __ts, msg);    \
+    } while (0)
 
 /**
  * @brief Handler for incoming IMU data
@@ -76,8 +76,8 @@ std::mutex imu_lock_mutex;
 void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
     int64_t t_start = _apps_time_monotonic_ns();
-    int64_t t_prev  = t_start;
-
+    int64_t t_prev = t_start;
+    is_imu_connected.store(true);
     // printf("[TS %ld ns] IMU callback start, bytes=%d\n", t_start, bytes);
 
     // ---- validate data ----
@@ -94,8 +94,13 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
     }
+    if (en_debug)
+    {
+        std::cout << "number of IMU packets: " << n_packets << std::endl;
+    }
     if (!arr || n_packets <= 0)
     {
+
         vio_error_codes |= ERROR_CODE_IMU_MISSING;
         active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
@@ -151,6 +156,9 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     // t_prev = t_feed_imu;
 
     // ---- sync camera ----
+    // TODO: CLEAR IMPORTANT CONSIDERARTION: OVINS DOES NOT SUPPORT MULTI-CAM TIME OFFSET CALIBRATION --> That's mainly because of the central image queue design
+    // Independently calibrating camera offset can be supported by either modfiying the feed function in OVINS + state vars
+    // or manually keeping tabs on relative camera offsets and correcting at the CameraQueueFusion level, either solution is kosher but for now we will just use the average offset
     last_imu_timestamp_ns = imu_batch.back().timestamp * 1e9;
     double ts_cutoff = (last_imu_timestamp_ns * 1e-9) -
                        vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
@@ -164,18 +172,21 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             cached_state = vio_manager->get_state();
 
             // release cl_mem objects
-            for (auto &frame : msg.img_frames) {
+            for (auto &frame : msg.img_frames)
+            {
                 if (frame.img.handle_type == modal_flow::ExternalType::ClMem &&
-                    frame.img.external_handle != 0) {
+                    frame.img.external_handle != 0)
+                {
                     cl_mem handle = reinterpret_cast<cl_mem>(
                         static_cast<uintptr_t>(frame.img.external_handle));
 
                     cl_int err = clReleaseMemObject(handle);
-                    if (err != CL_SUCCESS) {
+                    if (err != CL_SUCCESS)
+                    {
                         fprintf(stderr, "Failed to release Frame cl_mem, err=%d\n", err);
                     }
                     // reset so no double free
-                    const_cast<modal_flow::ImageView&>(frame.img).external_handle = 0;
+                    const_cast<modal_flow::ImageView &>(frame.img).external_handle = 0;
                 }
             }
 
@@ -191,7 +202,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     // ---- finish ----
     int64_t t_end = _apps_time_monotonic_ns();
     printf("[DT %8.3f ms] callback finished for %d msgs, total=%8.3f ms\n",
-           (t_end - t_prev)/1e6, batch.size(), (t_end - t_start)/1e6);
+           (t_end - t_prev) / 1e6, batch.size(), (t_end - t_start) / 1e6);
 
     if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 &&
         reset_requested.load(std::memory_order_relaxed))
@@ -200,7 +211,6 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         reset_cv.notify_one();
     }
 }
-
 
 /**
  * @brief Callback for IMU disconnect events
@@ -219,6 +229,13 @@ void _imu_disconnect_cb(__attribute__((unused)) int ch,
 // THREAD SAFE DISCONNECT CALLBACK
 {
     std::lock_guard<std::mutex> lg(imu_lock_mutex);
+    if (!is_imu_connected.load())
+        return;
+    pipe_client_flush(IMU_CH);
+    // Small delay to ensure pending operations complete
+    usleep(50000);
+    // pipe_client_close(IMU_CH);
+    is_imu_connected.store(false);
     return;
 }
 
@@ -250,7 +267,7 @@ int connect_imu_service(void)
     int flags = CLIENT_FLAG_EN_SIMPLE_HELPER;
 
     if (pipe_client_open(IMU_CH, imu_name, PROCESS_NAME, flags,
-                         IMU_RECOMMENDED_READ_BUF_SIZE) != 0)
+                         IMU_RECOMMENDED_READ_BUF_SIZE * 2) != 0)
     {
         fprintf(stderr, "failed to open imu client pipe\n");
         vio_error_codes |= ERROR_CODE_IMU_MISSING;

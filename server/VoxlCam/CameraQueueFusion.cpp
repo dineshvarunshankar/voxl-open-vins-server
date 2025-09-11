@@ -256,7 +256,7 @@ void CameraQueueFusion::fusionLoop()
                     merged.back().masks.insert(merged.back().masks.end(),
                                                msg.masks.begin(), msg.masks.end());
                     merged.back().img_frames.insert(merged.back().img_frames.end(),
-                                               msg.img_frames.begin(), msg.img_frames.end());
+                                                    msg.img_frames.begin(), msg.img_frames.end());
                 }
                 else
                 {

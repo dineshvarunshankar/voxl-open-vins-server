@@ -155,8 +155,8 @@ namespace voxl
         // Small delay to ensure pending operations complete
         usleep(50000);
 
-        // Close the pipe
-        pipe_client_close(channel_);
+        // // Close the pipe
+        // pipe_client_close(channel_);
         is_connected_ = false;
 
         if (en_debug)

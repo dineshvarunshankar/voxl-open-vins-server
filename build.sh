@@ -66,12 +66,12 @@ check_docker() {
 }
 
 
-OPTS="-DCMAKE_BUILD_TYPE=Debug"
+OPTS="-DCMAKE_BUILD_TYPE=Release"
 
 
 case "$1" in
 	qrb5165)
-		check_docker "4.0"
+		check_docker "4.4"
 		mkdir -p build64
 		cd build64
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
@@ -81,22 +81,22 @@ case "$1" in
 		;;
 
 	qrb5165-2)
-		check_docker "4.3"
+		check_docker "4.4"
 		mkdir -p build
 		cd build
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
-				-DEN_ION_BUF=OFF ${OPTS} ../
+				-DEN_ION_BUF=ON ${OPTS} ../
 		make -j$(nproc)
 		cd ../
 		;;
 
 	qcs6490)
 		echo "WARNING qcs6490 target isn't working yet, needs blas and lapack first"
-		check_docker "4.3"
+		check_docker "4.4"
 		mkdir -p build
 		cd build
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
-				-DEN_ION_BUF=OFF ${OPTS} ../
+				-DEN_ION_BUF=ON ${OPTS} ../
 		make -j$(nproc)
 		cd ../
 		;;

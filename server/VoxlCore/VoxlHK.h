@@ -157,8 +157,8 @@ namespace voxl
         void start();
 
         /**
-         * @brief Control pipe callback function 
-         * 
+         * @brief Control pipe callback function
+         *
          * Callback function to handle control pipe messages
          */
         static void ov_vio_control_pipe_cb(int ch, char *string, int bytes, void *context);
@@ -215,28 +215,30 @@ namespace voxl
          * 1. Grid distribution: 5x5 grid per camera with 50 features target (2 per grid)
          * 2. SLAM features: weighted by covariance largest eigenvalue and quality field
          * 3. MSCKF features: weighted by quality field and number of measurements
-         * 
+         *
          * @param used_features_map Map of used features at the current timestamp
          * @param slam_features Map of SLAM features from the state
          * @param state Current VIO state for covariance access
          * @return Quality score (0-100, higher is better)
          */
-        double calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map, 
-                          std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
-                          std::shared_ptr<ov_msckf::State> state);
+        double calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map,
+                           std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
+                           std::shared_ptr<ov_msckf::State> state);
 
         /**
          * @brief Set the first packet flag
-         * 
+         *
          * This function sets the first packet flag to the provided value.
-         * 
+         *
          * @param first_packet The value to set the first packet flag to
          */
-        void set_first_packet(bool first_packet_){
+        void set_first_packet(bool first_packet_)
+        {
             first_packet = first_packet_;
         };
         // ADD BLANK PUBLISHER TO INDICATE MISSING SENSORS
         void publishBlank();
+
     private:
         /**
          * @brief Private constructor for singleton pattern
@@ -329,7 +331,8 @@ namespace voxl
          * @param error_mask Bit mask of error codes to clear
          * @param clear_all If true, clear all error codes
          */
-        static void clearErrorCodes(uint32_t error_mask){
+        static void clearErrorCodes(uint32_t error_mask)
+        {
             clearErrorCodes(error_mask, false);
         }
         static void clearErrorCodes(uint32_t error_mask, bool clear_all);
@@ -398,8 +401,8 @@ namespace voxl
 
         /**
          * @brief Perform a hard reset of the VIO system
-         * 
-         * This function creates a fresh instance of the 
+         *
+         * This function creates a fresh instance of the
          * VIO manager and reinitializes the system.,
          */
         int doHardReset();
@@ -437,10 +440,9 @@ namespace voxl
 
         /** @brief Timeout interval before we can reset again */
         const uint64_t INIT_FAILURE_TIMEOUT_NS = 2000000000; // 2 seconds
-        
+
         /** @brief Timestamp of last reset */
         uint64_t time_of_last_reset = 0;
-
     };
 
 } // namespace voxl

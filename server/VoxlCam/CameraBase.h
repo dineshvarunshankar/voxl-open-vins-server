@@ -129,7 +129,7 @@ namespace voxl
          * @param meta Image metadata containing timestamp and other information
          * @param frame Pointer to image data buffer
          */
-        virtual void process_image(const camera_image_metadata_t &meta, voxl::ImageType img_type, void* frame) = 0;
+        virtual void process_image(const camera_image_metadata_t &meta, voxl::ImageType img_type, void *frame) = 0;
 
         /**
          * @brief Common callback function for pipe client
@@ -145,7 +145,7 @@ namespace voxl
          */
         static void camera_callback(int ch, camera_image_metadata_t meta, char *frame, void *context);
 
-        static void camera_device_buffer_callback(int ch, mpa_ion_buf_t* data, void* context);
+        static void camera_device_buffer_callback(int ch, mpa_ion_buf_t *data, void *context);
 
         // ============================================================================
         // MEMBER VARIABLES

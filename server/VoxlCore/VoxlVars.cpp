@@ -50,7 +50,7 @@ std::atomic<bool> reset_requested(false);
 std::atomic<bool> is_resetting(false);
 
 /** @brief Number of callbacks inside the system */
-std::atomic<uint32_t> active_callbacks{0};      
+std::atomic<uint32_t> active_callbacks{0};
 
 /** @brief Mutex used by reset thread */
 std::mutex reset_mtx;
@@ -111,7 +111,7 @@ float fast_yaw_timeout_s = 0.0f;
 int using_stereo = 0;
 
 /** @brief Base folder for yaml configuration files */
-char folder_base[CHAR_BUF_SIZE] = "/etc/modalai/VoxlConfig/starling2";  
+char folder_base[CHAR_BUF_SIZE] = "/etc/modalai/VoxlConfig/starling2";
 
 /** @brief Enable debug output */
 int en_debug = 0;
@@ -121,7 +121,6 @@ int en_verbose = 0;
 
 /** @brief Configuration only mode */
 int config_only = 0;
-
 
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
@@ -187,7 +186,6 @@ int camera_pipe_channels[MAX_CAM_CNT] = {0};
 
 /** @brief Image ring buffer for processing */
 voxl::img_ringbuf_packet *img_ringbuf = nullptr;
-
 
 bool sync_config = true; ///< Flag to indicate if configuration synchronization is enabled
 

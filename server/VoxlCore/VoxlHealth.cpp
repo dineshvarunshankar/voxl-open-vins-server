@@ -107,8 +107,10 @@ void HealthCheck::healthCheckLoop()
         // Publish blank VIO data packets when sensors are missing
         if (!is_imu_connected.load() || !is_cam_connected.load())
         {
-            if (!is_imu_connected.load()) std::cerr << "[HEALTH] ERROR: IMU disconnected; publishing blank VIO data" << std::endl;
-            if (!is_cam_connected.load()) std::cerr << "[HEALTH] ERROR: Camera disconnected; publishing blank VIO data" << std::endl;
+            if (!is_imu_connected.load())
+                std::cerr << "[HEALTH] ERROR: IMU disconnected; publishing blank VIO data" << std::endl;
+            if (!is_cam_connected.load())
+                std::cerr << "[HEALTH] ERROR: Camera disconnected; publishing blank VIO data" << std::endl;
             std::cout << "[HEALTH] Publishing blank VIO packet due to missing sensors" << std::endl;
             Publisher::getInstance().publishBlank();
         }
@@ -258,15 +260,16 @@ void HealthCheck::analyzeErrorCodes()
  */
 void HealthCheck::checkSystemConnectivity()
 {
-    //THIS IS A REDO OF THE PAST SYSTEM CONNECTIVITY CHECK INSIDE monitorSystemPerformance --> THIS IS A BETTER APPROACH
-    // Detect stale sensor data 
-    const int64_t sensor_timeout_ns = 1000000000; // 1 second timeout --> MAYBE MAKE THIS SMALLER IF NEEDED BE  
+    // THIS IS A REDO OF THE PAST SYSTEM CONNECTIVITY CHECK INSIDE monitorSystemPerformance --> THIS IS A BETTER APPROACH
+    //  Detect stale sensor data
+    const int64_t sensor_timeout_ns = 10000000000000; // 5 second timeout --> MAYBE MAKE THIS SMALLER IF NEEDED BE
     int64_t now_ns = _apps_time_monotonic_ns();
     // If no new IMU data within timeout, mark IMU as disconnected
     if (last_imu_timestamp_ns != 0 && now_ns - last_imu_timestamp_ns > sensor_timeout_ns)
     {
-        if (is_imu_connected.load()) {
-            std::cerr << "[HEALTH] Marking IMU as disconnected due to stale data (no data for " 
+        if (is_imu_connected.load())
+        {
+            std::cerr << "[HEALTH] IMU likely disconnected --> stale data (no data for "
                       << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms)" << std::endl;
         }
         is_imu_connected.store(false);
@@ -274,8 +277,9 @@ void HealthCheck::checkSystemConnectivity()
     // If no new camera data within timeout, mark camera as disconnected
     if (last_cam_time != 0 && now_ns - last_cam_time > sensor_timeout_ns)
     {
-        if (is_cam_connected.load()) {
-            std::cerr << "[HEALTH] Marking camera as disconnected due to stale data (no data for " 
+        if (is_cam_connected.load())
+        {
+            std::cerr << "[HEALTH] Camera likely disconnected --> stale data (no data for "
                       << (now_ns - last_cam_time) / 1000000 << "ms)" << std::endl;
         }
         is_cam_connected.store(false);
@@ -290,7 +294,7 @@ void HealthCheck::checkSystemConnectivity()
         if (current_imu_connected)
         {
             std::cout << "[HEALTH] IMU connected" << std::endl;
-            // Clear IMU-related errors when connection is restored --> CURRENTLY CLEANING ALL ERRORS 
+            // Clear IMU-related errors when connection is restored --> CURRENTLY CLEANING ALL ERRORS
             clearErrorCodes(0, true);
             // Request reset upon IMU reconnection
             reset_requested.store(true);
@@ -311,7 +315,7 @@ void HealthCheck::checkSystemConnectivity()
         {
             std::cout << "[HEALTH] Camera connected" << std::endl;
             // Clear camera-related errors when connection is restored
-            //CAN PROBABLY CLEAR ALL ERRORS HERE...
+            // CAN PROBABLY CLEAR ALL ERRORS HERE...
             clearErrorCodes(ERROR_CODE_CAM_MISSING | ERROR_CODE_DROPPED_CAM);
             // Request reset upon camera reconnection
             reset_requested.store(true);
@@ -355,33 +359,6 @@ void HealthCheck::monitorSystemPerformance()
         last_performance_log_ns = current_time_ns;
         health_check_count_ = 0; // Reset counter
     }
-
-    // // Check for timestamp issues only after VIO manager is initialized to avoid
-    // // false IMU/CAM missing errors during the heavy initialization phase.
-    // if (!vio_manager || !vio_manager->initialized()) {
-    //     return;
-    // }
-
-    // // Check for timestamp issues
-    // if (last_imu_timestamp_ns != 0)
-    //     {
-    //         int64_t time_since_imu = current_time_ns - last_imu_timestamp_ns;
-    //         if (time_since_imu*1e-9 > 2) //2 seconds
-    //         {
-    //             std::cerr << "[HEALTH] WARNING: No IMU data for " << (time_since_imu / 1000000) << "ms" << std::endl;
-    //             vio_error_codes |= ERROR_CODE_IMU_MISSING;
-    //         }
-    //     }
-
-    // if (last_cam_time != 0)
-    //     {
-    //         int64_t time_since_camera = current_time_ns - last_cam_time;
-    //         if (time_since_camera > 1000000000)
-    //         {
-    //             std::cerr << "[HEALTH] WARNING: No camera data for " << (time_since_camera / 1000000) << "ms" << std::endl;
-    //             vio_error_codes |= ERROR_CODE_CAM_MISSING;
-    //         }
-    //     }
 }
 
 /**
@@ -399,7 +376,7 @@ void HealthCheck::checkAutoResetConditions()
 
     // Suppress auto-reset for a grace period after a hard reset to allow sensors to come back online
     int64_t now = _apps_time_monotonic_ns();
-    if (now - time_of_last_reset < INIT_FAILURE_TIMEOUT_NS )
+    if (now - time_of_last_reset < INIT_FAILURE_TIMEOUT_NS)
     {
         return;
     }
@@ -407,13 +384,15 @@ void HealthCheck::checkAutoResetConditions()
     // Also skip auto-reset logic while the VIO manager is still initializing. OpenVINS may
     // require several seconds of IMU/vision data and heavy optimization before the
     // "initialized()" flag is set; triggering another reset in that window leads to a loop.
-    if (!vio_manager || !vio_manager->initialized()) {
+    if (!vio_manager || !vio_manager->initialized())
+    {
         return;
     }
 
     uint32_t current_error_codes = vio_error_codes.load();
-    
-    if (current_error_codes != 0) {
+
+    if (current_error_codes != 0)
+    {
         std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
         clearErrorCodes(0, true);
         // Set reset flag (this would trigger reset in main loop)
@@ -429,19 +408,19 @@ void HealthCheck::checkAutoResetConditions()
  */
 void HealthCheck::checkVINSResetRequest()
 {
-    // atomically check if a reset has been requested, if not, return 
-    if (!reset_requested.exchange(false, std::memory_order_acq_rel)) return;            
-    
+    // atomically check if a reset has been requested, if not, return
+    if (!reset_requested.exchange(false, std::memory_order_acq_rel))
+        return;
+
     // check time since last reset
     int64_t current_time = _apps_time_monotonic_ns();
     uint64_t time_since_reset = current_time - time_of_last_reset;
     if (time_since_reset <= INIT_FAILURE_TIMEOUT_NS)
     {
-        std::cout << "[HEALTH] Reset requested but last reset was too recent (" 
+        std::cout << "[HEALTH] Reset requested but last reset was too recent ("
                   << (time_since_reset / 1000000) << "ms ago), ignoring request" << std::endl;
         return;
-    } 
-        
+    }
 
     // If reset is requested, check if we are already resetting
     if (is_resetting.exchange(true, std::memory_order_acq_rel))
@@ -450,30 +429,32 @@ void HealthCheck::checkVINSResetRequest()
         return;
     }
 
-    if (en_debug) std::cout << "[HEALTH] Reset requested, preparing to reset VIO system" << std::endl; 
-                
+    if (en_debug)
+        std::cout << "[HEALTH] Reset requested, preparing to reset VIO system" << std::endl;
+
     int rc = 0;
     try
     {
         rc = doHardReset();
     }
-    catch(const std::exception& e)
+    catch (const std::exception &e)
     {
         fprintf(stderr, "[ERROR] Exception during reset: %s\n", e.what());
         // Check if it's a permission error
-        if (strstr(e.what(), "Operation not permitted") != nullptr) {
+        if (strstr(e.what(), "Operation not permitted") != nullptr)
+        {
             fprintf(stderr, "[ERROR] Permission denied during reset - this may be due to insufficient privileges\n");
         }
         rc = -1;
     }
-                
+
     if (rc == 0)
     {
         std::cout << "[HEALTH] VIO system reset successfully" << std::endl;
 
         // Clear last sensor timestamps; they will be filled when fresh data arrives
         last_imu_timestamp_ns = 0;
-        last_cam_time        = 0;
+        last_cam_time = 0;
     }
     else
     {
@@ -481,7 +462,7 @@ void HealthCheck::checkVINSResetRequest()
         // Clear reset flags even on failure to prevent getting stuck --> PRIME MOVE HERE
         reset_requested.store(false, std::memory_order_release);
     }
-    
+
     time_of_last_reset = _apps_time_monotonic_ns();
 
     is_resetting.store(false, std::memory_order_release);
@@ -494,10 +475,12 @@ int HealthCheck::doHardReset()
     // wait until all callbacks have finished processing
     {
         std::unique_lock<std::mutex> lk(reset_mtx);
-        // Add timeout to prevent infinite blocking --> FOR NOW, 5 SECONDS 
-        bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5), 
-            [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
-        if (!wait_result) {
+        // Add timeout to prevent infinite blocking --> FOR NOW, 5 SECONDS
+        bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5),
+                                             [this]
+                                             { return active_callbacks.load(std::memory_order_acquire) == 0; });
+        if (!wait_result)
+        {
             fprintf(stderr, "[ERROR] Timeout waiting for callbacks to finish during reset\n");
             return -1;
         }
@@ -507,12 +490,17 @@ int HealthCheck::doHardReset()
     printf("[HEALTH] Hard reset in progress\n");
 
     // ensure we have a valid and initialized VIO manager; if not, create one directly
-    if (!vio_manager || !vio_manager->initialized()) {
-        if (en_debug) std::cout << "[HEALTH] VIO manager was uninitialized, creating a fresh instance" << std::endl;
+    if (!vio_manager || !vio_manager->initialized())
+    {
+        if (en_debug)
+            std::cout << "[HEALTH] VIO manager was uninitialized, creating a fresh instance" << std::endl;
 
-        try {
+        try
+        {
             vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception &e)
+        {
             fprintf(stderr, "[ERROR] Failed to create VIO manager during reset: %s\n", e.what());
             return -1;
         }
@@ -524,10 +512,10 @@ int HealthCheck::doHardReset()
     std::unique_ptr<ov_msckf::VioManager> old_vio_manager;
     std::unique_ptr<ov_msckf::VioManager> new_vio_manager;
 
-    try 
+    try
     {
         new_vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
-        
+
         if (!new_vio_manager)
         {
             fprintf(stderr, "[ERROR] Failed to create new VIO manager object\n");
@@ -535,9 +523,9 @@ int HealthCheck::doHardReset()
         }
 
         old_vio_manager = std::move(vio_manager);
-        vio_manager     = std::move(new_vio_manager);
-    } 
-    catch (const std::exception& e)
+        vio_manager = std::move(new_vio_manager);
+    }
+    catch (const std::exception &e)
     {
         fprintf(stderr, "[ERROR] Exception during VIO manager creation: %s\n", e.what());
         if (old_vio_manager)
@@ -556,8 +544,6 @@ int HealthCheck::doHardReset()
 
     return 0;
 }
-
-
 
 /**
  * @brief Clear specific error codes

@@ -38,7 +38,7 @@ namespace voxl
     {
     }
 
-    static void release_cl_mem(void* mem)
+    static void release_cl_mem(void *mem)
     {
         if (mem)
         {
@@ -68,7 +68,7 @@ namespace voxl
      * @param meta Image metadata containing timestamp and format information
      * @param frame Pointer to image data buffer
      */
-    void MonoCamera::process_image(const camera_image_metadata_t &meta, voxl::ImageType img_type, void* frame)
+    void MonoCamera::process_image(const camera_image_metadata_t &meta, voxl::ImageType img_type, void *frame)
     {
 
         // Update flags quickly
@@ -76,14 +76,18 @@ namespace voxl
         last_cam_time = _apps_time_monotonic_ns();
 
         // Early return if system not ready
-        if (!is_system_ready()) {
-            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
+        if (!is_system_ready())
+        {
+            if (img_type == voxl::ImageType::CL_MEM)
+                release_cl_mem(frame);
             return;
         }
-            
+
         // if we are resetting, just return
-        if (is_resetting.load(std::memory_order_relaxed)) {
-            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
+        if (is_resetting.load(std::memory_order_relaxed))
+        {
+            if (img_type == voxl::ImageType::CL_MEM)
+                release_cl_mem(frame);
             return;
         }
 
@@ -92,7 +96,8 @@ namespace voxl
         if (is_resetting.load(std::memory_order_relaxed))
         {
             active_callbacks.fetch_sub(1, std::memory_order_release);
-            if (img_type == voxl::ImageType::CL_MEM) release_cl_mem(frame);
+            if (img_type == voxl::ImageType::CL_MEM)
+                release_cl_mem(frame);
             return;
         }
 
@@ -105,7 +110,7 @@ namespace voxl
             // Process only supported formats with fast path
             if (meta.format == IMAGE_FORMAT_RAW8)
             {
-                process_raw8(meta, (char*)frame);
+                process_raw8(meta, (char *)frame);
             }
             else
             {
@@ -169,14 +174,15 @@ namespace voxl
 
         // Check if dimensions changed and update mask efficiently
         const bool dimensions_changed = (use_mask_.rows != current_height || use_mask_.cols != current_width);
-        if (dimensions_changed) {
+        if (dimensions_changed)
+        {
             mask_dimensions_changed_ = true;
         }
 
         // Determine if mask should be active based on occlusion and altitude
-        const bool should_mask = camera_info_.is_occluded_on_takeoff && 
-                                std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
-        
+        const bool should_mask = camera_info_.is_occluded_on_takeoff &&
+                                 std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+
         // Update mask only when necessary
         update_mask_if_needed(should_mask);
 
@@ -213,17 +219,17 @@ namespace voxl
         curr_message_.camid = get_channel();
         curr_message_.metadata = meta;
 
-
         // Check if dimensions changed and update mask efficiently
         const bool dimensions_changed = (use_mask_.rows != current_height || use_mask_.cols != current_width);
-        if (dimensions_changed) {
+        if (dimensions_changed)
+        {
             mask_dimensions_changed_ = true;
         }
 
         // Determine if mask should be active based on occlusion and altitude
-        const bool should_mask = camera_info_.is_occluded_on_takeoff && 
-                                std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
-        
+        const bool should_mask = camera_info_.is_occluded_on_takeoff &&
+                                 std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+
         // Update mask only when necessary
         update_mask_if_needed(should_mask);
 
@@ -263,11 +269,12 @@ namespace voxl
     void MonoCamera::update_mask_if_needed(bool should_mask)
     {
         // Check if we need to update the mask
-        const bool needs_update = !current_mask_state_.has_value() || 
-                                 current_mask_state_.value() != should_mask ||
-                                 mask_dimensions_changed_;
-        
-        if (!needs_update) {
+        const bool needs_update = !current_mask_state_.has_value() ||
+                                  current_mask_state_.value() != should_mask ||
+                                  mask_dimensions_changed_;
+
+        if (!needs_update)
+        {
             return;
         }
 
@@ -276,11 +283,14 @@ namespace voxl
         mask_dimensions_changed_ = false;
 
         // Create or update mask efficiently
-        if (should_mask) {
+        if (should_mask)
+        {
             // Use cv::Scalar constructor for better performance
             use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(255));
-        } else {
-            // Use cv::Scalar constructor for better performance  
+        }
+        else
+        {
+            // Use cv::Scalar constructor for better performance
             use_mask_ = cv::Mat(current_height, current_width, CV_8UC1, cv::Scalar(0));
         }
     }
