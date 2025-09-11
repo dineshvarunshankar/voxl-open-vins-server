@@ -262,7 +262,7 @@ void HealthCheck::checkSystemConnectivity()
 {
     // THIS IS A REDO OF THE PAST SYSTEM CONNECTIVITY CHECK INSIDE monitorSystemPerformance --> THIS IS A BETTER APPROACH
     //  Detect stale sensor data
-    const int64_t sensor_timeout_ns = 10000000000000; // 5 second timeout --> MAYBE MAKE THIS SMALLER IF NEEDED BE
+    const int64_t sensor_timeout_ns = 5000000000; // 5 second timeout --> MAYBE MAKE THIS SMALLER IF NEEDED BE
     int64_t now_ns = _apps_time_monotonic_ns();
     // If no new IMU data within timeout, mark IMU as disconnected
     if (last_imu_timestamp_ns != 0 && now_ns - last_imu_timestamp_ns > sensor_timeout_ns)
