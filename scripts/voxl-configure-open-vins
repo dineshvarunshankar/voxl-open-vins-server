@@ -151,7 +151,7 @@ case ${arg} in
 		enable_service_and_exit
 		;;
 	"d8v4")
-		echo "enabling starling2_3cam config for D0008V4 with stereo OV9782"
+		echo "enabling config for D0008V4 with stereo OV9782"
 		reset_config_file_to_default
 		set_param using_stereo 0
 		set_param sync_config true
