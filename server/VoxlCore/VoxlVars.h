@@ -529,6 +529,14 @@ extern int en_verbose;
  */
 extern int config_only;
 
+/**
+ * @brief Fusion rate in milliseconds
+ *
+ * Time interval in milliseconds for the main fusion loop
+ * that processes and integrates sensor data.
+ */
+extern float fusion_rate_dt_ms;
+
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
 // ============================================================================

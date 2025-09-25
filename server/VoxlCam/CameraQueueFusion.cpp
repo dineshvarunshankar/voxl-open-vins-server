@@ -68,7 +68,7 @@ void CameraQueueFusion::start(size_t num_cams)
 
     num_cams_ = num_cams;
     // Expect contiguous camera IDs 0..num_cams-1
-    expected_mask_ = (1u << num_cams_) - 1;
+    expected_mask_ = (1u << num_cams_) -1;
 
     fusion_thread_ = std::thread(&CameraQueueFusion::fusionLoop, this);
     fusion_thread_.detach();
@@ -179,7 +179,7 @@ void CameraQueueFusion::fusionLoop()
     using namespace std::chrono;
     const auto timeout = 1us;
     const auto init_check_interval = 50us;
-    constexpr auto kMinLoopPeriod = std::chrono::milliseconds(20); // try to run at 50Hz could be 34ms for 30Hz
+    constexpr auto kMinLoopPeriod = std::chrono::milliseconds(34); // try to run at 50Hz could be 34ms for 30Hz
 
     do
     {

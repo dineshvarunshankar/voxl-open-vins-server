@@ -153,9 +153,10 @@ case ${arg} in
 	"d8v4")
 		echo "enabling starling2_3cam config for D0008V4 with stereo OV9782"
 		reset_config_file_to_default
-		set_param using_stereo 1
-		set_param sync_config false
+		set_param using_stereo 0
+		set_param sync_config true
 		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/d0008-v4"
+		set_param fusion_rate_dt_ms 34.0
 		enable_service_and_exit
 		;;
 	"starling2_3cam")

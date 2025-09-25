@@ -173,6 +173,9 @@ bool occlude_stereo_left = false;
 /** @brief Occlude stereo right */
 bool occlude_stereo_right = false;
 
+/** @brief Fusion rate in milliseconds */
+float fusion_rate_dt_ms = 20.0; // 50Hz
+
 // ============================================================================
 // PIPE COMMUNICATION VARIABLES
 // ============================================================================
