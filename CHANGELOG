@@ -1,2 +1,5 @@
+0.5.1
+    * adjust verbosity for config script
+    * changes for d0008-v4 double ion stream
 0.0.1a
     * New server and OV lib with several architectural changes
