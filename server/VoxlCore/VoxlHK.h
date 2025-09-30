@@ -429,6 +429,9 @@ namespace voxl
         /** @brief Last camera connection state for change detection */
         bool last_cam_connected_{false};
 
+        /** @brief Used to track the first camera connection */
+        bool first_camera_connection_seen_{false};
+
         /** @brief Timestamp of last health check */
         int64_t last_health_check_ns_{0};
 

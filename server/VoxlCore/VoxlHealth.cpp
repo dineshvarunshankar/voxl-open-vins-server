@@ -317,9 +317,15 @@ void HealthCheck::checkSystemConnectivity()
             // Clear camera-related errors when connection is restored
             // CAN PROBABLY CLEAR ALL ERRORS HERE...
             clearErrorCodes(ERROR_CODE_CAM_MISSING | ERROR_CODE_DROPPED_CAM);
-            // Request reset upon camera reconnection
-            reset_requested.store(true);
-            std::cout << "[HEALTH] Reset requested due to camera reconnection" << std::endl;
+     
+            // Don't trigger a reset on the very first connection
+            if (first_camera_connection_seen_) {
+                // Request reset upon camera reconnection
+                reset_requested.store(true);
+                std::cout << "[HEALTH] Reset requested due to camera reconnection" << std::endl;
+            } else {
+                first_camera_connection_seen_ = true; // no reset on first connection
+            }
         }
         else
         {

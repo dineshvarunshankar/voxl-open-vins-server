@@ -344,34 +344,30 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
 
     // Check for insufficient features
-    if (vio_packet.n_feature_points < auto_reset_min_features)
+    static int64_t last_good_feat_ts = 0;
+    static bool wait_for_features = true;
+    if (wait_for_features)
     {
-        static int64_t last_good_feat_ts = 0;
-        static bool wait_for_features = true;
-
-        if (wait_for_features)
+        if (vio_packet.n_feature_points > auto_reset_min_features)
         {
-            if (vio_packet.n_feature_points > 3)
-            {
-                last_good_feat_ts = vio_packet.timestamp_ns;
-                wait_for_features = false;
-            }
+            last_good_feat_ts = vio_packet.timestamp_ns;
+            wait_for_features = false;
         }
-        else
+    }
+    else
+    {
+        if (vio_packet.n_feature_points > auto_reset_min_features)
         {
-            if (vio_packet.n_feature_points > auto_reset_min_features)
-            {
-                last_good_feat_ts = vio_packet.timestamp_ns;
-            }
+            last_good_feat_ts = vio_packet.timestamp_ns;
+        }
 
-            double ts = (vio_packet.timestamp_ns - last_good_feat_ts) * 1e-9;
-            if (ts > auto_reset_min_feature_timeout_s)
-            {
-                fprintf(stderr, "ERROR: insufficient features for too long! cur: %d, min_req: %d\n",
-                        vio_packet.n_feature_points, auto_reset_min_features);
-                vio_error_codes |= ERROR_CODE_NO_FEATURES;
-                wait_for_features = true;
-            }
+        double ts = (vio_packet.timestamp_ns - last_good_feat_ts) * 1e-9;
+        if (ts > auto_reset_min_feature_timeout_s)
+        {
+            fprintf(stderr, "ERROR: insufficient features for too long! cur: %d, min_req: %d\n",
+                    vio_packet.n_feature_points, auto_reset_min_features);
+            vio_error_codes |= ERROR_CODE_NO_FEATURES;
+            wait_for_features = true;
         }
     }
 
@@ -474,10 +470,14 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_state = VIO_STATE_FAILED;
         // Note: Actual reset logic would be handled by the main VIO manager
     }
-    else
+    else if (vio_manager->initialized())
     {
         vio_packet.state = VIO_STATE_OK;
         vio_state = VIO_STATE_OK;
+    } else {
+        vio_packet.state = VIO_STATE_INITIALIZING;
+        vio_state = VIO_STATE_INITIALIZING;
+        vio_packet.quality = 1;
     }
 
     // FRAME
@@ -687,7 +687,7 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
 
     if (wait_for_features)
     {
-        if (n_features > 3)
+        if (n_features > auto_reset_min_features)
         {
             last_good_feat_ts = state->_timestamp * 1e9;
             wait_for_features = false;
