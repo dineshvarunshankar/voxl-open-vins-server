@@ -352,6 +352,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         {
             last_good_feat_ts = vio_packet.timestamp_ns;
             wait_for_features = false;
+            vio_error_codes.fetch_and(~ERROR_CODE_NO_FEATURES, std::memory_order_relaxed);
         }
     }
     else
