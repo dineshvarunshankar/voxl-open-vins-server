@@ -227,6 +227,9 @@ namespace voxl
             return;
         }
 
+        if (is_resetting.load(std::memory_order_relaxed))
+            return;
+
         // Early check for global shutdown flag
         if (!main_running)
             return;

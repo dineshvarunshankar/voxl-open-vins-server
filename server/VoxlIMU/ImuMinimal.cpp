@@ -139,8 +139,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     if (imu_batch.empty())
     {
         vio_error_codes |= ERROR_CODE_DROPPED_IMU;
-        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 &&
-            reset_requested.load(std::memory_order_relaxed))
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
         {
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
@@ -204,8 +203,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     printf("[DT %8.3f ms] callback finished for %d msgs, total=%8.3f ms\n",
            (t_end - t_prev) / 1e6, batch.size(), (t_end - t_start) / 1e6);
 
-    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 &&
-        reset_requested.load(std::memory_order_relaxed))
+    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
     {
         std::lock_guard<std::mutex> lk(reset_mtx);
         reset_cv.notify_one();

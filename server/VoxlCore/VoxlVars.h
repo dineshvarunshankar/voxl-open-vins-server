@@ -340,6 +340,16 @@ extern std::atomic<bool> reset_requested;
  */
 extern std::atomic<bool> is_resetting;
 
+
+/** 
+ * @brief Counter which increments on resets 
+ * 
+ * The counter is used to track the number of resets that have occurred.
+ * This can be useful for debugging, logging, and ensuring that
+ * reset operations are being performed as expected.
+*/
+extern std::atomic<uint32_t> reset_num_counter;
+
 /** 
  * @brief Number of callbacks inside the system
  * 

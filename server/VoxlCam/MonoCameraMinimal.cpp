@@ -95,9 +95,14 @@ namespace voxl
         active_callbacks.fetch_add(1, std::memory_order_acquire);
         if (is_resetting.load(std::memory_order_relaxed))
         {
-            active_callbacks.fetch_sub(1, std::memory_order_release);
             if (img_type == voxl::ImageType::CL_MEM)
-                release_cl_mem(frame);
+            release_cl_mem(frame);
+            
+            if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+            {
+                std::lock_guard<std::mutex> lk(reset_mtx);
+                reset_cv.notify_one();
+            }
             return;
         }
 
@@ -135,7 +140,7 @@ namespace voxl
         }
 
         // check if in flight processing count reaches zero and if a reset is requested
-        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1 && reset_requested.load(std::memory_order_relaxed))
+        if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
         {
             // Notify the reset thread to continue processing
             std::lock_guard<std::mutex> lk(reset_mtx);

@@ -346,13 +346,21 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // Check for insufficient features
     static int64_t last_good_feat_ts = 0;
     static bool wait_for_features = true;
+    static uint32_t last_reset_count = reset_num_counter.load();
+    if (last_reset_count != reset_num_counter.load())
+    {
+        last_reset_count = reset_num_counter.load();
+        wait_for_features = true;
+        last_good_feat_ts = vio_packet.timestamp_ns;
+    }
+
     if (wait_for_features)
     {
+        vio_error_codes.fetch_and(~ERROR_CODE_NO_FEATURES, std::memory_order_relaxed);
         if (vio_packet.n_feature_points > auto_reset_min_features)
         {
             last_good_feat_ts = vio_packet.timestamp_ns;
             wait_for_features = false;
-            vio_error_codes.fetch_and(~ERROR_CODE_NO_FEATURES, std::memory_order_relaxed);
         }
     }
     else

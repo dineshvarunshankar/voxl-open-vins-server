@@ -49,6 +49,9 @@ std::atomic<bool> reset_requested(false);
 /** @brief Flag indicating if system is currently resetting */
 std::atomic<bool> is_resetting(false);
 
+/** @brief Counter which increments on resets */
+std::atomic<uint32_t> reset_num_counter{0};
+
 /** @brief Number of callbacks inside the system */
 std::atomic<uint32_t> active_callbacks{0};
 

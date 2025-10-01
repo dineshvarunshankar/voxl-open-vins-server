@@ -442,6 +442,7 @@ void HealthCheck::checkVINSResetRequest()
     try
     {
         rc = doHardReset();
+        reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
     }
     catch (const std::exception &e)
     {
@@ -483,11 +484,16 @@ int HealthCheck::doHardReset()
         std::unique_lock<std::mutex> lk(reset_mtx);
         // Add timeout to prevent infinite blocking --> FOR NOW, 5 SECONDS
         bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5),
-                                             [this]
-                                             { return active_callbacks.load(std::memory_order_acquire) == 0; });
+            [this]
+            {
+                auto cur = active_callbacks.load(std::memory_order_acquire);
+                return cur == 0;
+            });
+
         if (!wait_result)
         {
-            fprintf(stderr, "[ERROR] Timeout waiting for callbacks to finish during reset\n");
+            fprintf(stderr, "[ERROR] Timeout waiting for callbacks to finish during reset. active_callbacks=%d\n",
+                    active_callbacks.load(std::memory_order_acquire));
             return -1;
         }
     }
