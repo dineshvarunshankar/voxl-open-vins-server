@@ -459,6 +459,14 @@ extern int auto_reset_min_features;
 extern float auto_reset_min_feature_timeout_s;
 
 /**
+ * @brief Grace period timeout after entering OK state
+ *
+ * Duration in seconds after entering the OK state during which
+ * quality is held low to avoid bad initialization.
+ */
+extern float ok_state_grace_timeout_s;
+
+/**
  * @brief Timeout for auto-fallback mode
  *
  * Duration in seconds before the system falls back to

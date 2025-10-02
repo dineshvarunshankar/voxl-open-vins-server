@@ -200,8 +200,11 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 
     // ---- finish ----
     int64_t t_end = _apps_time_monotonic_ns();
-    printf("[DT %8.3f ms] callback finished for %d msgs, total=%8.3f ms\n",
-           (t_end - t_prev) / 1e6, batch.size(), (t_end - t_start) / 1e6);
+    double dt_ms = (double)(t_end - t_start) / 1e6;
+    if (dt_ms / batch.size() > 32.0)
+    {
+        printf("WARNING: IMU callback took too long: %8.3f ms for %d msgs\n", dt_ms, (int)batch.size());
+    }
 
     if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
     {

@@ -297,6 +297,7 @@ namespace voxl
 
         // Process the image in the derived class implementation
         camera->process_image(data->img_meta, voxl::ImageType::CL_MEM, cl_mem_dest);
+        munmap(frame, data->size);
     }
 
 } // namespace voxl

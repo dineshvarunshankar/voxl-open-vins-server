@@ -347,8 +347,12 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     static int64_t last_good_feat_ts = 0;
     static bool wait_for_features = true;
     static uint32_t last_reset_count = reset_num_counter.load();
+    static int64_t last_good_state_ns = 0;
+    static bool wait_for_steady_init = true;
     if (last_reset_count != reset_num_counter.load())
     {
+        last_good_state_ns = 0;
+        wait_for_steady_init = true;
         last_reset_count = reset_num_counter.load();
         wait_for_features = true;
         last_good_feat_ts = vio_packet.timestamp_ns;
@@ -483,7 +487,26 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     {
         vio_packet.state = VIO_STATE_OK;
         vio_state = VIO_STATE_OK;
-    } else {
+
+        const int64_t now_ns = _apps_time_monotonic_ns();
+
+        // If we just entered OK (or after a reset), start the grace window.
+        if ((last_good_state_ns == 0 || vio_packet.n_feature_points < auto_reset_min_features) && wait_for_steady_init) {
+            last_good_state_ns = now_ns;
+        }
+
+        // Duration since OK started
+        const int64_t dt_ok_ns = now_ns - last_good_state_ns;
+        const int64_t grace_ns = (int64_t)(ok_state_grace_timeout_s * 1e9);
+
+        if (dt_ok_ns < grace_ns && wait_for_steady_init) {
+            // Before grace timeout ends force quality to 1 regardless of computed value
+            vio_packet.quality = 1;
+        } else {
+            wait_for_steady_init = false;
+        }
+    }
+    else {
         vio_packet.state = VIO_STATE_INITIALIZING;
         vio_state = VIO_STATE_INITIALIZING;
         vio_packet.quality = 1;

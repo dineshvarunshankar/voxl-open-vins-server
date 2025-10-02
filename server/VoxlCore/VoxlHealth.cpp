@@ -502,7 +502,7 @@ int HealthCheck::doHardReset()
     printf("[HEALTH] Hard reset in progress\n");
 
     // ensure we have a valid and initialized VIO manager; if not, create one directly
-    if (!vio_manager || !vio_manager->initialized())
+    if (!vio_manager && !vio_manager->initialized())
     {
         if (en_debug)
             std::cout << "[HEALTH] VIO manager was uninitialized, creating a fresh instance" << std::endl;
