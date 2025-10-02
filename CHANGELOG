@@ -1,3 +1,7 @@
+0.5.2
+    * fix for min feature reset and first cam connect
+    * toggle missing feature on reset
+    * fixed reset stall and double reset from no features
 0.5.1
     * adjust verbosity for config script
     * changes for d0008-v4 double ion stream
