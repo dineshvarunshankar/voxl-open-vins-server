@@ -62,7 +62,7 @@ void CameraQueueFusion::start(size_t num_cams)
     if (num_cams == 0 || num_cams > MAX_CAMERA_COUNT)
     {
         std::cerr << "Invalid number of cameras: " << num_cams << " (max: " << MAX_CAMERA_COUNT << ")" << std::endl;
-        running_.store(false);
+        running_.store(false, std::memory_order_release);
         return;
     }
 
@@ -270,6 +270,6 @@ void CameraQueueFusion::fusionLoop()
                                  std::make_move_iterator(merged.end()));
         }
 
-        camera_ready_mask_.store(0);
+        camera_ready_mask_.store(0, std::memory_order_release);
     } while (main_running);
 }

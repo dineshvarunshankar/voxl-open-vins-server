@@ -204,8 +204,11 @@ bool sync_config = true; ///< Flag to indicate if configuration synchronization 
 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
-    if (is_initialized)
+
+    if (is_initialized){
+        detectJerk(data);
         return; // CHECK IF WE HAVE ALREADY DONE THIS
+    }
 
     // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
     // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
@@ -257,3 +260,140 @@ void voxl::FrameTransform::update(const imu_data_t &data)
            static_cast<int>(gravity_axis),
            static_cast<int>(gravity_direction));
 }
+void voxl::FrameTransform::detectJerk(const imu_data_t &data)
+{
+    if (vel_mag > VEL_MAG_JERK_THRESHOLD)
+    {
+        // moving too fast, skip jerk detection
+        // INFLIGHT
+        has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
+        has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
+        non_static.store(true, std::memory_order_release);    // ASSUME WE JERKED ALREADY
+        return;
+    }
+    // accumulate data for jerk detection
+    if (current_total_samples <= expected_total_samples * 0.5f)
+    {
+        avg_acc_1t0 += Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
+        avg_gyro_1t0 += Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
+        acc1t0_samples.push_back(Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]));
+        gyro1t0_samples.push_back(Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]));
+        current_total_samples += 1.0f;
+        return;
+    }
+    else if (current_total_samples > expected_total_samples * 0.5f && current_total_samples < expected_total_samples)
+    {
+        // in the second half of the window
+        avg_acc_2t1 += Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
+        avg_gyro_2t1 += Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
+        acc2t1_samples.push_back(Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]));
+        gyro2t1_samples.push_back(Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]));
+        current_total_samples += 1.0f;
+    }
+    else if (current_total_samples >= expected_total_samples)
+    {
+        // already have enough samples for this window, now compute variance per window segment
+
+        double var_acc1t0 = 0.0, var_gyro1t0 = 0.0, var_acc2t1 = 0.0, var_gyro2t1 = 0.0;
+
+        avg_acc_1t0 /= acc1t0_samples.size();
+        avg_gyro_1t0 /= gyro1t0_samples.size();
+        avg_acc_2t1 /= acc2t1_samples.size();
+        avg_gyro_2t1 /= gyro2t1_samples.size();
+
+        // note that the # of samples for the same segment is the same for acc and gyro
+        for (size_t i = 0; i < acc1t0_samples.size(); ++i)
+        {
+            var_acc1t0 += (acc1t0_samples[i] - avg_acc_1t0).dot(acc1t0_samples[i] - avg_acc_1t0);
+            var_gyro1t0 += (gyro1t0_samples[i] - avg_gyro_1t0).dot(gyro1t0_samples[i] - avg_gyro_1t0);
+        }
+        var_acc1t0 = std::sqrt(var_acc1t0 / acc1t0_samples.size() - 1);
+        var_gyro1t0 = std::sqrt(var_gyro1t0 / gyro1t0_samples.size() - 1);
+
+        for (size_t i = 0; i < acc2t1_samples.size(); ++i)
+        {
+            var_acc2t1 += (acc2t1_samples[i] - avg_acc_2t1).dot(acc2t1_samples[i] - avg_acc_2t1);
+            var_gyro2t1 += (gyro2t1_samples[i] - avg_gyro_2t1).dot(gyro2t1_samples[i] - avg_gyro_2t1);
+        }
+        var_acc2t1 = std::sqrt(var_acc2t1 / acc2t1_samples.size() - 1);
+        var_gyro2t1 = std::sqrt(var_gyro2t1 / gyro2t1_samples.size() - 1);
+        switch (jerk_opt)
+        {
+        case JerkOption::ACCEL_ONLY:
+            if (var_acc1t0 > ACC_VAR_THRESHOLD || var_acc2t1 > ACC_VAR_THRESHOLD)
+            {
+                resetJerkDetection();
+                return;
+            }
+            break;
+        case JerkOption::GYRO_ONLY:
+            if (var_gyro1t0 > GYRO_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD)
+            {
+                resetJerkDetection();
+                return;
+            }
+            break;
+        case JerkOption::ACCEL_AND_GYRO:
+            if (var_acc1t0 > ACC_VAR_THRESHOLD || var_gyro1t0 > GYRO_VAR_THRESHOLD ||
+                var_acc2t1 > ACC_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD)
+            {
+                resetJerkDetection();
+                return;
+            }
+            break;
+        default:
+            // NOT ENABLED FOR JERK DETECTION
+            resetJerkDetection();
+            return;
+            break; // DO I EVEN NEED THIS BREAK HERE?
+        }
+        // NO JERK DETECTED
+        has_acc_jerk.store(false, std::memory_order_release);
+        has_gyro_jerk.store(false, std::memory_order_release);
+        non_static.store(false, std::memory_order_release);
+
+        return;
+    }
+}
+
+void voxl::FrameTransform::resetJerkDetection()
+{
+    has_acc_jerk.store(true, std::memory_order_release);
+    has_gyro_jerk.store(true, std::memory_order_release);
+    // reset for next window
+    // note that we do not reset the entirity of the window, but only the second half
+    avg_acc_1t0 = avg_acc_2t1;
+    avg_gyro_1t0 = avg_gyro_2t1;
+    avg_acc_2t1.setZero();
+    avg_gyro_2t1.setZero();
+    current_total_samples = static_cast<float>(acc2t1_samples.size());
+    acc1t0_samples = acc2t1_samples;
+    gyro1t0_samples = gyro2t1_samples;
+    acc2t1_samples.clear();
+    gyro2t1_samples.clear();
+}
+// ============================================================================
+// JERK DETECTION VARIABLES
+// ============================================================================
+
+/**
+ * @brief Flag indicating if accelerometer jerk is detected
+ */
+std::atomic<bool> has_acc_jerk(false);
+
+/**
+ * @brief Flag indicating if gyroscope jerk is detected
+ */
+std::atomic<bool> has_gyro_jerk(false);
+
+/**
+ * @brief Non-static flag for jerk detection
+ */
+std::atomic<bool> non_static(false);
+
+/**
+ * @brief Window size in seconds for jerk detection
+ */
+double window_size_s = 1.0;
+
+std::atomic<float> vel_mag(0.0f); ///< Current velocity magnitude

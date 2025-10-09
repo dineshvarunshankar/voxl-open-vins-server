@@ -40,6 +40,9 @@
 
 // Local includes
 #include "VoxlCommon.h"
+#define GYRO_VAR_THRESHOLD 0.1f     ///< Gyro variance threshold for motion detection
+#define ACC_VAR_THRESHOLD 0.1f      ///< Accelerometer variance threshold for motion detection
+#define VEL_MAG_JERK_THRESHOLD 0.5f ///< Velocity magnitude threshold for jerk detection
 
 // ============================================================================
 // DATA STRUCTURES
@@ -90,14 +93,37 @@ namespace voxl
             NEGATIVE
         };
 
+        enum class JerkOption
+        {
+            ACCEL_ONLY,
+            GYRO_ONLY,
+            ACCEL_AND_GYRO,
+            NONE
+        };
+
         // ASSUME IMU IS MOUNTED ALIGNED WITH THE BODY FRAME
         Axis gravity_axis{Axis::Z};
         Direction gravity_direction{Direction::NEGATIVE};
         bool is_initialized{false};
+        // JERK DETECTION
         Eigen::Matrix3d correction_matrix{Eigen::Matrix3d::Identity()};
-
+        Eigen::Vector3d avg_acc_1t0{Eigen::Vector3d::Zero()};
+        Eigen::Vector3d avg_gyro_1t0{Eigen::Vector3d::Zero()};
+        Eigen::Vector3d avg_acc_2t1{Eigen::Vector3d::Zero()};
+        Eigen::Vector3d avg_gyro_2t1{Eigen::Vector3d::Zero()};
+        float expected_total_samples{0.0f};
+        float current_total_samples{0.0f};
+        std::deque<Eigen::Vector3d> acc1t0_samples;
+        std::deque<Eigen::Vector3d> gyro1t0_samples;
+        std::deque<Eigen::Vector3d> acc2t1_samples;
+        std::deque<Eigen::Vector3d> gyro2t1_samples;
+        JerkOption jerk_opt{JerkOption::ACCEL_AND_GYRO};
         // PROVE THE ASSUMPTION
         void update(const imu_data_t &data);
+
+        void detectJerk(const imu_data_t &data);
+
+        void resetJerkDetection();
 
         Eigen::Vector3d transform(const Eigen::Vector3d &v) const
         {
@@ -279,13 +305,12 @@ namespace voxl
 // CORE VIO MANAGER
 // ============================================================================
 
-
-/** @brief VIO manager options 
- * 
+/** @brief VIO manager options
+ *
  * Options for configuring the VIO manager instance.
  * This includes settings for state initialization, estimator options,
  * and other operational parameters.
-*/
+ */
 extern ov_msckf::VioManagerOptions vio_manager_options;
 
 /**
@@ -327,7 +352,7 @@ extern std::atomic<uint8_t> vio_state;
 extern std::atomic<uint32_t> vio_error_codes;
 
 /** @brief Should reset floag
- * 
+ *
  * Flag indicating that system should reset
  */
 extern std::atomic<bool> reset_requested;
@@ -340,24 +365,23 @@ extern std::atomic<bool> reset_requested;
  */
 extern std::atomic<bool> is_resetting;
 
-
-/** 
- * @brief Counter which increments on resets 
- * 
+/**
+ * @brief Counter which increments on resets
+ *
  * The counter is used to track the number of resets that have occurred.
  * This can be useful for debugging, logging, and ensuring that
  * reset operations are being performed as expected.
-*/
+ */
 extern std::atomic<uint32_t> reset_num_counter;
 
-/** 
+/**
  * @brief Number of callbacks inside the system
- * 
+ *
  * Atomic counter for tracking the number of in-flight
  * callbacks or operations currently being processed that need
  * to be accounted for during reset.
  */
-extern std::atomic<uint32_t> active_callbacks;      
+extern std::atomic<uint32_t> active_callbacks;
 
 /**
  * @brief Mutex for reset
@@ -366,9 +390,9 @@ extern std::atomic<uint32_t> active_callbacks;
  */
 extern std::mutex reset_mtx;
 
-/** 
- * @brief Reset conditional variable 
- * 
+/**
+ * @brief Reset conditional variable
+ *
  * Condition variable used to synchronize reset operations,
  * the reset thread will wait on active_callbacks to reach zero before proceeding.
  * */
@@ -603,6 +627,29 @@ extern std::mutex imu_lock_mutex;
  */
 extern voxl::FrameTransform frame_transform;
 
+/**
+ * @brief Flag indicating if accelerometer jerk is detected
+ */
+extern std::atomic<bool> has_acc_jerk;
+
+/**
+ * @brief Flag indicating if gyroscope jerk is detected
+ */
+extern std::atomic<bool> has_gyro_jerk;
+
+/**
+ * @brief Non-static flag for jerk detection
+ */
+extern std::atomic<bool> non_static;
+
+/**
+ * @brief Window size in seconds for jerk detection
+ *
+ * Time window in seconds used for detecting jerks
+ * in accelerometer and gyroscope data.
+ */
+extern double window_size_s;
+
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES
 // ============================================================================
@@ -649,10 +696,13 @@ extern int cameras_used;
 
 /**
  * @brief Altitude z
- * 
+ *
  * Atomic variable for the altitude z
  */
 extern std::atomic<float> alt_z;
+
+/** @brief Velocity Magnitude */
+extern std::atomic<float> vel_mag;
 
 /** @brief Takeoff altitude threshold */
 extern float takeoff_alt_threshold;
@@ -686,7 +736,6 @@ extern int camera_pipe_channels[MAX_CAM_CNT];
  * image data management and processing.
  */
 extern voxl::img_ringbuf_packet *img_ringbuf;
-
 
 // ============================================================================
 // SETUP EXPERIMENTAL VARIABLES

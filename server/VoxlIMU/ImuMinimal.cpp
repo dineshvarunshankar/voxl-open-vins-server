@@ -77,7 +77,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
     int64_t t_start = _apps_time_monotonic_ns();
     int64_t t_prev = t_start;
-    is_imu_connected.store(true);
+    is_imu_connected.store(true, std::memory_order_release);
     // printf("[TS %ld ns] IMU callback start, bytes=%d\n", t_start, bytes);
 
     // ---- validate data ----
@@ -236,7 +236,7 @@ void _imu_disconnect_cb(__attribute__((unused)) int ch,
     // Small delay to ensure pending operations complete
     usleep(50000);
     // pipe_client_close(IMU_CH);
-    is_imu_connected.store(false);
+    is_imu_connected.store(false, std::memory_order_release);
     return;
 }
 

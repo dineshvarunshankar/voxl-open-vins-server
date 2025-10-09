@@ -56,7 +56,7 @@ void HealthCheck::start()
         return;
     }
 
-    running_.store(true);
+    running_.store(true, std::memory_order_release);
     health_thread_ = std::thread(&HealthCheck::healthCheckLoop, this);
     health_thread_.detach();
 
@@ -77,7 +77,7 @@ void HealthCheck::stop()
         return;
     }
 
-    running_.store(false);
+    running_.store(false, std::memory_order_release);
 
     // Give the thread a moment to finish
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -272,7 +272,7 @@ void HealthCheck::checkSystemConnectivity()
             std::cerr << "[HEALTH] IMU likely disconnected --> stale data (no data for "
                       << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms)" << std::endl;
         }
-        is_imu_connected.store(false);
+        is_imu_connected.store(false, std::memory_order_release);
     }
     // If no new camera data within timeout, mark camera as disconnected
     if (last_cam_time != 0 && now_ns - last_cam_time > sensor_timeout_ns)
@@ -282,7 +282,7 @@ void HealthCheck::checkSystemConnectivity()
             std::cerr << "[HEALTH] Camera likely disconnected --> stale data (no data for "
                       << (now_ns - last_cam_time) / 1000000 << "ms)" << std::endl;
         }
-        is_cam_connected.store(false);
+        is_cam_connected.store(false, std::memory_order_release);
     }
 
     bool current_imu_connected = is_imu_connected.load();
@@ -297,7 +297,7 @@ void HealthCheck::checkSystemConnectivity()
             // Clear IMU-related errors when connection is restored --> CURRENTLY CLEANING ALL ERRORS
             clearErrorCodes(0, true);
             // Request reset upon IMU reconnection
-            reset_requested.store(true);
+            reset_requested.store(true, std::memory_order_release);
             std::cout << "[HEALTH] Reset requested due to IMU reconnection" << std::endl;
         }
         else
@@ -321,7 +321,7 @@ void HealthCheck::checkSystemConnectivity()
             // Don't trigger a reset on the very first connection
             if (first_camera_connection_seen_) {
                 // Request reset upon camera reconnection
-                reset_requested.store(true);
+                reset_requested.store(true, std::memory_order_release);
                 std::cout << "[HEALTH] Reset requested due to camera reconnection" << std::endl;
             } else {
                 first_camera_connection_seen_ = true; // no reset on first connection
@@ -336,7 +336,7 @@ void HealthCheck::checkSystemConnectivity()
     }
 
     // Check VIO state changes
-    uint8_t current_vio_state = vio_state.load();
+    uint8_t current_vio_state = vio_state.load(std::memory_order_acquire);
     if (current_vio_state != last_vio_state_)
     {
         std::cout << "[HEALTH] VIO state changed: " << (int)last_vio_state_ << " -> " << (int)current_vio_state << std::endl;
@@ -402,7 +402,7 @@ void HealthCheck::checkAutoResetConditions()
         std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
         clearErrorCodes(0, true);
         // Set reset flag (this would trigger reset in main loop)
-        reset_requested.store(true);
+        reset_requested.store(true, std::memory_order_release);
     }
 }
 
@@ -570,13 +570,13 @@ void HealthCheck::clearErrorCodes(uint32_t error_mask, bool clear_all)
 {
     if (clear_all)
     {
-        vio_error_codes.store(0);
+        vio_error_codes.store(0, std::memory_order_release);
     }
     else
     {
-        uint32_t current_errors = vio_error_codes.load();
+        uint32_t current_errors = vio_error_codes.load(std::memory_order_acquire);
         uint32_t new_errors = current_errors & ~error_mask;
-        vio_error_codes.store(new_errors);
+        vio_error_codes.store(new_errors, std::memory_order_release);
     }
 
     if (en_debug)
