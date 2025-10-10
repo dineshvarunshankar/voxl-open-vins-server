@@ -95,13 +95,13 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
 {
     if (STR_MATCH(string, RESET_VIO_HARD))
     {
-        if (reset_requested.load() || is_resetting.load())
+        if (reset_requested.load(std::memory_order_acquire) || is_resetting.load(std::memory_order_acquire))
         {
             fprintf(stderr, "[WARNING] Already resetting VIO, ignoring hard reset command.\n");
             return;
         }
 
-        reset_requested.store(true, std::memory_order_acquire);
+        reset_requested.store(true, std::memory_order_release);
         fprintf(stderr, "[ERROR] Client requested hard reset\n");
         return;
     }

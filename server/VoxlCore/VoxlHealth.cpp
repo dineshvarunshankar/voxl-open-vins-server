@@ -267,7 +267,7 @@ void HealthCheck::checkSystemConnectivity()
     // If no new IMU data within timeout, mark IMU as disconnected
     if (last_imu_timestamp_ns != 0 && now_ns - last_imu_timestamp_ns > sensor_timeout_ns)
     {
-        if (is_imu_connected.load())
+        if (is_imu_connected.load(std::memory_order_acquire))
         {
             std::cerr << "[HEALTH] IMU likely disconnected --> stale data (no data for "
                       << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms)" << std::endl;
@@ -277,7 +277,7 @@ void HealthCheck::checkSystemConnectivity()
     // If no new camera data within timeout, mark camera as disconnected
     if (last_cam_time != 0 && now_ns - last_cam_time > sensor_timeout_ns)
     {
-        if (is_cam_connected.load())
+        if (is_cam_connected.load(std::memory_order_acquire))
         {
             std::cerr << "[HEALTH] Camera likely disconnected --> stale data (no data for "
                       << (now_ns - last_cam_time) / 1000000 << "ms)" << std::endl;
@@ -285,8 +285,8 @@ void HealthCheck::checkSystemConnectivity()
         is_cam_connected.store(false, std::memory_order_release);
     }
 
-    bool current_imu_connected = is_imu_connected.load();
-    bool current_cam_connected = is_cam_connected.load();
+    bool current_imu_connected = is_imu_connected.load(std::memory_order_acquire);
+    bool current_cam_connected = is_cam_connected.load(std::memory_order_acquire);
 
     // Check IMU connection changes
     if (current_imu_connected != last_imu_connected_)
