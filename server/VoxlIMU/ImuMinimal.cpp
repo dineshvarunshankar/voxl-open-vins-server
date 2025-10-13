@@ -36,9 +36,8 @@ namespace
     std::shared_ptr<ov_msckf::State> cached_state;
     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
-    // FrameTransform is now defined in VoxlVars.h and instantiated globally
-
     // Rate estimation state
+// NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL 
     static int64_t last_rate_timestamp_ns = 0;
     static constexpr double kImuRateAlpha = 0.1; // EMA smoothing factor
 
@@ -173,7 +172,8 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         }
         imu_batch.push_back(std::move(sample));
         if (has_acc_jerk.load(std::memory_order_acquire) == false || non_static.load(std::memory_order_acquire) == false) {
-i = i +1;
+            //CUT RAW IMU SAMPLING FREQUENCY IN ROUGHLY 50%
+            i = i +1;
         }
 
     }
