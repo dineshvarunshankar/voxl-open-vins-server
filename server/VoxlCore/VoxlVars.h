@@ -40,8 +40,9 @@
 
 // Local includes
 #include "VoxlCommon.h"
-#define GYRO_VAR_THRESHOLD 0.1f     ///< Gyro variance threshold for motion detection
-#define ACC_VAR_THRESHOLD 0.1f      ///< Accelerometer variance threshold for motion detection
+//FOR NOW WE FORCE TO SUBSAMPLE IT ALWAYS TO CHECK THE EFFECTS OF IT
+#define GYRO_VAR_THRESHOLD 1.0f     ///< Gyro variance threshold for motion detection
+#define ACC_VAR_THRESHOLD 20.0f      ///< Accelerometer variance threshold for motion detection
 #define VEL_MAG_JERK_THRESHOLD 0.5f ///< Velocity magnitude threshold for jerk detection
 
 // ============================================================================
@@ -111,13 +112,13 @@ namespace voxl
         Eigen::Vector3d avg_gyro_1t0{Eigen::Vector3d::Zero()};
         Eigen::Vector3d avg_acc_2t1{Eigen::Vector3d::Zero()};
         Eigen::Vector3d avg_gyro_2t1{Eigen::Vector3d::Zero()};
-        float expected_total_samples{0.0f};
+        float expected_total_samples{1024.0f};
         float current_total_samples{0.0f};
         std::deque<Eigen::Vector3d> acc1t0_samples;
         std::deque<Eigen::Vector3d> gyro1t0_samples;
         std::deque<Eigen::Vector3d> acc2t1_samples;
         std::deque<Eigen::Vector3d> gyro2t1_samples;
-        JerkOption jerk_opt{JerkOption::ACCEL_AND_GYRO};
+        JerkOption jerk_opt{JerkOption::ACCEL_ONLY}; // FOR NOW WE FORCE TO USE ACCELEROMETER ONLY TO CHECK THE EFFECTS OF IT
         // PROVE THE ASSUMPTION
         void update(const imu_data_t &data);
 
@@ -610,6 +611,14 @@ extern std::vector<cam_info> cam_info_vec;
  * Used for synchronization and timing validation.
  */
 extern volatile int64_t last_imu_timestamp_ns;
+
+/**
+ * @brief Estimated IMU sampling rate in Hz
+ *
+ * Exponentially-smoothed estimate of the IMU sampling frequency used to
+ * compute the expected number of samples in the jerk detection window.
+ */
+extern std::atomic<double> imu_rate_hz;
 
 /**
  * @brief Mutex for IMU data access synchronization

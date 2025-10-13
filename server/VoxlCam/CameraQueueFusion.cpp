@@ -179,7 +179,7 @@ void CameraQueueFusion::fusionLoop()
     using namespace std::chrono;
     const auto timeout = 1us;
     const auto init_check_interval = 50us;
-    constexpr auto kMinLoopPeriod = std::chrono::milliseconds(34); // try to run at 50Hz could be 34ms for 30Hz
+    const auto kMinLoopPeriod = std::chrono::duration<double, std::milli>(fusion_rate_dt_ms); // try to run at 50Hz could be 34ms for 30Hz
 
     do
     {

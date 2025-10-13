@@ -145,6 +145,9 @@ std::vector<cam_info> cam_info_vec;
 /** @brief Timestamp of last IMU data (nanoseconds) */
 volatile int64_t last_imu_timestamp_ns = 0;
 
+/** @brief Estimated IMU sampling rate in Hz */
+std::atomic<double> imu_rate_hz(1024.0);
+
 /** @brief Global frame transform instance */
 voxl::FrameTransform frame_transform;
 
@@ -262,12 +265,24 @@ void voxl::FrameTransform::update(const imu_data_t &data)
 }
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {
+    // Update expected samples based on current IMU rate estimate and window size
+    double rate_hz = 1024.0; 
+    imu_rate_hz.load(std::memory_order_relaxed); // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL 
+    // if (rate_hz <= 0.0)
+    // {
+    //     rate_hz = 200.0; // conservative default
+    // }
+    float new_expected = static_cast<float>(std::max(1.0, std::floor(window_size_s * rate_hz)));
+    if (expected_total_samples != new_expected)
+    {
+        expected_total_samples = new_expected;
+    }
     if (vel_mag > VEL_MAG_JERK_THRESHOLD)
     {
         // moving too fast, skip jerk detection
         // INFLIGHT
-        has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
-        has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
+        // has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
+        // has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
         non_static.store(true, std::memory_order_release);    // ASSUME WE JERKED ALREADY
         return;
     }
@@ -351,6 +366,15 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         has_acc_jerk.store(false, std::memory_order_release);
         has_gyro_jerk.store(false, std::memory_order_release);
         non_static.store(false, std::memory_order_release);
+        avg_acc_1t0 = avg_acc_2t1;
+        avg_gyro_1t0 = avg_gyro_2t1;
+        avg_acc_2t1.setZero();
+        avg_gyro_2t1.setZero();
+        current_total_samples = static_cast<float>(acc2t1_samples.size());
+        acc1t0_samples = acc2t1_samples;
+        gyro1t0_samples = gyro2t1_samples;
+        acc2t1_samples.clear();
+        gyro2t1_samples.clear();
 
         return;
     }

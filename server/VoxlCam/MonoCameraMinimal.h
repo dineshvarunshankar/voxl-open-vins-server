@@ -20,6 +20,7 @@
 #include <opencv2/opencv.hpp>
 #include <deque>
 #include <optional>
+#include <cstdint>
 
 namespace voxl
 {
@@ -135,6 +136,12 @@ namespace voxl
 
         /** @brief Flag indicating if mask dimensions have changed */
         bool mask_dimensions_changed_{false};
+
+        /** @brief Timestamp of the last fully processed frame (ns) */
+        int64_t last_processed_ts_ns_{0};
+
+        /** @brief Minimum interval to process frames when static (ms) */
+        int throttle_static_min_interval_ms_{100};
     };
 
 } // namespace voxl

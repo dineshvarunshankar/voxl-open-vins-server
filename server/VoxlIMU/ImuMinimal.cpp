@@ -19,6 +19,7 @@
  */
 
 #include "ImuMinimal.h"
+#include <cstdio>
 #include <state/State.h>
 
 namespace
@@ -36,6 +37,44 @@ namespace
     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
     // FrameTransform is now defined in VoxlVars.h and instantiated globally
+
+    // Rate estimation state
+    static int64_t last_rate_timestamp_ns = 0;
+    static constexpr double kImuRateAlpha = 0.1; // EMA smoothing factor
+
+    static inline void update_imu_rate_estimate(const imu_data_t *arr, int n_packets)
+    {
+        if (n_packets <= 0 || arr == nullptr)
+            return;
+        // Prefer intra-batch estimate if we have multiple packets
+        if (n_packets >= 2)
+        {
+            int64_t dt_ns = arr[n_packets - 1].timestamp_ns - arr[0].timestamp_ns;
+            int64_t samples = (n_packets - 1);
+            if (dt_ns > 0 && samples > 0)
+            {
+                double avg_dt_ns = static_cast<double>(dt_ns) / static_cast<double>(samples);
+                double inst_rate_hz = 1e9 / avg_dt_ns;
+                double prev = imu_rate_hz.load(std::memory_order_relaxed);
+                double updated = (1.0 - kImuRateAlpha) * prev + kImuRateAlpha * inst_rate_hz;
+                imu_rate_hz.store(updated, std::memory_order_relaxed);
+                last_rate_timestamp_ns = arr[n_packets - 1].timestamp_ns;
+                return;
+            }
+        }
+        // Fallback to inter-batch estimate
+        int64_t t = arr[n_packets - 1].timestamp_ns;
+        if (last_rate_timestamp_ns > 0 && t > last_rate_timestamp_ns)
+        {
+            double dt_ns = static_cast<double>(t - last_rate_timestamp_ns);
+            double inst_rate_hz = 1e9 / dt_ns; // one sample over this interval
+            double prev = imu_rate_hz.load(std::memory_order_relaxed);
+            double updated = (1.0 - kImuRateAlpha) * prev + kImuRateAlpha * inst_rate_hz;
+            imu_rate_hz.store(updated, std::memory_order_relaxed);
+        }
+        printf("imu_rate_hz: %f\n", imu_rate_hz.load(std::memory_order_relaxed));
+        last_rate_timestamp_ns = t;
+    }
 }
 
 /** @brief Mutex for IMU data access synchronization */
@@ -110,6 +149,9 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     std::vector<ov_core::ImuData> imu_batch;
     imu_batch.reserve(n_packets);
 
+    // Update IMU rate estimate for jerk window sizing
+    // update_imu_rate_estimate(arr, n_packets);
+
     for (int i = 0; i < n_packets; ++i)
     {
         frame_transform.update(arr[i]);
@@ -130,6 +172,10 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             }
         }
         imu_batch.push_back(std::move(sample));
+        if (has_acc_jerk.load(std::memory_order_acquire) == false || non_static.load(std::memory_order_acquire) == false) {
+i = i +1;
+        }
+
     }
     int64_t t_batch = _apps_time_monotonic_ns();
     // printf("[DT %8.3f ms] batch conversion done, count=%zu\n",

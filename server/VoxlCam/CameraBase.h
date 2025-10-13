@@ -182,6 +182,9 @@ namespace voxl
 
         /** @brief Per-instance reusable mask for feature tracking */
         cv::Mat use_mask_;
+
+        /** @brief Indicates if frames should be dropped */
+        bool drop_frames{false};
     };
 
 } // namespace voxl

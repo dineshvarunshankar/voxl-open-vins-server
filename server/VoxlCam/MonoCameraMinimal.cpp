@@ -105,7 +105,29 @@ namespace voxl
             }
             return;
         }
+        // Throttle image processing when the platform is static
+        if (1) // vio_manager->initialized() == true // GOTTA SEE WHAT WORKS BEST ON TARGET
+        {
+            const bool is_static = !(non_static.load(std::memory_order_acquire));
+            const bool acc_no_jerk = !(has_acc_jerk.load(std::memory_order_acquire));
+            const bool gyro_no_jerk = !(has_gyro_jerk.load(std::memory_order_acquire));
 
+            if (is_static || acc_no_jerk)
+            {
+                if (!drop_frames) {
+                    drop_frames = true;
+printf("normal frame\n");
+                } else {
+                    if (img_type == voxl::ImageType::CL_MEM)
+                        release_cl_mem(frame);
+                    drop_frames = false;
+printf("dropping frame\n");
+                    return;
+                }
+            }
+            printf("is_static: %d, acc_no_jerk: %d, gyro_no_jerk: %d\n", is_static, acc_no_jerk, gyro_no_jerk);
+            printf("drop_frames: %d\n", drop_frames);
+        }
         // Update dimensions
         current_height = meta.height;
         current_width = meta.width;
@@ -146,6 +168,9 @@ namespace voxl
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
         }
+
+        // Mark last processed timestamp (only when we actually processed)
+        last_processed_ts_ns_ = meta.timestamp_ns;
     }
 
     /**
