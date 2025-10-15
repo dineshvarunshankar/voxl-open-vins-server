@@ -343,11 +343,13 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_error_codes |= ERROR_CODE_VEL_WINDOW_CERT;
     }
 
+
     std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
 
     // NUMBER OF FEATURE POINTS
     // FOR NOW, WE ONLY CONSIDER SLAM FEATURES, AS THESE ARE THE ONLY ONES IN THE STATE
     vio_packet.n_feature_points = static_cast<uint16_t>(SLAM_FEATS.size());
+
 
     // Check for insufficient features
     static int64_t last_good_feat_ts = 0;

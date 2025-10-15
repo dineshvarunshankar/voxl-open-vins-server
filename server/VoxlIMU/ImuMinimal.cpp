@@ -240,6 +240,10 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
                 break;
             }
             cached_features_map = vio_manager->get_used_features_map();
+            if (is_resetting.load(std::memory_order_relaxed))
+            {
+                break;
+            }
             voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
         }
     }
@@ -251,7 +255,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     // ---- finish ----
     int64_t t_end = _apps_time_monotonic_ns();
     double dt_ms = (double)(t_end - t_start) / 1e6;
-    if (dt_ms / batch.size() > 32.0)
+    if (dt_ms / batch.size() > 32.0 && en_debug)
     {
         printf("WARNING: IMU callback took too long: %8.3f ms for %d msgs\n", dt_ms, (int)batch.size());
     }
