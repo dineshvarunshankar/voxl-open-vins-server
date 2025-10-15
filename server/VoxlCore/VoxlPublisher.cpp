@@ -343,8 +343,17 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_error_codes |= ERROR_CODE_VEL_WINDOW_CERT;
     }
 
+
+    std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
+
+    // NUMBER OF FEATURE POINTS
+    // FOR NOW, WE ONLY CONSIDER SLAM FEATURES, AS THESE ARE THE ONLY ONES IN THE STATE
+    vio_packet.n_feature_points = static_cast<uint16_t>(SLAM_FEATS.size());
+
+
     // Check for insufficient features
     static int64_t last_good_feat_ts = 0;
+    static int64_t last_good_qual_ts = 0;
     static bool wait_for_features = true;
     static uint32_t last_reset_count = reset_num_counter.load();
     static int64_t last_good_state_ns = 0;
@@ -356,6 +365,8 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         last_reset_count = reset_num_counter.load();
         wait_for_features = true;
         last_good_feat_ts = vio_packet.timestamp_ns;
+        last_good_qual_ts = vio_packet.timestamp_ns;
+        return;
     }
 
     if (wait_for_features)
@@ -385,7 +396,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
 
     // Check for quality issues
-    static int64_t last_good_qual_ts = 0;
     double ts_threshold = auto_reset_max_v_cov_timeout_s;
 
     if (vio_packet.quality >= 1)
@@ -430,7 +440,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // QUALITY CALCULATION
     // Get SLAM features from state
-    std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
+    // std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
     // Calculate uncertainty metrics
     double T_uncertainty = 0.0;
     T_uncertainty += covariance_posori(0, 0) * covariance_posori(0, 0);
@@ -474,7 +484,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_packet.quality = 0;
 
     // Check for auto-reset conditions
-    if (should_auto_reset(state, vio_packet.quality, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
+    if (should_auto_reset(state, vio_packet.quality, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]) && vio_packet.state != VIO_STATE_INITIALIZING)
     {
         fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
                 vio_packet.quality, vio_packet.n_feature_points, V_uncertainty);
@@ -514,11 +524,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // FRAME
     vio_packet.frame = 0; // Set appropriate frame value
-
-    // NUMBER OF FEATURE POINTS
-    // FOR NOW, WE ONLY CONSIDER SLAM FEATURES, AS THESE ARE THE ONLY ONES IN THE STATE
-    vio_packet.n_feature_points = static_cast<uint16_t>(SLAM_FEATS.size());
-
     past_state = state;
 
     // publish the packet
