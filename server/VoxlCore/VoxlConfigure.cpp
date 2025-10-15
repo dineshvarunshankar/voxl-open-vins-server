@@ -355,7 +355,7 @@ namespace voxl
         json_fetch_float_with_default(parent, "auto_reset_max_v_cov", &auto_reset_max_v_cov, 0.2f);
         json_fetch_float_with_default(parent, "auto_reset_max_v_cov_timeout_s", &auto_reset_max_v_cov_timeout_s, 0.5f);
         json_fetch_int_with_default(parent, "auto_reset_min_features", &auto_reset_min_features, 1);
-        json_fetch_float_with_default(parent, "auto_reset_min_feature_timeout_s", &auto_reset_min_feature_timeout_s, 3.0f);
+        json_fetch_float_with_default(parent, "auto_reset_min_feature_timeout_s", &auto_reset_min_feature_timeout_s, 10.0f);
         json_fetch_float_with_default(parent, "ok_state_grace_timeout_s", &ok_state_grace_timeout_s, 2.0f);
         json_fetch_float_with_default(parent, "auto_fallback_timeout_s", &auto_fallback_timeout_s, 3.0f);
         json_fetch_float_with_default(parent, "auto_fallback_min_v", &auto_fallback_min_v, 0.6f);
