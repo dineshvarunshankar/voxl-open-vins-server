@@ -194,7 +194,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     }
 
     // ---- feed IMU ----
-    vio_manager->feed_measurement_batch_imu(imu_batch, 333);
+    vio_manager->feed_measurement_batch_imu(imu_batch);
     // int64_t t_feed_imu = _apps_time_monotonic_ns();
     // printf("[DT %8.3f ms] fed IMU batch into VIO manager\n",
     //        (t_feed_imu - t_prev)/1e6);

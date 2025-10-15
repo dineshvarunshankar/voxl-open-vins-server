@@ -322,16 +322,18 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
             var_acc1t0 += (acc1t0_samples[i] - avg_acc_1t0).dot(acc1t0_samples[i] - avg_acc_1t0);
             var_gyro1t0 += (gyro1t0_samples[i] - avg_gyro_1t0).dot(gyro1t0_samples[i] - avg_gyro_1t0);
         }
-        var_acc1t0 = std::sqrt(var_acc1t0 / acc1t0_samples.size() - 1);
-        var_gyro1t0 = std::sqrt(var_gyro1t0 / gyro1t0_samples.size() - 1);
+        var_acc1t0 = std::sqrt(var_acc1t0 / (acc1t0_samples.size() - 1));
+        var_gyro1t0 = std::sqrt(var_gyro1t0 / (gyro1t0_samples.size() - 1));
 
         for (size_t i = 0; i < acc2t1_samples.size(); ++i)
         {
             var_acc2t1 += (acc2t1_samples[i] - avg_acc_2t1).dot(acc2t1_samples[i] - avg_acc_2t1);
             var_gyro2t1 += (gyro2t1_samples[i] - avg_gyro_2t1).dot(gyro2t1_samples[i] - avg_gyro_2t1);
         }
-        var_acc2t1 = std::sqrt(var_acc2t1 / acc2t1_samples.size() - 1);
-        var_gyro2t1 = std::sqrt(var_gyro2t1 / gyro2t1_samples.size() - 1);
+        var_acc2t1 = std::sqrt(var_acc2t1 / (acc2t1_samples.size() - 1));
+        var_gyro2t1 = std::sqrt(var_gyro2t1 / (gyro2t1_samples.size() - 1));
+printf("Accelerometer variance: %f, %f\n", var_acc1t0, var_acc2t1);
+printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
         switch (jerk_opt)
         {
         case JerkOption::ACCEL_ONLY:
@@ -366,15 +368,15 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         has_acc_jerk.store(false, std::memory_order_release);
         has_gyro_jerk.store(false, std::memory_order_release);
         non_static.store(false, std::memory_order_release);
-        avg_acc_1t0 = avg_acc_2t1;
-        avg_gyro_1t0 = avg_gyro_2t1;
+        avg_acc_1t0.setZero(); // avg_acc_2t1;
+        avg_gyro_1t0.setZero(); // avg_gyro_2t1;
         avg_acc_2t1.setZero();
         avg_gyro_2t1.setZero();
-        current_total_samples = static_cast<float>(acc2t1_samples.size());
-        acc1t0_samples = acc2t1_samples;
-        gyro1t0_samples = gyro2t1_samples;
-        acc2t1_samples.clear();
-        gyro2t1_samples.clear();
+        current_total_samples = 0.0f; // static_cast<float>(acc2t1_samples.size());
+        acc1t0_samples.clear(); // acc2t1_samples;
+        gyro1t0_samples.clear(); // gyro2t1_samples;
+        acc2t1_samples.clear(); // acc2t1_samples;
+        gyro2t1_samples.clear(); // gyro2t1_samples;
 
         return;
     }

@@ -42,7 +42,7 @@
 #include "VoxlCommon.h"
 //FOR NOW WE FORCE TO SUBSAMPLE IT ALWAYS TO CHECK THE EFFECTS OF IT
 #define GYRO_VAR_THRESHOLD 1.0f     ///< Gyro variance threshold for motion detection
-#define ACC_VAR_THRESHOLD 20.0f      ///< Accelerometer variance threshold for motion detection
+#define ACC_VAR_THRESHOLD 1.6f      ///< Accelerometer variance threshold for motion detection
 #define VEL_MAG_JERK_THRESHOLD 0.5f ///< Velocity magnitude threshold for jerk detection
 
 // ============================================================================
