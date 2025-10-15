@@ -185,6 +185,10 @@ namespace voxl
 
         /** @brief Indicates if frames should be dropped */
         bool drop_frames{false};
+
+        /** @brief Indicates if jerk detection should be skipped */
+        bool skip_jerk_detection{true};
+
     };
 
 } // namespace voxl

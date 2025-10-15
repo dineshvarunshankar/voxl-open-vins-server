@@ -208,7 +208,8 @@ bool sync_config = true; ///< Flag to indicate if configuration synchronization 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
 
-    if (is_initialized){
+    if (is_initialized)
+    {
         detectJerk(data);
         return; // CHECK IF WE HAVE ALREADY DONE THIS
     }
@@ -266,8 +267,9 @@ void voxl::FrameTransform::update(const imu_data_t &data)
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {
     // Update expected samples based on current IMU rate estimate and window size
-    double rate_hz = 1024.0; 
-    imu_rate_hz.load(std::memory_order_relaxed); // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL 
+    double rate_hz = 1024.0;
+    imu_rate_hz.load(std::memory_order_relaxed); // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL
+    auto vel_mag_dummy = vel_mag.load(std::memory_order_acquire);
     // if (rate_hz <= 0.0)
     // {
     //     rate_hz = 200.0; // conservative default
@@ -277,13 +279,13 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
     // {
     //     expected_total_samples = new_expected;
     // }
-    if (vel_mag > VEL_MAG_JERK_THRESHOLD)
+    if (vel_mag_dummy > VEL_MAG_JERK_THRESHOLD)
     {
         // moving too fast, skip jerk detection
         // INFLIGHT
         // has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
         // has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
-        non_static.store(true, std::memory_order_release);    // ASSUME WE JERKED ALREADY
+        // ASSUME WE JERKED ALREADY
         resetJerkDetection();
         return;
     }
@@ -333,8 +335,11 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         }
         var_acc2t1 = std::sqrt(var_acc2t1 / (acc2t1_samples.size() - 1));
         var_gyro2t1 = std::sqrt(var_gyro2t1 / (gyro2t1_samples.size() - 1));
-printf("Accelerometer variance: %f, %f\n", var_acc1t0, var_acc2t1);
-printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
+        if (en_debug)
+        {
+            printf("Accelerometer variance: %f, %f\n", var_acc1t0, var_acc2t1);
+            printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
+        }
         switch (jerk_opt)
         {
         case JerkOption::ACCEL_ONLY:
@@ -369,15 +374,15 @@ printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
         has_acc_jerk.store(false, std::memory_order_release);
         has_gyro_jerk.store(false, std::memory_order_release);
         non_static.store(false, std::memory_order_release);
-        avg_acc_1t0.setZero(); // avg_acc_2t1;
+        avg_acc_1t0.setZero();  // avg_acc_2t1;
         avg_gyro_1t0.setZero(); // avg_gyro_2t1;
         avg_acc_2t1.setZero();
         avg_gyro_2t1.setZero();
         current_total_samples = 0; // static_cast<float>(acc2t1_samples.size());
-        acc1t0_samples.clear(); // acc2t1_samples;
-        gyro1t0_samples.clear(); // gyro2t1_samples;
-        acc2t1_samples.clear(); // acc2t1_samples;
-        gyro2t1_samples.clear(); // gyro2t1_samples;
+        acc1t0_samples.clear();    // acc2t1_samples;
+        gyro1t0_samples.clear();   // gyro2t1_samples;
+        acc2t1_samples.clear();    // acc2t1_samples;
+        gyro2t1_samples.clear();   // gyro2t1_samples;
 
         return;
     }
@@ -387,15 +392,16 @@ void voxl::FrameTransform::resetJerkDetection()
 {
     has_acc_jerk.store(true, std::memory_order_release);
     has_gyro_jerk.store(true, std::memory_order_release);
+    non_static.store(true, std::memory_order_release);
     // reset for next window
     // note that we do not reset the entirity of the window, but only the second half
-    avg_acc_1t0.setZero(); // avg_acc_2t1;
+    avg_acc_1t0.setZero();  // avg_acc_2t1;
     avg_gyro_1t0.setZero(); // avg_gyro_2t1;
     avg_acc_2t1.setZero();
     avg_gyro_2t1.setZero();
     current_total_samples = 0; // static_cast<float>(acc2t1_samples.size());
-    acc1t0_samples.clear(); // acc2t1_samples;
-    gyro1t0_samples.clear(); // gyro2t1_samples;
+    acc1t0_samples.clear();    // acc2t1_samples;
+    gyro1t0_samples.clear();   // gyro2t1_samples;
     acc2t1_samples.clear();
     gyro2t1_samples.clear();
 }

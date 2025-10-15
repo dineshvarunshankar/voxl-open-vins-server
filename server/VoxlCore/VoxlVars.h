@@ -40,10 +40,10 @@
 
 // Local includes
 #include "VoxlCommon.h"
-//FOR NOW WE FORCE TO SUBSAMPLE IT ALWAYS TO CHECK THE EFFECTS OF IT
-#define GYRO_VAR_THRESHOLD 0.5f     ///< Gyro variance threshold for motion detection
-#define ACC_VAR_THRESHOLD 0.8f      ///< Accelerometer variance threshold for motion detection
-#define VEL_MAG_JERK_THRESHOLD 0.5f ///< Velocity magnitude threshold for jerk detection
+// FOR NOW WE FORCE TO SUBSAMPLE IT ALWAYS TO CHECK THE EFFECTS OF IT
+#define GYRO_VAR_THRESHOLD 0.09f     ///< Gyro variance threshold for motion detection
+#define ACC_VAR_THRESHOLD 0.09f      ///< Accelerometer variance threshold for motion detection
+#define VEL_MAG_JERK_THRESHOLD 0.02f ///< Velocity magnitude threshold for jerk detection
 
 // ============================================================================
 // DATA STRUCTURES

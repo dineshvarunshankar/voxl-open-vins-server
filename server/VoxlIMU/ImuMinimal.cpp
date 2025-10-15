@@ -37,7 +37,7 @@ namespace
     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
 
     // Rate estimation state
-// NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL 
+    // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL
     static int64_t last_rate_timestamp_ns = 0;
     static constexpr double kImuRateAlpha = 0.1; // EMA smoothing factor
 
@@ -171,11 +171,11 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             }
         }
         imu_batch.push_back(std::move(sample));
-        if (has_acc_jerk.load(std::memory_order_acquire) == false || non_static.load(std::memory_order_acquire) == false) {
-            //CUT RAW IMU SAMPLING FREQUENCY IN ROUGHLY 50%
-            i = i +1;
-        }
-
+        // DO NOT DOWNSAMPLE FOR NOW
+        // if (has_acc_jerk.load(std::memory_order_acquire) == false && non_static.load(std::memory_order_acquire) == false) {
+        //     //CUT RAW IMU SAMPLING FREQUENCY IN ROUGHLY 50%
+        //     i = i +1;
+        // }
     }
     int64_t t_batch = _apps_time_monotonic_ns();
     // printf("[DT %8.3f ms] batch conversion done, count=%zu\n",
@@ -194,7 +194,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     }
 
     // ---- feed IMU ----
-    vio_manager->feed_measurement_batch_imu(imu_batch);
+    vio_manager->feed_measurement_batch_imu(imu_batch, 400);
     // int64_t t_feed_imu = _apps_time_monotonic_ns();
     // printf("[DT %8.3f ms] fed IMU batch into VIO manager\n",
     //        (t_feed_imu - t_prev)/1e6);
@@ -235,6 +235,10 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
                 }
             }
 
+            if (is_resetting.load(std::memory_order_acquire))
+            {
+                break;
+            }
             cached_features_map = vio_manager->get_used_features_map();
             voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
         }

@@ -89,15 +89,18 @@ namespace voxl
             if (img_type == voxl::ImageType::CL_MEM)
                 release_cl_mem(frame);
             return;
+            skip_jerk_detection = true;
         }
 
         // indicate that we are processing IMU data
         active_callbacks.fetch_add(1, std::memory_order_acquire);
         if (is_resetting.load(std::memory_order_relaxed))
         {
+
+            skip_jerk_detection = true;
             if (img_type == voxl::ImageType::CL_MEM)
-            release_cl_mem(frame);
-            
+                release_cl_mem(frame);
+
             if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
             {
                 std::lock_guard<std::mutex> lk(reset_mtx);
@@ -106,27 +109,35 @@ namespace voxl
             return;
         }
         // Throttle image processing when the platform is static
-        if (vio_manager->initialized() == true)// GOTTA SEE WHAT WORKS BEST ON TARGET
+        if (skip_jerk_detection == false) // GOTTA SEE WHAT WORKS BEST ON TARGET
         {
             const bool is_static = !(non_static.load(std::memory_order_acquire));
             const bool acc_no_jerk = !(has_acc_jerk.load(std::memory_order_acquire));
             const bool gyro_no_jerk = !(has_gyro_jerk.load(std::memory_order_acquire));
+            if (en_debug)
+            {
+                printf("is_static: %d, acc_no_jerk: %d, gyro_no_jerk: %d\n", is_static, acc_no_jerk, gyro_no_jerk);
+                printf("drop_frames: %d\n", drop_frames);
+            }
 
             if (is_static || acc_no_jerk)
             {
-                if (!drop_frames) {
+                if (!drop_frames)
+                {
                     drop_frames = true;
-printf("normal frame\n");
-                } else {
+                    if (en_debug)
+                        printf("normal frame\n");
+                }
+                else
+                {
                     if (img_type == voxl::ImageType::CL_MEM)
                         release_cl_mem(frame);
                     drop_frames = false;
-printf("dropping frame\n");
+                    if (en_debug)
+                        printf("dropping frame\n");
                     return;
                 }
             }
-            printf("is_static: %d, acc_no_jerk: %d, gyro_no_jerk: %d\n", is_static, acc_no_jerk, gyro_no_jerk);
-            printf("drop_frames: %d\n", drop_frames);
         }
         // Update dimensions
         current_height = meta.height;
@@ -160,13 +171,14 @@ printf("dropping frame\n");
                 vio_error_codes |= ERROR_CODE_CAM_BAD_FORMAT;
             }
         }
-
+        skip_jerk_detection = false;
         // check if in flight processing count reaches zero and if a reset is requested
         if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
         {
             // Notify the reset thread to continue processing
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
+            skip_jerk_detection = true;
         }
 
         // Mark last processed timestamp (only when we actually processed)
