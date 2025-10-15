@@ -272,11 +272,11 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
     // {
     //     rate_hz = 200.0; // conservative default
     // }
-    float new_expected = static_cast<float>(std::max(1.0, std::floor(window_size_s * rate_hz)));
-    if (expected_total_samples != new_expected)
-    {
-        expected_total_samples = new_expected;
-    }
+    // float new_expected = static_cast<float>(std::max(1.0, std::floor(window_size_s * rate_hz)));
+    // if (expected_total_samples != new_expected)
+    // {
+    //     expected_total_samples = new_expected;
+    // }
     if (vel_mag > VEL_MAG_JERK_THRESHOLD)
     {
         // moving too fast, skip jerk detection
@@ -284,6 +284,7 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         // has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
         // has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
         non_static.store(true, std::memory_order_release);    // ASSUME WE JERKED ALREADY
+        resetJerkDetection();
         return;
     }
     // accumulate data for jerk detection
@@ -372,7 +373,7 @@ printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
         avg_gyro_1t0.setZero(); // avg_gyro_2t1;
         avg_acc_2t1.setZero();
         avg_gyro_2t1.setZero();
-        current_total_samples = 0.0f; // static_cast<float>(acc2t1_samples.size());
+        current_total_samples = 0; // static_cast<float>(acc2t1_samples.size());
         acc1t0_samples.clear(); // acc2t1_samples;
         gyro1t0_samples.clear(); // gyro2t1_samples;
         acc2t1_samples.clear(); // acc2t1_samples;
@@ -388,13 +389,13 @@ void voxl::FrameTransform::resetJerkDetection()
     has_gyro_jerk.store(true, std::memory_order_release);
     // reset for next window
     // note that we do not reset the entirity of the window, but only the second half
-    avg_acc_1t0 = avg_acc_2t1;
-    avg_gyro_1t0 = avg_gyro_2t1;
+    avg_acc_1t0.setZero(); // avg_acc_2t1;
+    avg_gyro_1t0.setZero(); // avg_gyro_2t1;
     avg_acc_2t1.setZero();
     avg_gyro_2t1.setZero();
-    current_total_samples = static_cast<float>(acc2t1_samples.size());
-    acc1t0_samples = acc2t1_samples;
-    gyro1t0_samples = gyro2t1_samples;
+    current_total_samples = 0; // static_cast<float>(acc2t1_samples.size());
+    acc1t0_samples.clear(); // acc2t1_samples;
+    gyro1t0_samples.clear(); // gyro2t1_samples;
     acc2t1_samples.clear();
     gyro2t1_samples.clear();
 }

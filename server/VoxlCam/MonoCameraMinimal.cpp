@@ -106,7 +106,7 @@ namespace voxl
             return;
         }
         // Throttle image processing when the platform is static
-        if (1) // vio_manager->initialized() == true // GOTTA SEE WHAT WORKS BEST ON TARGET
+        if (vio_manager->initialized() == true)// GOTTA SEE WHAT WORKS BEST ON TARGET
         {
             const bool is_static = !(non_static.load(std::memory_order_acquire));
             const bool acc_no_jerk = !(has_acc_jerk.load(std::memory_order_acquire));
