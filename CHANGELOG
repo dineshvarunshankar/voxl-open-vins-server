@@ -1,3 +1,7 @@
+0.5.4
+    * added jerk detection and atomic handling fix
+    * fix bug in reset logic
+    * increase feature timeout to 10s
 0.5.3
     * added grace timeout on vio init
 0.5.2
