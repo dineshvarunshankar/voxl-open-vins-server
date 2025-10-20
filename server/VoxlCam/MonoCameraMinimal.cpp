@@ -135,6 +135,11 @@ namespace voxl
                     drop_frames = false;
                     if (en_debug)
                         printf("dropping frame\n");
+                    if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
+                    {
+                        std::lock_guard<std::mutex> lk(reset_mtx);
+                        reset_cv.notify_one();
+                    }
                     return;
                 }
             }
