@@ -1,3 +1,5 @@
+0.5.5
+    * change disparities and reset fix
 0.5.4
     * added jerk detection and atomic handling fix
     * fix bug in reset logic
