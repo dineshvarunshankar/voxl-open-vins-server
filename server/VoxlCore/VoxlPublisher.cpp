@@ -141,6 +141,23 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
 void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map)
 {
+    // If already in failed state, don't process further until reset completes
+    // This prevents spam of auto-reset warnings
+    if (vio_state.load() == VIO_STATE_FAILED && !is_resetting.load())
+    {
+        if (en_debug)
+        {
+            static int64_t last_failed_msg = 0;
+            int64_t now = _apps_time_monotonic_ns();
+            if (now - last_failed_msg > 1000000000) // Print once per second
+            {
+                printf("[PUBLISH] Skipping publish - VIO in FAILED state, waiting for reset\n");
+                last_failed_msg = now;
+            }
+        }
+        return;
+    }
+    
     vio_packet.magic_number = VIO_MAGIC_NUMBER;
     vio_packet.timestamp_ns = state->_timestamp * 1e9;
 
@@ -343,13 +360,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_error_codes |= ERROR_CODE_VEL_WINDOW_CERT;
     }
 
-
     std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
 
     // NUMBER OF FEATURE POINTS
     // FOR NOW, WE ONLY CONSIDER SLAM FEATURES, AS THESE ARE THE ONLY ONES IN THE STATE
     vio_packet.n_feature_points = static_cast<uint16_t>(SLAM_FEATS.size());
-
 
     // Check for insufficient features
     static int64_t last_good_feat_ts = 0;
@@ -366,6 +381,13 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         wait_for_features = true;
         last_good_feat_ts = vio_packet.timestamp_ns;
         last_good_qual_ts = vio_packet.timestamp_ns;
+        
+        // Also log the reset for quality tracking
+        if (en_debug)
+        {
+            printf("[QUALITY] VIO reset detected (reset_count=%u), feature/quality tracking reset\n",
+                   reset_num_counter.load());
+        }
         return;
     }
 
@@ -393,21 +415,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             vio_error_codes |= ERROR_CODE_NO_FEATURES;
             wait_for_features = true;
         }
-    }
-
-    // Check for quality issues
-    double ts_threshold = auto_reset_max_v_cov_timeout_s;
-
-    if (vio_packet.quality >= 1)
-    {
-        last_good_qual_ts = vio_packet.timestamp_ns;
-    }
-
-    double ts = (vio_packet.timestamp_ns - last_good_qual_ts) * 1e-9;
-    if (ts > ts_threshold)
-    {
-        fprintf(stderr, "ERROR: quality was bad for too long!\n");
-        vio_error_codes |= ERROR_CODE_NOT_STATIONARY;
     }
 
     // Check for fast yaw changes (spinning in place)
@@ -456,50 +463,200 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // Get used features map from VioManager if not provided and NOT RESETTING!!
     double calculated_quality;
-    if (!is_resetting.load(std::memory_order_relaxed) && vio_manager->initialized())
+    bool is_during_initialization = (!vio_manager || !vio_manager->initialized() || is_resetting.load(std::memory_order_relaxed));
+    
+    if (!is_during_initialization)
     {
-
         // Calculate quality using the new feature-based method
         calculated_quality = calcQuality(used_features_map, SLAM_FEATS, state);
     }
     else
     {
+//DISABLE OLD QVIO QUALITY CALCULATION
+        // During initialization/reset, use uncertainty-based quality
         // Map velocity uncertainty to quality (0-100 scale)
-        double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
+        // double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
+        // v_cov_quality = std::max(0.0, std::min(100.0, v_cov_quality));
 
-        // Calculate position-based quality
-        double max_allowable_cep = 0.1; // 10cm CEP threshold
-        double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
-        pos_quality = std::max(0.0, std::min(100.0, pos_quality));
-        calculated_quality = std::min(v_cov_quality, pos_quality);
+        // // Calculate position-based quality
+        // double max_allowable_cep = 0.1; // 10cm CEP threshold
+        // double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
+        // pos_quality = std::max(0.0, std::min(100.0, pos_quality));
+        
+        // calculated_quality = std::min(v_cov_quality, pos_quality);
+        calculated_quality = 0;
+        // NOTE: We do NOT enforce a minimum quality floor during initialization
+        // The grace period logic already protects against false auto-resets
+        // This allows hysteresis to see the real quality and properly count samples
+        
+        if (en_debug)
+        {
+            printf("[QUALITY_INIT] During initialization: v_cov_quality=%.2f, pos_quality=%.2f, calculated=%.2f\n",
+                   v_cov_quality, pos_quality, calculated_quality);
+        }
     }
 
-    // Set the quality in the packet
-    vio_packet.quality = static_cast<int32_t>(calculated_quality);
+    // Ensure calculated quality is within bounds
+    calculated_quality = std::max(0.0, std::min(100.0, calculated_quality));
 
-    // Ensure quality is within bounds
-    if (vio_packet.quality > 100)
-        vio_packet.quality = 100;
-    if (vio_packet.quality < 0)
-        vio_packet.quality = 0;
-
-    // Check for auto-reset conditions
-    if (should_auto_reset(state, vio_packet.quality, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]) && vio_packet.state != VIO_STATE_INITIALIZING)
+    // Check for quality issues using ACTUAL calculated quality (not hysteresis-filtered)
+    // Only perform this check if VIO is initialized and past grace period
+    // This check monitors if quality has been consistently bad for too long
+    if (vio_manager && vio_manager->initialized())
     {
-        fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
-                vio_packet.quality, vio_packet.n_feature_points, V_uncertainty);
-        vio_packet.quality = -1;
-        vio_packet.state = VIO_STATE_FAILED;
-        vio_state = VIO_STATE_FAILED;
-        // Note: Actual reset logic would be handled by the main VIO manager
+        double ts_threshold = auto_reset_max_v_cov_timeout_s;
+        if (calculated_quality >= 1)
+        {
+            last_good_qual_ts = vio_packet.timestamp_ns;
+        }
+
+        double qual_ts = (vio_packet.timestamp_ns - last_good_qual_ts) * 1e-9;
+        if (qual_ts > ts_threshold)
+        {
+            fprintf(stderr, "ERROR: actual quality was bad for too long!\n");
+            vio_error_codes |= ERROR_CODE_NOT_STATIONARY;
+        }
     }
-    else if (vio_manager->initialized())
-    {
-        vio_packet.state = VIO_STATE_OK;
-        vio_state = VIO_STATE_OK;
 
+    // ========================================================================
+    // QUALITY HYSTERESIS SYSTEM
+    // ========================================================================
+    // This implements a dual-quality approach:
+    // 1. REPORTED QUALITY (with hysteresis): Sent to external consumers via vio_packet
+    //    - Reports 0 until 10 consecutive samples above 40 (prevents premature "good" reports)
+    //    - Reverts to 0 if 10 consecutive samples below 20 (indicates sustained degradation)
+    // 2. ACTUAL QUALITY: Used internally for error detection and auto-reset logic
+    //    - Prevents false auto-resets during initial warm-up when reported quality is 0
+    //    - Ensures error detection responds to real system issues, not hysteresis filtering
+    //
+    // RESET BEHAVIOR:
+    // - When VIO reset occurs (reset_num_counter increments), hysteresis resets to BAD state
+    // - When entering FAILED state, hysteresis immediately resets to BAD state
+    // - After reset, quality reports 0 until 10 new samples prove quality > 40
+    // ========================================================================
+    
+    // Quality hysteresis logic to prevent rapid state changes
+    // Track consecutive samples above 40 and below 20
+    static bool quality_reporting_good = false;  // true = reporting actual quality, false = reporting 0
+    static int consecutive_above_40 = 0;
+    static int consecutive_below_20 = 0;
+    static uint32_t last_quality_reset_count = reset_num_counter.load();
+
+    // Reset counters on VIO reset OR when entering FAILED state
+    bool should_reset_quality_state = (last_quality_reset_count != reset_num_counter.load()) ||
+                                      (vio_state.load() == VIO_STATE_FAILED);
+    
+    if (should_reset_quality_state)
+    {
+        quality_reporting_good = false;
+        consecutive_above_40 = 0;
+        consecutive_below_20 = 0;
+        last_quality_reset_count = reset_num_counter.load();
+        
+        if (en_debug)
+        {
+            printf("[QUALITY] Resetting quality hysteresis state (reset_count=%u, vio_state=%d)\n",
+                   reset_num_counter.load(), vio_state.load());
+        }
+    }
+
+    // Update counters based on current quality
+    // Don't update counters if we just reset or if in FAILED state
+    // Only count transitions relevant to the current state
+    if (!should_reset_quality_state)
+    {
+        if (!quality_reporting_good)
+        {
+            // Currently in BAD state (reporting 0)
+            // Only count samples above 40 to transition to GOOD state
+            if (calculated_quality > 40)
+            {
+                consecutive_above_40++;
+            }
+            else
+            {
+                consecutive_above_40 = 0;  // Reset if quality drops
+            }
+            
+            // Check for transition to GOOD state
+            if (consecutive_above_40 >= 10)
+            {
+                quality_reporting_good = true;
+                consecutive_above_40 = 0;
+                consecutive_below_20 = 0;  // Reset the other counter
+                std::cout << "[QUALITY] Quality state transition: BAD -> GOOD (10 samples above 40)" << std::endl;
+            }
+        }
+        else
+        {
+            // Currently in GOOD state (reporting actual quality)
+            // Only count samples below 20 to transition back to BAD state
+            if (calculated_quality <= 20)
+            {
+                consecutive_below_20++;
+            }
+            else
+            {
+                consecutive_below_20 = 0;  // Reset if quality improves
+            }
+            
+            // Check for transition to BAD state
+            if (consecutive_below_20 >= 10)
+            {
+                quality_reporting_good = false;
+                consecutive_below_20 = 0;
+                consecutive_above_40 = 0;  // Reset the other counter
+                std::cout << "[QUALITY] Quality state transition: GOOD -> BAD (10 samples below 20)" << std::endl;
+            }
+        }
+    }
+
+    // Determine reported quality with hysteresis (for external consumers)
+    int reported_quality;
+    if (quality_reporting_good)
+    {
+        reported_quality = static_cast<int32_t>(calculated_quality);
+    }
+    else
+    {
+        reported_quality = 0;  // Report 0 quality until consistently good
+    }
+
+    // Ensure reported quality is within bounds
+    if (reported_quality > 100)
+        reported_quality = 100;
+    if (reported_quality < 0)
+        reported_quality = 0;
+
+    // Debug logging for quality state (more verbose to track reset behavior)
+    if (should_reset_quality_state)
+    {
+        printf("[QUALITY_RESET] RESET DETECTED - Forcing state to BAD, reported quality will be 0\n");
+        printf("[QUALITY_RESET] Calculated quality: %.1f, Counters reset to 0\n", calculated_quality);
+    }
+    
+    // Always log when reporting 0 or during transitions
+    if (en_debug && (reported_quality == 0 || !quality_reporting_good))
+    {
+        printf("[QUALITY_STATE] State: %s, Reported: %d, Calculated: %.1f, Consecutive(>40): %d, Consecutive(<=20): %d\n",
+               quality_reporting_good ? "GOOD" : "BAD", reported_quality, calculated_quality,
+               consecutive_above_40, consecutive_below_20);
+    }
+
+    // For error detection and auto-reset, use the ACTUAL calculated quality, not the hysteresis-filtered one
+    // This prevents false auto-resets during the initial warm-up period
+    int quality_for_error_detection = static_cast<int32_t>(calculated_quality);
+    if (quality_for_error_detection > 100)
+        quality_for_error_detection = 100;
+    if (quality_for_error_detection < 0)
+        quality_for_error_detection = 0;
+
+    // Determine if we're in the grace period after initialization/reset
+    bool in_grace_period = false;
+    if (vio_manager && vio_manager->initialized())
+    {
         const int64_t now_ns = _apps_time_monotonic_ns();
-
+        
         // If we just entered OK (or after a reset), start the grace window.
         if ((last_good_state_ns == 0 || vio_packet.n_feature_points < auto_reset_min_features) && wait_for_steady_init)
         {
@@ -509,22 +666,75 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         // Duration since OK started
         const int64_t dt_ok_ns = now_ns - last_good_state_ns;
         const int64_t grace_ns = (int64_t)(ok_state_grace_timeout_s * 1e9);
+        
+        in_grace_period = (dt_ok_ns < grace_ns && wait_for_steady_init);
+    }
 
-        if (dt_ok_ns < grace_ns && wait_for_steady_init)
+    // Check for auto-reset conditions using actual quality
+    // Skip auto-reset during initialization or grace period
+    if (in_grace_period)
+    {
+        if (en_debug && quality_for_error_detection < 10)
         {
-            // Before grace timeout ends force quality to 1 regardless of computed value
-            vio_packet.quality = 1;
+            printf("[AUTO_RESET] Skipping auto-reset check during grace period (quality=%d, features=%d)\n",
+                   quality_for_error_detection, vio_packet.n_feature_points);
+        }
+    }
+    else if (!vio_manager || !vio_manager->initialized())
+    {
+        if (en_debug && quality_for_error_detection < 10)
+        {
+            printf("[AUTO_RESET] Skipping auto-reset check - VIO not initialized\n");
+        }
+    }
+    else if (should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
+    {
+        fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
+                quality_for_error_detection, vio_packet.n_feature_points, V_uncertainty);
+        vio_packet.quality = -1;
+        vio_packet.state = VIO_STATE_FAILED;
+        vio_state = VIO_STATE_FAILED;
+        // Note: Actual reset logic would be handled by the main VIO manager
+    }
+    else if (vio_manager && vio_manager->initialized())
+    {
+        vio_packet.state = VIO_STATE_OK;
+        vio_state = VIO_STATE_OK;
+
+        if (in_grace_period)
+        {
+            // During grace period, use hysteresis quality but ensure it's at least 1 if not 0
+            // This respects the hysteresis reset while preventing quality from looking "too good"
+            if (reported_quality == 0)
+            {
+                vio_packet.quality = 0;  // Respect hysteresis: system needs to prove itself
+            }
+            else
+            {
+                // Quality has passed hysteresis, but still in grace period
+                // Use actual quality but cap it conservatively
+                vio_packet.quality = std::min(reported_quality, 15);  // Conservative during grace
+            }
+            
+            if (en_debug)
+            {
+                printf("[GRACE_PERIOD] In grace period: reported_quality=%d, vio_packet.quality=%d\n",
+                       reported_quality, vio_packet.quality);
+            }
         }
         else
         {
             wait_for_steady_init = false;
+            // Set the reported quality with hysteresis applied
+            vio_packet.quality = reported_quality;
         }
     }
     else
     {
         vio_packet.state = VIO_STATE_INITIALIZING;
         vio_state = VIO_STATE_INITIALIZING;
-        vio_packet.quality = 1;
+        // During initialization, also respect hysteresis
+        vio_packet.quality = (reported_quality == 0) ? 0 : 1;
     }
 
     // FRAME
@@ -931,7 +1141,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     else
                     {
                         // Feature not in state yet, use default covariance
-                        slam_cov = Eigen::MatrixXd::Identity(3, 3) * 0.1; // Default 10cm uncertainty
+                        slam_cov = Eigen::MatrixXd::Identity(3, 3) * 1.4 * 1.4; // Default multiply by slam sigma pixel^2 --> UNITS TBD
                     }
 
                     // Calculate largest eigenvalue of covariance
@@ -939,13 +1149,15 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     double max_eigenvalue = eigensolver.eigenvalues().maxCoeff();
 
                     // Quality based on covariance (smaller is better)
-                    double cov_quality = std::max(0.0, 1.0 - max_eigenvalue);
+                    // double cov_quality = std::max(0.0, 1.0 - max_eigenvalue);
+                    const double sigma_ref = 1.4; // Reference sigma value for normalization
+                    double cov_quality = 1.0 / (1.0 + max_eigenvalue / sigma_ref);
 
                     // Combine with feature quality field (if available)
                     double feat_quality_field = (slam_feat->_quality >= 0) ? slam_feat->_quality : 0.0;
 
                     // Weight SLAM features more heavily
-                    feature_quality = 0.7 * cov_quality + 0.3 * feat_quality_field;
+                    feature_quality = 0.5 * cov_quality + 0.5 * feat_quality_field;
                     // feature->quality = feature_quality; // Store in feature
 
                     if (en_qual_debug)
@@ -975,7 +1187,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     double feat_quality_field = (feature->quality >= 0) ? feature->quality : 0.0;
 
                     // MSCKF features weighted less than SLAM features
-                    feature_quality = 0.3 * feat_quality_field * measurement_weight;
+                    feature_quality = 0.4 * feat_quality_field * measurement_weight;
 
                     if (en_qual_debug)
                         printf("[QUALITY_DEBUG] Feature %zu (MSCKF) - Grid[%d][%d] - Quality field: %.3f, Measurements: %d, Weight: %.3f, Final quality: %.3f\n",
@@ -1018,8 +1230,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
                     else
                     {
                         // Grid has insufficient features, penalize
-                        double fill_ratio = static_cast<double>(grid[i][j]) / TARGET_FEATURES_PER_GRID;
-                        grid_cell_quality = (grid_quality[i][j] / grid[i][j]) * fill_ratio;
+                        double fill_ratio = std::min(1.0, static_cast<double>(grid[i][j]) / TARGET_FEATURES_PER_GRID);
+                        grid_cell_quality = (grid_quality[i][j] / std::max(1, grid[i][j])) * std::sqrt(fill_ratio);
                     }
                     camera_grid_score += grid_cell_quality;
 
@@ -1046,7 +1258,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
         }
 
         // Combine grid distribution with feature quality
-        double camera_score = 0.6 * grid_distribution_score + 0.4 * camera_grid_score;
+        double camera_score = 0.5 * grid_distribution_score + 0.5 * camera_grid_score;
 
         if (en_qual_debug)
             printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n",
@@ -1069,6 +1281,7 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
     }
 
     // Ensure quality is within bounds
+    // do not use the averaged one, use the total quality
     final_quality = std::max(0.0, std::min(100.0, total_quality));
 
     if (en_qual_debug)
