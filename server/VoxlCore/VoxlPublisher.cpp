@@ -489,11 +489,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         // The grace period logic already protects against false auto-resets
         // This allows hysteresis to see the real quality and properly count samples
         
-        if (en_debug)
-        {
-            printf("[QUALITY_INIT] During initialization: v_cov_quality=%.2f, pos_quality=%.2f, calculated=%.2f\n",
-                   v_cov_quality, pos_quality, calculated_quality);
-        }
+        // if (en_debug)
+        // {
+        //     printf("[QUALITY_INIT] During initialization: v_cov_quality=%.2f, pos_quality=%.2f, calculated=%.2f\n",
+        //            v_cov_quality, pos_quality, calculated_quality);
+        // }
     }
 
     // Ensure calculated quality is within bounds
@@ -579,7 +579,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             }
             
             // Check for transition to GOOD state
-            if (consecutive_above_40 >= 10)
+            if (consecutive_above_40 >= 60)
             {
                 quality_reporting_good = true;
                 consecutive_above_40 = 0;
@@ -601,7 +601,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             }
             
             // Check for transition to BAD state
-            if (consecutive_below_20 >= 10)
+            if (consecutive_below_20 >= 45)
             {
                 quality_reporting_good = false;
                 consecutive_below_20 = 0;
