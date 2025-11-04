@@ -183,7 +183,6 @@ namespace voxl
             // Notify the reset thread to continue processing
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
-            skip_jerk_detection = true;
         }
 
         // Mark last processed timestamp (only when we actually processed)
