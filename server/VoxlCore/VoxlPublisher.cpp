@@ -9,6 +9,7 @@
  */
 
 #include "VoxlHK.h"
+#include <atomic>
 using namespace voxl;
 
 #define STR_MATCH(s, lit) (strncmp((s), (lit), strlen(lit)) == 0)
@@ -141,17 +142,39 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
 void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map)
 {
-    // If already in failed state, don't process further until reset completes
-    // This prevents spam of auto-reset warnings
+    // Handle FAILED state - publish failure packet and ensure reset is triggered
+    static bool wait_for_steady_init = true;
+    vio_packet.quality = -1;
+    
     if (vio_state.load() == VIO_STATE_FAILED && !is_resetting.load())
     {
+        wait_for_steady_init = true;
+        
+        // CRITICAL: Ensure reset is requested when in FAILED state
+        if (!reset_requested.load(std::memory_order_acquire))
+        {
+            reset_requested.store(true, std::memory_order_release);
+            fprintf(stderr, "[PUBLISH] VIO in FAILED state - REQUESTING RESET\n");
+        }
+        
+        // Publish FAILED packet so external systems know status
+        memset(&vio_packet, 0, sizeof(vio_data_t));
+        vio_packet.magic_number = VIO_MAGIC_NUMBER;
+        vio_packet.timestamp_ns = state->_timestamp * 1e9;
+        vio_packet.quality = -1;
+        vio_packet.state = VIO_STATE_FAILED;
+        vio_packet.error_code = vio_error_codes.load();
+        
+        pipe_server_write(SIMPLE_CH, (char *)&vio_packet, sizeof(vio_data_t));
+        
         if (en_debug)
         {
             static int64_t last_failed_msg = 0;
             int64_t now = _apps_time_monotonic_ns();
             if (now - last_failed_msg > 1000000000) // Print once per second
             {
-                printf("[PUBLISH] Skipping publish - VIO in FAILED state, waiting for reset\n");
+                printf("[PUBLISH] Published FAILED packet, reset_requested=%d\n", 
+                       reset_requested.load());
                 last_failed_msg = now;
             }
         }
@@ -372,7 +395,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     static bool wait_for_features = true;
     static uint32_t last_reset_count = reset_num_counter.load();
     static int64_t last_good_state_ns = 0;
-    static bool wait_for_steady_init = true;
+
     if (last_reset_count != reset_num_counter.load())
     {
         last_good_state_ns = 0;
@@ -463,7 +486,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // Get used features map from VioManager if not provided and NOT RESETTING!!
     double calculated_quality;
-    bool is_during_initialization = (!vio_manager || !vio_manager->initialized() || is_resetting.load(std::memory_order_relaxed));
+    bool is_during_initialization = ((!vio_manager || !vio_manager->initialized() ) && (!is_resetting.load(std::memory_order_acquire)));
     
     if (!is_during_initialization)
     {
@@ -584,7 +607,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                 quality_reporting_good = true;
                 consecutive_above_40 = 0;
                 consecutive_below_20 = 0;  // Reset the other counter
-                std::cout << "[QUALITY] Quality state transition: BAD -> GOOD (10 samples above 40)" << std::endl;
+                std::cout << "[QUALITY] Quality state transition: BAD -> GOOD (60 samples above 40)" << std::endl;
             }
         }
         else
@@ -606,7 +629,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                 quality_reporting_good = false;
                 consecutive_below_20 = 0;
                 consecutive_above_40 = 0;  // Reset the other counter
-                std::cout << "[QUALITY] Quality state transition: GOOD -> BAD (10 samples below 20)" << std::endl;
+                std::cout << "[QUALITY] Quality state transition: GOOD -> BAD (45 samples below 20)" << std::endl;
             }
         }
     }
@@ -670,50 +693,72 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         in_grace_period = (dt_ok_ns < grace_ns && wait_for_steady_init);
     }
 
-    // Check for auto-reset conditions using actual quality
-    // Skip auto-reset during initialization or grace period
-    if (in_grace_period)
+    // ========================================================================
+    // STATE DETERMINATION
+    // ========================================================================
+    // Priority order:
+    // 1. INITIALIZING - if VIO manager not initialized yet or resetting
+    // 2. FAILED - if auto-reset conditions met (only when fully initialized)
+    // 3. OK - normal operation
+    // ========================================================================
+    
+    // FIRST: Check if we're still initializing
+    if (!vio_manager || !vio_manager->initialized() || is_resetting.load(std::memory_order_acquire))
     {
-        if (en_debug && quality_for_error_detection < 10)
+        // System is INITIALIZING - don't check for auto-reset yet
+        vio_packet.state = VIO_STATE_INITIALIZING;
+        vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
+        
+        // During initialization, respect hysteresis quality
+        vio_packet.quality = (reported_quality == 0) ? 0 : 1;
+        
+        if (en_debug)
         {
-            printf("[AUTO_RESET] Skipping auto-reset check during grace period (quality=%d, features=%d)\n",
-                   quality_for_error_detection, vio_packet.n_feature_points);
+            printf("[STATE] VIO_STATE_INITIALIZING - vio_manager: %s, initialized: %s, resetting: %s, quality: %d\n",
+                   vio_manager ? "exists" : "null",
+                   (vio_manager && vio_manager->initialized()) ? "yes" : "no",
+                   is_resetting.load() ? "yes" : "no",
+                   vio_packet.quality);
         }
     }
-    else if (!vio_manager || !vio_manager->initialized())
+    // SECOND: Check for auto-reset conditions (only if initialized and not in grace period)
+    else if (!in_grace_period && 
+             should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points, 
+                             V_uncertainty, yawrate, current_velocity, 
+                             vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
     {
-        if (en_debug && quality_for_error_detection < 10)
-        {
-            printf("[AUTO_RESET] Skipping auto-reset check - VIO not initialized\n");
-        }
-    }
-    else if (should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points, V_uncertainty, yawrate, current_velocity, vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
-    {
+        // Auto-reset conditions met - system has FAILED
         fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
                 quality_for_error_detection, vio_packet.n_feature_points, V_uncertainty);
+        
         vio_packet.quality = -1;
         vio_packet.state = VIO_STATE_FAILED;
-        vio_state = VIO_STATE_FAILED;
-        // Note: Actual reset logic would be handled by the main VIO manager
+        vio_state.store(VIO_STATE_FAILED, std::memory_order_release);
+        
+        // CRITICAL: Request the actual reset
+        if (!reset_requested.load(std::memory_order_acquire))
+        {
+            reset_requested.store(true, std::memory_order_release);
+            fprintf(stderr, "[AUTO_RESET] REQUESTING RESET due to auto-reset conditions\n");
+        }
     }
-    else if (vio_manager && vio_manager->initialized())
+    // THIRD: System is OK - normal operation
+    else
     {
         vio_packet.state = VIO_STATE_OK;
-        vio_state = VIO_STATE_OK;
+        vio_state.store(VIO_STATE_OK, std::memory_order_release);
 
         if (in_grace_period)
         {
-            // During grace period, use hysteresis quality but ensure it's at least 1 if not 0
-            // This respects the hysteresis reset while preventing quality from looking "too good"
+            // During grace period, respect hysteresis while being conservative
             if (reported_quality == 0)
             {
                 vio_packet.quality = 0;  // Respect hysteresis: system needs to prove itself
             }
             else
             {
-                // Quality has passed hysteresis, but still in grace period
-                // Use actual quality but cap it conservatively
-                vio_packet.quality = std::min(reported_quality, 15);  // Conservative during grace
+                // Quality has passed hysteresis, but still in grace period - cap conservatively
+                vio_packet.quality = std::min(reported_quality, 15);
             }
             
             if (en_debug)
@@ -728,13 +773,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             // Set the reported quality with hysteresis applied
             vio_packet.quality = reported_quality;
         }
-    }
-    else
-    {
-        vio_packet.state = VIO_STATE_INITIALIZING;
-        vio_state = VIO_STATE_INITIALIZING;
-        // During initialization, also respect hysteresis
-        vio_packet.quality = (reported_quality == 0) ? 0 : 1;
     }
 
     // FRAME

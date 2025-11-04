@@ -459,6 +459,10 @@ void HealthCheck::checkVINSResetRequest()
     {
         std::cout << "[HEALTH] VIO system reset successfully" << std::endl;
 
+        // CRITICAL: Clear VIO state back to INITIALIZING after successful reset
+        vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
+        std::cout << "[HEALTH] VIO state set to INITIALIZING after reset" << std::endl;
+
         // Clear last sensor timestamps; they will be filled when fresh data arrives
         last_imu_timestamp_ns = 0;
         last_cam_time = 0;
@@ -466,6 +470,8 @@ void HealthCheck::checkVINSResetRequest()
     else
     {
         std::cerr << "[HEALTH] VIO system reset failed with code: " << rc << std::endl;
+        // Even on failure, set to INITIALIZING so system can try again
+        vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
         // Clear reset flags even on failure to prevent getting stuck --> PRIME MOVE HERE
         reset_requested.store(false, std::memory_order_release);
     }
