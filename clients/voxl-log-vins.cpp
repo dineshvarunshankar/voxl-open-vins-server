@@ -260,7 +260,8 @@ int main(int argc, char* argv[])
 	main_running = 1;
 
 	// prints can be quite long, disable terminal wrapping
-	printf(DISABLE_WRAP);
+	// Security: Use fputs for constant strings to avoid format string warnings
+	fputs(DISABLE_WRAP, stdout);
 
 	// set up all our MPA callbacks
 	pipe_client_set_simple_helper_cb(0, _helper_cb, NULL);
@@ -276,7 +277,7 @@ int main(int argc, char* argv[])
 	// check for MPA errors
 	if(ret<0){
 		pipe_print_error(ret);
-		printf(ENABLE_WRAP);
+		fputs(ENABLE_WRAP, stdout);
 		return -1;
 	}
 
@@ -286,7 +287,7 @@ int main(int argc, char* argv[])
 	// all done, signal pipe read threads to stop
 	printf("\nclosing and exiting\n");
 	pipe_client_close_all();
-	printf(ENABLE_WRAP);
+	fputs(ENABLE_WRAP, stdout);
 
 	return 0;
 }

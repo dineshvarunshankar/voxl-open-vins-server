@@ -116,7 +116,10 @@ namespace voxl
         // EXAMPLE: IF CAMERA 0 IS ATTACHED TO A DIFFERENT IMU THAN CAMERA 1, FLAG ERROR
 
         // CHECK IF WE HAVE A VALID IMU FOR ALL CAMERAS AND IF THEY ARE THE SAME
-        strcpy(imu_name, vio_cams[0].imu);
+        // Security: Use strncpy with bounds checking and ensure null termination
+        strncpy(imu_name, vio_cams[0].imu, sizeof(imu_name) - 1);
+        imu_name[sizeof(imu_name) - 1] = '\0'; // Ensure null termination
+
         for (int i = 1; i < n_cams; i++)
         {
             if (strcmp(vio_cams[i].imu, imu_name) != 0)
@@ -185,9 +188,16 @@ namespace voxl
             std::string cam_key = "cam" + std::to_string(i);
 
             cam_info cam;
-            strcpy(cam.name, vio_cams[i].name);
-            strcpy(cam.tracking_name, vio_cams[i].pipe_for_tracking);
-            strcpy(cam.preview_name, vio_cams[i].pipe_for_preview);
+            // Security: Use strncpy with bounds checking and ensure null termination
+            strncpy(cam.name, vio_cams[i].name, sizeof(cam.name) - 1);
+            cam.name[sizeof(cam.name) - 1] = '\0';
+
+            strncpy(cam.tracking_name, vio_cams[i].pipe_for_tracking, sizeof(cam.tracking_name) - 1);
+            cam.tracking_name[sizeof(cam.tracking_name) - 1] = '\0';
+
+            strncpy(cam.preview_name, vio_cams[i].pipe_for_preview, sizeof(cam.preview_name) - 1);
+            cam.preview_name[sizeof(cam.preview_name) - 1] = '\0';
+
             cam.mode = using_stereo ? STEREO : MONO;
             cam.cam_id = i;
 

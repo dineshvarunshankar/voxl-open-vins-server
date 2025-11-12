@@ -68,6 +68,7 @@ brute force for now, take a list of params and pre compute a few hundred iterati
 #include <stdlib.h> // for atoi()
 #include <math.h>
 #include <sys/stat.h>	// for mkdir
+#include <sys/wait.h>	// for waitpid()
 #include <unistd.h>		// for access()
 #include <limits.h>		// for access()
 #include <vector>
@@ -78,6 +79,8 @@ brute force for now, take a list of params and pre compute a few hundred iterati
 #include <modal_pipe_client.h>
 #include <modal_start_stop.h>
 #include <modal_json.h>
+#include <ctype.h>
+#include <fcntl.h>
 
 
 
@@ -87,6 +90,70 @@ brute force for now, take a list of params and pre compute a few hundred iterati
 
 #define OV_CONFIG_FILE "/etc/modalai/voxl-open-vins-server.conf"
 #define FT_CONFIG_FILE "/etc/modalai/voxl-feature-tracker.conf"
+
+// Security: Maximum path length for validated inputs
+#define MAX_SAFE_PATH 256
+
+// Security: Validate path contains only safe characters
+// Returns 0 if safe, -1 if contains dangerous characters
+static int validate_safe_path(const char* path) {
+    if (!path || strlen(path) == 0 || strlen(path) >= MAX_SAFE_PATH) {
+        return -1;
+    }
+
+    // Check for shell metacharacters and path traversal
+    const char* dangerous_chars = ";|&$`<>(){}[]!*?~\"'\\";
+    if (strpbrk(path, dangerous_chars) != NULL) {
+        fprintf(stderr, "ERROR: Path contains unsafe shell metacharacters\n");
+        return -1;
+    }
+
+    // Check for path traversal attempts
+    if (strstr(path, "..") != NULL) {
+        fprintf(stderr, "ERROR: Path traversal detected\n");
+        return -1;
+    }
+
+    // Path must be absolute for security
+    if (path[0] != '/') {
+        fprintf(stderr, "ERROR: Path must be absolute\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+// Security: Safe file copy without system() calls
+static int safe_copy_file(const char* src, const char* dst) {
+    // Validate both paths
+    if (validate_safe_path(src) != 0 || validate_safe_path(dst) != 0) {
+        return -1;
+    }
+
+    // Use fork/exec instead of system()
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork failed in safe_copy_file");
+        return -1;
+    }
+
+    if (pid == 0) {
+        // Child process - use execl with hardcoded /bin/cp
+        execl("/bin/cp", "/bin/cp", src, dst, (char*)NULL);
+        // If execl returns, it failed
+        perror("execl failed");
+        _exit(1);
+    }
+
+    // Parent process - wait for child
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        perror("waitpid failed");
+        return -1;
+    }
+
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
 
 static std::string log_path;
 
@@ -157,8 +224,15 @@ static int _parse_opts(int argc, char* argv[])
 			break;
 
 		case 'l':
+            // Security: Validate log_path before using it
+            if (validate_safe_path(optarg) != 0) {
+                fprintf(stderr, "ERROR: Invalid or unsafe log path\n");
+                _print_usage();
+                exit(-1);
+            }
             log_path.assign(optarg);
             printf("using log path of %s\n", log_path.c_str());
+            // Security: Use validated path, still safe with snprintf bounds checking
             snprintf(process_args[0], 256, "-yp%s", log_path.c_str());
 			break;
 
@@ -292,7 +366,21 @@ static void close_subprocesses(){
 
 static int create_session_dir(){
 
-    system("voxl-set-cpu-mode performance");
+    // Security: Replace system() with fork/exec for voxl-set-cpu-mode
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork failed for voxl-set-cpu-mode");
+    } else if (pid == 0) {
+        // Child process - exec with hardcoded path and arguments
+        execl("/usr/bin/voxl-set-cpu-mode", "voxl-set-cpu-mode", "performance", (char*)NULL);
+        // If execl returns, it failed
+        perror("execl failed for voxl-set-cpu-mode");
+        _exit(1);
+    } else {
+        // Parent process - wait for child (optional, can continue without waiting)
+        int status;
+        waitpid(pid, &status, 0);
+    }
 
     time_t rawtime;
     struct tm * timeinfo;
@@ -337,12 +425,20 @@ static int log_results(){
     sprintf(param_dir, "%sparams/", curr_dir);
     _mkdir(param_dir);
 
-    // copy all relevant files over
-    char cmd[512];
-    sprintf(cmd, "cp /etc/modalai/voxl-feature-tracker.conf %s", param_dir);
-    system(cmd);
-    sprintf(cmd, "cp /etc/modalai/voxl-open-vins-server.conf %s", param_dir);
-    system(cmd);
+    // Security: Replace system() with safe_copy_file()
+    // Build destination paths
+    char dst_ft[PATH_MAX];
+    char dst_ov[PATH_MAX];
+    snprintf(dst_ft, PATH_MAX, "%svoxl-feature-tracker.conf", param_dir);
+    snprintf(dst_ov, PATH_MAX, "%svoxl-open-vins-server.conf", param_dir);
+
+    // Copy files using secure method
+    if (safe_copy_file("/etc/modalai/voxl-feature-tracker.conf", dst_ft) != 0) {
+        fprintf(stderr, "Warning: Failed to copy feature tracker config\n");
+    }
+    if (safe_copy_file("/etc/modalai/voxl-open-vins-server.conf", dst_ov) != 0) {
+        fprintf(stderr, "Warning: Failed to copy open-vins config\n");
+    }
 
     // create csv in new dir
 	char csv_path[512];

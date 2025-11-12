@@ -220,7 +220,8 @@ static void _rotation_to_tait_bryan_xyz_intrinsic(float R[3][3], float* roll, fl
 // called whenever we connect or reconnect to the server
 static void _connect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context)
 {
-	printf(FONT_BOLD);
+	// Security: Use fputs for constant strings to avoid format string warnings
+	fputs(FONT_BOLD, stdout);
 	printf("\n");
 	if(en_dt)					printf(" dt(ms) |");
 	printf("    T_imu_wrt_vio (m)   |");
@@ -235,7 +236,7 @@ static void _connect_cb(__attribute__((unused)) int ch, __attribute__((unused)) 
 	if(en_state)				printf(" state|");
 	if(en_error_code)			printf(" error_codes ");
 	printf("\n");
-	printf(RESET_FONT);
+	fputs(RESET_FONT, stdout);
 	return;
 }
 
@@ -472,7 +473,8 @@ int main(int argc, char* argv[])
 	main_running = 1;
 
 	// prints can be quite long, disable terminal wrapping
-	printf(DISABLE_WRAP);
+	// Security: Use fputs for constant strings to avoid format string warnings
+	fputs(DISABLE_WRAP, stdout);
 
 	// set up all our MPA callbacks
 	pipe_client_set_simple_helper_cb(0, _helper_cb, NULL);
@@ -488,7 +490,7 @@ int main(int argc, char* argv[])
 	// check for MPA errors
 	if(ret<0){
 		pipe_print_error(ret);
-		printf(ENABLE_WRAP);
+		fputs(ENABLE_WRAP, stdout);
 		return -1;
 	}
 
@@ -498,7 +500,7 @@ int main(int argc, char* argv[])
 	// all done, signal pipe read threads to stop
 	printf("\nclosing and exiting\n");
 	pipe_client_close_all();
-	printf(ENABLE_WRAP);
+	fputs(ENABLE_WRAP, stdout);
 
 	return 0;
 }

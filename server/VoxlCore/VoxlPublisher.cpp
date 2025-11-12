@@ -980,8 +980,10 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
     // Check if VIO manager is in a bad state
     constexpr bool vio_manager_bad = false; // FUTURE IMPLEMENTATION WITH SfM
 
-    // Check quality conditions
-    const bool quality_bad = quality < 1;
+    // CRITICAL FIX: Remove instant quality check - conflicts with hysteresis
+    // Quality hysteresis reports 0 during transition, but actual quality may be good
+    // This was causing resets when quality improves!
+    // Only check for SUSTAINED bad quality, not instant quality
     bool stable_quality_bad = false;
 
     // Check for stable quality issues (quality bad for extended period)
@@ -1061,7 +1063,8 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
     }
 
     // Return true if any condition is met
-    return vio_manager_bad || quality_bad || stable_quality_bad ||
+    // CRITICAL FIX: Removed quality_bad - was causing resets during hysteresis transitions
+    return vio_manager_bad || stable_quality_bad ||
            stable_features_bad || too_fast || too_uncertain || too_much_spinning;
 }
 

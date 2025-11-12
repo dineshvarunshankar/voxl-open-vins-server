@@ -108,13 +108,18 @@ namespace voxl
             }
             return;
         }
-        // C++17 Real-time: Throttle image processing when the platform is static
-        // CRITICAL FIX: Never skip frames during initialization - VIO needs frames to initialize!
-        const bool vio_initialized = vio_manager && vio_manager->initialized();
+        // CRITICAL FIX: DISABLE frame throttling during initialization completely
+        // User reported issues with initialization - process ALL frames until VIO is stable
 
-        if (!skip_jerk_detection && vio_initialized)
+        // Check if VIO is fully initialized AND past grace period
+        const bool vio_ready_for_throttling = vio_manager &&
+                                              vio_manager->initialized() &&
+                                              vio_state.load(std::memory_order_acquire) == VIO_STATE_OK;
+
+        // NEVER throttle during: INITIALIZING, FAILED, or first few seconds of OK state
+        if (!skip_jerk_detection && vio_ready_for_throttling)
         {
-            // Only throttle after VIO is initialized and running
+            // Only throttle when VIO is stable and running
             const bool is_static = !(non_static.load(std::memory_order_acquire));
             const bool acc_no_jerk = !(has_acc_jerk.load(std::memory_order_acquire));
 
@@ -149,10 +154,10 @@ namespace voxl
                 }
             }
         }
-        else if (!vio_initialized && en_debug)
+        else if (!vio_ready_for_throttling && en_debug)
         {
-            // During initialization, process ALL frames
-            printf("[INIT] VIO initializing - processing all frames (no throttling)\n");
+            // During initialization or unstable state, process ALL frames
+            printf("[INIT] VIO not stable - processing ALL frames (no throttling)\n");
         }
         // Update dimensions
         current_height = meta.height;

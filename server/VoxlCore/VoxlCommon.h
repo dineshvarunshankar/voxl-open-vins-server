@@ -271,8 +271,9 @@ static long getValueFromStatus(const std::string &fieldName)
         if (line.find(fieldName) == 0)
         {
             long value;
-            char unit[4]; // Increased size to accommodate "kB\0"
-            sscanf(line.c_str(), "%*s %ld %s", &value, unit);
+            char unit[4]; // Buffer for "kB\0"
+            // Security: Use field width limit to prevent buffer overflow
+            sscanf(line.c_str(), "%*s %ld %3s", &value, unit);
             // Convert to bytes based on unit
             if (strcmp(unit, "kB") == 0)
                 value *= 1024;
