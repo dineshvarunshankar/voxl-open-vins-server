@@ -498,6 +498,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
     else
     {
+        // WE NEED THIS FOR ARMING IN POSITION 
         // FIX: During initialization, use basic uncertainty-based quality instead of 0
         // This allows hysteresis system to properly engage after enough good samples
         // Use already-calculated uncertainties to avoid redundant operations
@@ -506,13 +507,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         constexpr double max_allowable_cep = 0.15; // 15cm CEP threshold for init
         const double pos_quality = 100.0 * (1.0 - std::min(1.0, T_uncertainty / max_allowable_cep));
 
-        // Feature-based quality: scale by feature count
-        const double feature_ratio = std::min(1.0, static_cast<double>(vio_packet.n_feature_points) /
-                                                    static_cast<double>(auto_reset_min_features));
-        const double feature_quality = 50.0 * feature_ratio; // Max 50 during init
-
-        // Conservative blend: requires both good features AND good uncertainty
-        calculated_quality = std::min(pos_quality, feature_quality);
+        calculated_quality = pos_quality;
 
         if (en_debug)
         {
@@ -544,127 +539,138 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
 
     // ========================================================================
-    // QUALITY HYSTERESIS SYSTEM
+    // QUALITY HYSTERESIS SYSTEM - State Machine Approach
     // ========================================================================
-    // This implements a dual-quality approach:
-    // 1. REPORTED QUALITY (with hysteresis): Sent to external consumers via vio_packet
-    //    - Reports 0 until 10 consecutive samples above 40 (prevents premature "good" reports)
-    //    - Reverts to 0 if 10 consecutive samples below 20 (indicates sustained degradation)
-    // 2. ACTUAL QUALITY: Used internally for error detection and auto-reset logic
-    //    - Prevents false auto-resets during initial warm-up when reported quality is 0
-    //    - Ensures error detection responds to real system issues, not hysteresis filtering
+    // States:
+    // 1. INITIAL: Report quality as-is (no filtering) on first run after reset
+    // 2. BAD: Quality degraded - apply strict hysteresis to recover
+    // 3. GOOD: Quality stable - apply hysteresis to prevent false alarms
     //
-    // RESET BEHAVIOR:
-    // - When VIO reset occurs (reset_num_counter increments), hysteresis resets to BAD state
-    // - When entering FAILED state, hysteresis immediately resets to BAD state
-    // - After reset, quality reports 0 until 10 new samples prove quality > 40
+    // Transitions:
+    // - INITIAL → BAD: When quality drops below 20 for 10 consecutive samples
+    // - BAD → GOOD: When quality above 40 for 60 consecutive samples
+    // - GOOD → BAD: When quality below 20 for 45 consecutive samples
+    // - Any state → INITIAL: On VIO reset or FAILED state
     // ========================================================================
-    
-    // Quality hysteresis logic to prevent rapid state changes
-    // Track consecutive samples above 40 and below 20
-    static bool quality_reporting_good = false;  // true = reporting actual quality, false = reporting 0
+
+    enum QualityState { INITIAL, BAD, GOOD };
+    static QualityState quality_state = INITIAL;
     static int consecutive_above_40 = 0;
     static int consecutive_below_20 = 0;
     static uint32_t last_quality_reset_count = reset_num_counter.load();
 
-    // Reset counters on VIO reset OR when entering FAILED state
-    bool should_reset_quality_state = (last_quality_reset_count != reset_num_counter.load()) ||
+    // Reset to INITIAL state on VIO reset OR when entering FAILED state
+    const uint32_t current_reset_count = reset_num_counter.load();
+    bool should_reset_quality_state = (last_quality_reset_count != current_reset_count) ||
                                       (vio_state.load() == VIO_STATE_FAILED);
-    
+
     if (should_reset_quality_state)
     {
-        quality_reporting_good = false;
+        quality_state = INITIAL;
         consecutive_above_40 = 0;
         consecutive_below_20 = 0;
-        last_quality_reset_count = reset_num_counter.load();
-        
+        last_quality_reset_count = current_reset_count;
+
         if (en_debug)
         {
-            printf("[QUALITY] Resetting quality hysteresis state (reset_count=%u, vio_state=%d)\n",
-                   reset_num_counter.load(), vio_state.load());
+            printf("[QUALITY] RESET to INITIAL state - will report quality as-is (reset_count=%u)\n",
+                   current_reset_count);
         }
     }
 
-    // Update counters based on current quality
-    // Don't update counters if we just reset or if in FAILED state
-    // Only count transitions relevant to the current state
+    // State machine transitions based on current quality
     if (!should_reset_quality_state)
     {
-        if (!quality_reporting_good)
+        switch (quality_state)
         {
-            // Currently in BAD state (reporting 0)
-            // Only count samples above 40 to transition to GOOD state
-            if (calculated_quality > 40)
-            {
-                consecutive_above_40++;
-            }
-            else
-            {
-                consecutive_above_40 = 0;  // Reset if quality drops
-            }
-            
-            // Check for transition to GOOD state
-            if (consecutive_above_40 >= 60)
-            {
-                quality_reporting_good = true;
-                consecutive_above_40 = 0;
-                consecutive_below_20 = 0;  // Reset the other counter
-                std::cout << "[QUALITY] Quality state transition: BAD -> GOOD (60 samples above 40)" << std::endl;
-            }
-        }
-        else
-        {
-            // Currently in GOOD state (reporting actual quality)
-            // Only count samples below 20 to transition back to BAD state
+        case INITIAL:
+            // Report quality as-is, but monitor for degradation
             if (calculated_quality <= 20)
             {
                 consecutive_below_20++;
+                if (consecutive_below_20 >= 10)
+                {
+                    quality_state = BAD;
+                    consecutive_below_20 = 0;
+                    consecutive_above_40 = 0;
+                    if (en_debug)
+                        printf("[QUALITY] Transition: INITIAL → BAD (quality degraded)\n");
+                }
             }
             else
             {
-                consecutive_below_20 = 0;  // Reset if quality improves
-            }
-            
-            // Check for transition to BAD state
-            if (consecutive_below_20 >= 45)
-            {
-                quality_reporting_good = false;
                 consecutive_below_20 = 0;
-                consecutive_above_40 = 0;  // Reset the other counter
-                std::cout << "[QUALITY] Quality state transition: GOOD -> BAD (45 samples below 20)" << std::endl;
             }
+            break;
+
+        case BAD:
+            // Quality is bad - require strong evidence to recover
+            if (calculated_quality > 40)
+            {
+                consecutive_above_40++;
+                if (consecutive_above_40 >= 60)
+                {
+                    quality_state = GOOD;
+                    consecutive_above_40 = 0;
+                    consecutive_below_20 = 0;
+                    std::cout << "[QUALITY] Transition: BAD → GOOD (60 samples > 40)" << std::endl;
+                }
+            }
+            else
+            {
+                consecutive_above_40 = 0;
+            }
+            break;
+
+        case GOOD:
+            // Quality is good - require strong evidence of degradation
+            if (calculated_quality <= 20)
+            {
+                consecutive_below_20++;
+                if (consecutive_below_20 >= 45)
+                {
+                    quality_state = BAD;
+                    consecutive_below_20 = 0;
+                    consecutive_above_40 = 0;
+                    std::cout << "[QUALITY] Transition: GOOD → BAD (45 samples ≤ 20)" << std::endl;
+                }
+            }
+            else
+            {
+                consecutive_below_20 = 0;
+            }
+            break;
         }
     }
 
-    // Determine reported quality with hysteresis (for external consumers)
+    // Determine reported quality based on state
     int reported_quality;
-    if (quality_reporting_good)
+    switch (quality_state)
     {
-        reported_quality = static_cast<int32_t>(calculated_quality);
-    }
-    else
-    {
-        reported_quality = 0;  // Report 0 quality until consistently good
+    case INITIAL:
+        // Report actual quality as-is
+        reported_quality = static_cast<int>(calculated_quality);
+        break;
+    case BAD:
+        // Report 0 until quality recovers
+        reported_quality = 0;
+        break;
+    case GOOD:
+        // Report actual quality
+        reported_quality = static_cast<int>(calculated_quality);
+        break;
     }
 
     // Ensure reported quality is within bounds
-    if (reported_quality > 100)
-        reported_quality = 100;
-    if (reported_quality < 0)
-        reported_quality = 0;
+    reported_quality = std::max(0, std::min(100, reported_quality));
 
-    // Debug logging for quality state (more verbose to track reset behavior)
-    if (should_reset_quality_state)
+    // Debug logging
+    if (en_debug && (quality_state != GOOD || reported_quality < 10))
     {
-        printf("[QUALITY_RESET] RESET DETECTED - Forcing state to BAD, reported quality will be 0\n");
-        printf("[QUALITY_RESET] Calculated quality: %.1f, Counters reset to 0\n", calculated_quality);
-    }
-    
-    // Always log when reporting 0 or during transitions
-    if (en_debug && (reported_quality == 0 || !quality_reporting_good))
-    {
-        printf("[QUALITY_STATE] State: %s, Reported: %d, Calculated: %.1f, Consecutive(>40): %d, Consecutive(<=20): %d\n",
-               quality_reporting_good ? "GOOD" : "BAD", reported_quality, calculated_quality,
+        const char* state_str = (quality_state == INITIAL) ? "INITIAL" :
+                               (quality_state == BAD) ? "BAD" : "GOOD";
+        printf("[QUALITY] State: %s, Reported: %d, Calculated: %.1f, Consec(>40): %d, Consec(≤20): %d\n",
+               state_str, reported_quality, calculated_quality,
                consecutive_above_40, consecutive_below_20);
     }
 
