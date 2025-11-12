@@ -266,46 +266,43 @@ void voxl::FrameTransform::update(const imu_data_t &data)
 }
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {
-    // Update expected samples based on current IMU rate estimate and window size
-    double rate_hz = 1024.0;
-    imu_rate_hz.load(std::memory_order_relaxed); // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL
-    auto vel_mag_dummy = vel_mag.load(std::memory_order_acquire);
-    // if (rate_hz <= 0.0)
-    // {
-    //     rate_hz = 200.0; // conservative default
-    // }
-    // float new_expected = static_cast<float>(std::max(1.0, std::floor(window_size_s * rate_hz)));
-    // if (expected_total_samples != new_expected)
-    // {
-    //     expected_total_samples = new_expected;
-    // }
-    if (vel_mag_dummy > VEL_MAG_JERK_THRESHOLD)
+    // C++17 real-time optimization: Load velocity once with proper memory ordering
+    const float vel_mag_current = vel_mag.load(std::memory_order_acquire);
+
+    // FIX: Only skip jerk detection if in-flight AND we've completed at least one full cycle
+    // This prevents deadlock on first initialization
+    if (vel_mag_current > VEL_MAG_JERK_THRESHOLD)
     {
-        // moving too fast, skip jerk detection
-        // INFLIGHT
-        // has_acc_jerk.store(true, std::memory_order_release);  // ASSUME WE JERKED ALREADY
-        // has_gyro_jerk.store(true, std::memory_order_release); // ASSUME WE JERKED ALREADY
-        // ASSUME WE JERKED ALREADY
-        resetJerkDetection();
-        return;
+        // In-flight: Only reset if we've already collected enough samples
+        // This allows first initialization to complete even if there's movement
+        if (current_total_samples >= expected_total_samples * 0.5f)
+        {
+            resetJerkDetection();
+            return;
+        }
+        // Otherwise, continue collecting samples for initial calibration
     }
-    // accumulate data for jerk detection
+    // C++17 Real-time optimization: Construct vectors in-place, avoid temporaries
+    const Eigen::Vector3d acc_sample(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
+    const Eigen::Vector3d gyro_sample(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
+
+    // Accumulate data for jerk detection
     if (current_total_samples <= expected_total_samples * 0.5f)
     {
-        avg_acc_1t0 += Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
-        avg_gyro_1t0 += Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
-        acc1t0_samples.push_back(Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]));
-        gyro1t0_samples.push_back(Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]));
+        avg_acc_1t0 += acc_sample;
+        avg_gyro_1t0 += gyro_sample;
+        acc1t0_samples.push_back(acc_sample);
+        gyro1t0_samples.push_back(gyro_sample);
         current_total_samples += 1.0f;
         return;
     }
     else if (current_total_samples > expected_total_samples * 0.5f && current_total_samples < expected_total_samples)
     {
-        // in the second half of the window
-        avg_acc_2t1 += Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
-        avg_gyro_2t1 += Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
-        acc2t1_samples.push_back(Eigen::Vector3d(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]));
-        gyro2t1_samples.push_back(Eigen::Vector3d(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]));
+        // In the second half of the window
+        avg_acc_2t1 += acc_sample;
+        avg_gyro_2t1 += gyro_sample;
+        acc2t1_samples.push_back(acc_sample);
+        gyro2t1_samples.push_back(gyro_sample);
         current_total_samples += 1.0f;
     }
     else if (current_total_samples >= expected_total_samples)
@@ -340,40 +337,33 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
             printf("Accelerometer variance: %f, %f\n", var_acc1t0, var_acc2t1);
             printf("Gyroscope variance: %f, %f\n", var_gyro1t0, var_gyro2t1);
         }
+        // C++17: Use structured bindings conceptually - evaluate jerk conditions
+        bool accel_jerk_detected = false;
+        bool gyro_jerk_detected = false;
+
         switch (jerk_opt)
         {
         case JerkOption::ACCEL_ONLY:
-            if (var_acc1t0 > ACC_VAR_THRESHOLD || var_acc2t1 > ACC_VAR_THRESHOLD)
-            {
-                resetJerkDetection();
-                return;
-            }
+            accel_jerk_detected = (var_acc1t0 > ACC_VAR_THRESHOLD || var_acc2t1 > ACC_VAR_THRESHOLD);
             break;
         case JerkOption::GYRO_ONLY:
-            if (var_gyro1t0 > GYRO_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD)
-            {
-                resetJerkDetection();
-                return;
-            }
+            gyro_jerk_detected = (var_gyro1t0 > GYRO_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD);
             break;
         case JerkOption::ACCEL_AND_GYRO:
-            if (var_acc1t0 > ACC_VAR_THRESHOLD || var_gyro1t0 > GYRO_VAR_THRESHOLD ||
-                var_acc2t1 > ACC_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD)
-            {
-                resetJerkDetection();
-                return;
-            }
+            accel_jerk_detected = (var_acc1t0 > ACC_VAR_THRESHOLD || var_acc2t1 > ACC_VAR_THRESHOLD);
+            gyro_jerk_detected = (var_gyro1t0 > GYRO_VAR_THRESHOLD || var_gyro2t1 > GYRO_VAR_THRESHOLD);
             break;
-        default:
-            // NOT ENABLED FOR JERK DETECTION
+        case JerkOption::NONE:
+            // Jerk detection disabled - report as jerked (non-static)
             resetJerkDetection();
             return;
-            break; // DO I EVEN NEED THIS BREAK HERE?
         }
-        // NO JERK DETECTED
-        has_acc_jerk.store(false, std::memory_order_release);
-        has_gyro_jerk.store(false, std::memory_order_release);
-        non_static.store(false, std::memory_order_release);
+
+        // FIX: Report jerk status but DON'T reset counters - allows detection to continue
+        // This prevents infinite reset loops on first initialization
+        has_acc_jerk.store(accel_jerk_detected, std::memory_order_release);
+        has_gyro_jerk.store(gyro_jerk_detected, std::memory_order_release);
+        non_static.store(accel_jerk_detected || gyro_jerk_detected, std::memory_order_release);
         avg_acc_1t0.setZero();  // avg_acc_2t1;
         avg_gyro_1t0.setZero(); // avg_gyro_2t1;
         avg_acc_2t1.setZero();

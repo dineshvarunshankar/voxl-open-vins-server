@@ -108,16 +108,20 @@ namespace voxl
             }
             return;
         }
-        // Throttle image processing when the platform is static
-        if (skip_jerk_detection == false) // GOTTA SEE WHAT WORKS BEST ON TARGET
+        // C++17 Real-time: Throttle image processing when the platform is static
+        // CRITICAL FIX: Never skip frames during initialization - VIO needs frames to initialize!
+        const bool vio_initialized = vio_manager && vio_manager->initialized();
+
+        if (!skip_jerk_detection && vio_initialized)
         {
+            // Only throttle after VIO is initialized and running
             const bool is_static = !(non_static.load(std::memory_order_acquire));
             const bool acc_no_jerk = !(has_acc_jerk.load(std::memory_order_acquire));
-            const bool gyro_no_jerk = !(has_gyro_jerk.load(std::memory_order_acquire));
+
             if (en_debug)
             {
-                printf("is_static: %d, acc_no_jerk: %d, gyro_no_jerk: %d\n", is_static, acc_no_jerk, gyro_no_jerk);
-                printf("drop_frames: %d\n", drop_frames);
+                printf("is_static: %d, acc_no_jerk: %d, drop_frames: %d\n",
+                       is_static, acc_no_jerk, drop_frames);
             }
 
             if (is_static || acc_no_jerk)
@@ -130,6 +134,7 @@ namespace voxl
                 }
                 else
                 {
+                    // Drop this frame - platform is static
                     if (img_type == voxl::ImageType::CL_MEM)
                         release_cl_mem(frame);
                     drop_frames = false;
@@ -143,6 +148,11 @@ namespace voxl
                     return;
                 }
             }
+        }
+        else if (!vio_initialized && en_debug)
+        {
+            // During initialization, process ALL frames
+            printf("[INIT] VIO initializing - processing all frames (no throttling)\n");
         }
         // Update dimensions
         current_height = meta.height;

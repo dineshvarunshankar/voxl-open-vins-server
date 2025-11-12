@@ -396,22 +396,25 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     static uint32_t last_reset_count = reset_num_counter.load();
     static int64_t last_good_state_ns = 0;
 
-    if (last_reset_count != reset_num_counter.load())
+    // C++17: Use const for reset counter check
+    const uint32_t current_reset_count = reset_num_counter.load(std::memory_order_acquire);
+    if (last_reset_count != current_reset_count)
     {
+        // FIX: Reset tracking variables but DON'T return early
+        // Continuing allows first packet after reset to be published
         last_good_state_ns = 0;
         wait_for_steady_init = true;
-        last_reset_count = reset_num_counter.load();
+        last_reset_count = current_reset_count;
         wait_for_features = true;
         last_good_feat_ts = vio_packet.timestamp_ns;
         last_good_qual_ts = vio_packet.timestamp_ns;
-        
-        // Also log the reset for quality tracking
+
         if (en_debug)
         {
             printf("[QUALITY] VIO reset detected (reset_count=%u), feature/quality tracking reset\n",
-                   reset_num_counter.load());
+                   current_reset_count);
         }
-        return;
+        // CRITICAL FIX: Removed early return - allow publishing to continue
     }
 
     if (wait_for_features)
@@ -495,28 +498,27 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
     else
     {
-//DISABLE OLD QVIO QUALITY CALCULATION
-        // During initialization/reset, use uncertainty-based quality
-        // Map velocity uncertainty to quality (0-100 scale)
-        // double v_cov_quality = 100.0 - (V_uncertainty / auto_reset_max_v_cov_instant) * 100.0;
-        // v_cov_quality = std::max(0.0, std::min(100.0, v_cov_quality));
+        // FIX: During initialization, use basic uncertainty-based quality instead of 0
+        // This allows hysteresis system to properly engage after enough good samples
+        // Use already-calculated uncertainties to avoid redundant operations
 
-        // // Calculate position-based quality
-        // double max_allowable_cep = 0.1; // 10cm CEP threshold
-        // double pos_quality = 100.0 - (T_uncertainty / max_allowable_cep) * 100.0;
-        // pos_quality = std::max(0.0, std::min(100.0, pos_quality));
-        
-        // calculated_quality = std::min(v_cov_quality, pos_quality);
-        calculated_quality = 0;
-        // NOTE: We do NOT enforce a minimum quality floor during initialization
-        // The grace period logic already protects against false auto-resets
-        // This allows hysteresis to see the real quality and properly count samples
-        
-        // if (en_debug)
-        // {
-        //     printf("[QUALITY_INIT] During initialization: v_cov_quality=%.2f, pos_quality=%.2f, calculated=%.2f\n",
-        //            v_cov_quality, pos_quality, calculated_quality);
-        // }
+        // Position quality: smaller uncertainty = higher quality (0-100 scale)
+        constexpr double max_allowable_cep = 0.15; // 15cm CEP threshold for init
+        const double pos_quality = 100.0 * (1.0 - std::min(1.0, T_uncertainty / max_allowable_cep));
+
+        // Feature-based quality: scale by feature count
+        const double feature_ratio = std::min(1.0, static_cast<double>(vio_packet.n_feature_points) /
+                                                    static_cast<double>(auto_reset_min_features));
+        const double feature_quality = 50.0 * feature_ratio; // Max 50 during init
+
+        // Conservative blend: requires both good features AND good uncertainty
+        calculated_quality = std::min(pos_quality, feature_quality);
+
+        if (en_debug)
+        {
+            printf("[QUALITY_INIT] Init quality: pos=%.1f, feat=%.1f (cnt=%d), final=%.1f\n",
+                   pos_quality, feature_quality, vio_packet.n_feature_points, calculated_quality);
+        }
     }
 
     // Ensure calculated quality is within bounds
@@ -951,29 +953,50 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
         return false;
     }
 
+    // FIX: Reset static variables when reset_num_counter changes
+    // This prevents stale state from previous runs affecting current run
+    static int64_t last_good_qual_ts = 0;
+    static int64_t last_good_feat_ts = 0;
+    static bool wait_for_features = true;
+    static uint32_t last_reset_check_count = 0;
+
+    const uint32_t current_reset_count = reset_num_counter.load(std::memory_order_acquire);
+    if (last_reset_check_count != current_reset_count)
+    {
+        // Reset occurred - clear all static tracking variables
+        const int64_t current_ts_ns = state->_timestamp * 1e9;
+        last_good_qual_ts = current_ts_ns;
+        last_good_feat_ts = current_ts_ns;
+        wait_for_features = true;
+        last_reset_check_count = current_reset_count;
+
+        if (en_debug)
+        {
+            printf("[AUTO_RESET] Static variables reset for new VIO cycle (reset_count=%u)\n",
+                   current_reset_count);
+        }
+    }
+
     // Check if VIO manager is in a bad state
-    bool vio_manager_bad = false; // FUTURE IMPLEMENTATION WITH SfM, for now just auto false
+    constexpr bool vio_manager_bad = false; // FUTURE IMPLEMENTATION WITH SfM
 
     // Check quality conditions
-    bool quality_bad = quality < 1;
+    const bool quality_bad = quality < 1;
     bool stable_quality_bad = false;
 
     // Check for stable quality issues (quality bad for extended period)
-    static int64_t last_good_qual_ts = 0;
     if (quality >= 1)
     {
         last_good_qual_ts = state->_timestamp * 1e9;
     }
-    double ts = (state->_timestamp * 1e9 - last_good_qual_ts) * 1e-9;
-    if (ts > auto_reset_max_v_cov_timeout_s)
+    const double qual_elapsed_s = (state->_timestamp * 1e9 - last_good_qual_ts) * 1e-9;
+    if (qual_elapsed_s > auto_reset_max_v_cov_timeout_s)
     {
         stable_quality_bad = true;
     }
 
     // Check feature conditions
     bool stable_features_bad = false;
-    static int64_t last_good_feat_ts = 0;
-    static bool wait_for_features = true;
 
     if (wait_for_features)
     {
@@ -1003,14 +1026,24 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
     bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
 
     // Check for excessive spinning using passed yawrate
-    bool too_much_spinning = false;
+    // FIX: Reset spin tracking on VIO reset
     static int64_t start_spin_time = 0;
     static bool spinning_detected = false;
+    static uint32_t last_spin_reset_count = 0;
+
+    if (last_spin_reset_count != current_reset_count)
+    {
+        start_spin_time = state->_timestamp * 1e9;
+        spinning_detected = false;
+        last_spin_reset_count = current_reset_count;
+    }
+
+    bool too_much_spinning = false;
 
     // Use the passed yawrate value and actual velocity components
-    bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh &&
-                              fabs(vel_x) <= 1.0 &&
-                              fabs(vel_y) <= 1.0);
+    const bool spinning_in_place = (fabs(yawrate) > fast_yaw_thresh &&
+                                    fabs(vel_x) <= 1.0 &&
+                                    fabs(vel_y) <= 1.0);
 
     if (!spinning_in_place)
     {
@@ -1019,7 +1052,7 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
     }
     else if (!spinning_detected)
     {
-        double spin_duration = (state->_timestamp * 1e9 - start_spin_time) * 1e-9;
+        const double spin_duration = (state->_timestamp * 1e9 - start_spin_time) * 1e-9;
         if (spin_duration > fast_yaw_timeout_s)
         {
             too_much_spinning = true;
