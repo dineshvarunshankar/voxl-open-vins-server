@@ -351,14 +351,11 @@ static int start_sub_processes(int processes_left){
         else if (pid == 0)
         {
             // Child process - execute the subprocess
-            // Security: Validate executable exists and is executable before exec
-            if (access(process_paths[3-processes_left], X_OK) != 0) {
-                fprintf(stderr, "ERROR: Cannot execute %s\n", process_paths[3-processes_left]);
-                _exit(1);
-            }
-
+            // Security: execl will fail if file doesn't exist or isn't executable
+            // Removed access() check to prevent TOCTOU vulnerability
             execl(process_paths[3-processes_left], process_paths[3-processes_left], process_args[3-processes_left], (char *)0);
             // If execl returns, it failed
+            fprintf(stderr, "ERROR: Cannot execute %s: ", process_paths[3-processes_left]);
             perror("execl failed");
             _exit(1);
         }
@@ -387,31 +384,27 @@ static void close_subprocesses(){
 
 static int create_session_dir(){
 
-    // Security: Set CPU mode using fork/exec with proper validation
+    // Security: Set CPU mode using fork/exec with hardcoded path and arguments
     // Note: This is a legitimate system administration task that requires exec
+    // Removed access() check to prevent TOCTOU vulnerability - execl will fail if not executable
     const char* cpu_mode_path = "/usr/bin/voxl-set-cpu-mode";
 
-    // Validate executable exists and is executable before forking
-    if (access(cpu_mode_path, X_OK) == 0) {
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork failed for voxl-set-cpu-mode");
-        } else if (pid == 0) {
-            // Child process - exec with hardcoded path and arguments
-            execl(cpu_mode_path, "voxl-set-cpu-mode", "performance", (char*)NULL);
-            // If execl returns, it failed
-            perror("execl failed for voxl-set-cpu-mode");
-            _exit(1);
-        } else {
-            // Parent process - wait for child
-            int status;
-            waitpid(pid, &status, 0);
-            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-                fprintf(stderr, "Warning: voxl-set-cpu-mode failed or returned non-zero\n");
-            }
-        }
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork failed for voxl-set-cpu-mode");
+    } else if (pid == 0) {
+        // Child process - exec with hardcoded path and arguments
+        execl(cpu_mode_path, "voxl-set-cpu-mode", "performance", (char*)NULL);
+        // If execl returns, it failed (file doesn't exist or isn't executable)
+        perror("execl failed for voxl-set-cpu-mode");
+        _exit(1);
     } else {
-        fprintf(stderr, "Warning: %s not found or not executable, skipping CPU mode setting\n", cpu_mode_path);
+        // Parent process - wait for child
+        int status;
+        waitpid(pid, &status, 0);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            fprintf(stderr, "Warning: voxl-set-cpu-mode failed or returned non-zero\n");
+        }
     }
 
     time_t rawtime;
