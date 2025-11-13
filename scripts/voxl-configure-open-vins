@@ -43,7 +43,8 @@ print_usage () {
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
 	echo "voxl-configure-open-vins d8v4"
-	echo "voxl-configure-open-vins starling2_3cam"
+	echo "voxl-configure-open-vins fpv"
+	echo "voxl-configure-open-vins starling2_2cam"
 	echo ""
 	echo "show this help message:"
 	echo "voxl-configure-open-vins help"
@@ -159,8 +160,16 @@ case ${arg} in
 		set_param fusion_rate_dt_ms 34.0
 		enable_service_and_exit
 		;;
-	"starling2_3cam")
-		echo "enabling starling2_3cam config"
+	"fpv")
+		echo "enabling config for FPV duo AR0144 cameras"
+		reset_config_file_to_default
+		set_param using_stereo 0
+		set_param sync_config true
+		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/fpv"
+		enable_service_and_exit
+		;;
+	"starling2_2cam")
+		echo "enabling starling2_2cam config"
 		echo "ASSUMING 3 CAMERAS ARE CONNECTED"
 		reset_config_file_to_default
 		set_param sync_config false

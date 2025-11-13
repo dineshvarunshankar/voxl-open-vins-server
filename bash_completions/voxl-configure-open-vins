@@ -1,6 +1,6 @@
 _voxl-configure-open-vins(){
 
-	local OPTS=('disable help factory_enable enable d8v4 starling2_3cam')
+	local OPTS=('disable help factory_enable enable d8v4 fpv starling2_2cam')
 
 	COMPREPLY=()
 	if [ "$COMP_CWORD" -eq 1 ]; then
