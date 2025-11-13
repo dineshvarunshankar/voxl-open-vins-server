@@ -152,7 +152,7 @@ static void _connect_cb(__attribute__((unused)) int ch, __attribute__((unused)) 
 static void _disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused)) void* context)
 {
 	fprintf(stderr, "\nvoxl-open-vins-server disconnected\n");
-	if(!en_newline) printf("\r" CLEAR_LINE);
+	if(!en_newline) fputs("\r" CLEAR_LINE, stdout);
 	return;
 }
 

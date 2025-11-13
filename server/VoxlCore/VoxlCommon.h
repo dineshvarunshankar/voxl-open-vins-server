@@ -270,10 +270,13 @@ static long getValueFromStatus(const std::string &fieldName)
     {
         if (line.find(fieldName) == 0)
         {
-            long value;
-            char unit[4]; // Buffer for "kB\0"
+            long value = 0;
+            char unit[4] = {0}; // Initialize buffer to zeros for safety
             // Security: Use field width limit to prevent buffer overflow
+            // %3s reads at most 3 chars + null terminator (4 bytes total)
             sscanf(line.c_str(), "%*s %ld %3s", &value, unit);
+            // Ensure null termination (defensive programming)
+            unit[sizeof(unit) - 1] = '\0';
             // Convert to bytes based on unit
             if (strcmp(unit, "kB") == 0)
                 value *= 1024;

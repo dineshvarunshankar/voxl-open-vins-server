@@ -259,7 +259,7 @@ static void _print_data(vio_data_t d)
 	t_last = d.timestamp_ns;
 
 
-	if(!en_newline) printf("\r" CLEAR_LINE);
+	if(!en_newline) fputs("\r" CLEAR_LINE, stdout);
 
 	if(en_dt) printf("%7.1f |", dt_ms);
 

@@ -123,36 +123,50 @@ static int validate_safe_path(const char* path) {
     return 0;
 }
 
-// Security: Safe file copy without system() calls
+// Security: Safe file copy using standard C file I/O instead of system commands
 static int safe_copy_file(const char* src, const char* dst) {
     // Validate both paths
     if (validate_safe_path(src) != 0 || validate_safe_path(dst) != 0) {
         return -1;
     }
 
-    // Use fork/exec instead of system()
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork failed in safe_copy_file");
+    // Use standard C file I/O to copy the file
+    FILE* src_file = fopen(src, "rb");
+    if (!src_file) {
+        perror("Failed to open source file");
         return -1;
     }
 
-    if (pid == 0) {
-        // Child process - use execl with hardcoded /bin/cp
-        execl("/bin/cp", "/bin/cp", src, dst, (char*)NULL);
-        // If execl returns, it failed
-        perror("execl failed");
-        _exit(1);
-    }
-
-    // Parent process - wait for child
-    int status;
-    if (waitpid(pid, &status, 0) < 0) {
-        perror("waitpid failed");
+    FILE* dst_file = fopen(dst, "wb");
+    if (!dst_file) {
+        perror("Failed to open destination file");
+        fclose(src_file);
         return -1;
     }
 
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+    // Copy in 4KB chunks
+    char buffer[4096];
+    size_t bytes_read;
+    int ret = 0;
+
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), src_file)) > 0) {
+        if (fwrite(buffer, 1, bytes_read, dst_file) != bytes_read) {
+            perror("Failed to write to destination file");
+            ret = -1;
+            break;
+        }
+    }
+
+    // Check for read errors
+    if (ferror(src_file)) {
+        perror("Error reading source file");
+        ret = -1;
+    }
+
+    fclose(src_file);
+    fclose(dst_file);
+
+    return ret;
 }
 
 static std::string log_path;
@@ -336,10 +350,17 @@ static int start_sub_processes(int processes_left){
         }
         else if (pid == 0)
         {
-            //Child stuff here
-            // printf("Child %d, going to execute %s with args %s\n", processes_left, process_paths[3-processes_left], process_args[3-processes_left]);
+            // Child process - execute the subprocess
+            // Security: Validate executable exists and is executable before exec
+            if (access(process_paths[3-processes_left], X_OK) != 0) {
+                fprintf(stderr, "ERROR: Cannot execute %s\n", process_paths[3-processes_left]);
+                _exit(1);
+            }
+
             execl(process_paths[3-processes_left], process_paths[3-processes_left], process_args[3-processes_left], (char *)0);
-            usleep(500000);
+            // If execl returns, it failed
+            perror("execl failed");
+            _exit(1);
         }
         else if(pid > 0)
         {
@@ -366,20 +387,31 @@ static void close_subprocesses(){
 
 static int create_session_dir(){
 
-    // Security: Replace system() with fork/exec for voxl-set-cpu-mode
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork failed for voxl-set-cpu-mode");
-    } else if (pid == 0) {
-        // Child process - exec with hardcoded path and arguments
-        execl("/usr/bin/voxl-set-cpu-mode", "voxl-set-cpu-mode", "performance", (char*)NULL);
-        // If execl returns, it failed
-        perror("execl failed for voxl-set-cpu-mode");
-        _exit(1);
+    // Security: Set CPU mode using fork/exec with proper validation
+    // Note: This is a legitimate system administration task that requires exec
+    const char* cpu_mode_path = "/usr/bin/voxl-set-cpu-mode";
+
+    // Validate executable exists and is executable before forking
+    if (access(cpu_mode_path, X_OK) == 0) {
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork failed for voxl-set-cpu-mode");
+        } else if (pid == 0) {
+            // Child process - exec with hardcoded path and arguments
+            execl(cpu_mode_path, "voxl-set-cpu-mode", "performance", (char*)NULL);
+            // If execl returns, it failed
+            perror("execl failed for voxl-set-cpu-mode");
+            _exit(1);
+        } else {
+            // Parent process - wait for child
+            int status;
+            waitpid(pid, &status, 0);
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                fprintf(stderr, "Warning: voxl-set-cpu-mode failed or returned non-zero\n");
+            }
+        }
     } else {
-        // Parent process - wait for child (optional, can continue without waiting)
-        int status;
-        waitpid(pid, &status, 0);
+        fprintf(stderr, "Warning: %s not found or not executable, skipping CPU mode setting\n", cpu_mode_path);
     }
 
     time_t rawtime;
@@ -406,7 +438,8 @@ static int log_results(){
 	for(int i=0; i<=10000; i++){
 
 		// make the next log directory in the sequence
-		sprintf(curr_dir, "%srun%04d/", session_dir.c_str(), i);
+		// Security: Use snprintf to prevent buffer overflow
+		snprintf(curr_dir, PATH_MAX, "%srun%04d/", session_dir.c_str(), i);
 
 		// use basic mkdir to try making this directory
 		int ret = mkdir(curr_dir, S_IRWXU);
@@ -422,7 +455,7 @@ static int log_results(){
 
     // create sub dir params
     char param_dir[PATH_MAX];
-    sprintf(param_dir, "%sparams/", curr_dir);
+    snprintf(param_dir, PATH_MAX, "%sparams/", curr_dir);
     _mkdir(param_dir);
 
     // Security: Replace system() with safe_copy_file()
@@ -442,7 +475,7 @@ static int log_results(){
 
     // create csv in new dir
 	char csv_path[512];
-	sprintf(csv_path, "%sdata.csv", curr_dir);
+	snprintf(csv_path, sizeof(csv_path), "%sdata.csv", curr_dir);
     _mkdir(csv_path);
 	FILE* fd = fopen(csv_path, "w+");
 
