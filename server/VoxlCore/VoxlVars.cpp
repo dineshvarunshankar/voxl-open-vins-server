@@ -95,8 +95,8 @@ int auto_reset_min_features = 0;
 /** @brief Minimum feature timeout for auto reset (seconds) */
 float auto_reset_min_feature_timeout_s = 0.0f;
 
-/** @brief Minimum amount of time after initialization that quality is held low */
-float ok_state_grace_timeout_s = 0.0f;
+/** @brief Minimum amount of time after initialization that quality is held low (CEP) */
+float ok_state_grace_timeout_s = 3.0f;
 
 /** @brief Auto fallback timeout (seconds) */
 float auto_fallback_timeout_s = 0.0f;

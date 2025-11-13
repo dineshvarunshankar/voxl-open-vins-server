@@ -487,32 +487,45 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     R_uncertainty += covariance_posori(5, 5) * covariance_posori(5, 5);
     R_uncertainty = sqrt(R_uncertainty);
 
+    // Helper lambda for CEP-based quality calculation (DRY principle)
+    constexpr double max_allowable_cep = 0.15; // 15cm CEP threshold
+    auto calculate_cep_quality = [max_allowable_cep](double t_uncertainty) -> double {
+        return std::max(0.0, 100.0 * (1.0 - t_uncertainty / max_allowable_cep));
+    };
+
     // Get used features map from VioManager if not provided and NOT RESETTING!!
     double calculated_quality;
     bool is_during_initialization = ((!vio_manager || !vio_manager->initialized() ) && (!is_resetting.load(std::memory_order_acquire)));
-    
-    if (!is_during_initialization)
+    const bool throttling_active =
+        (vio_manager && vio_manager->initialized() &&
+         vio_state.load(std::memory_order_acquire) == VIO_STATE_OK &&
+         (!non_static.load(std::memory_order_acquire) || !has_acc_jerk.load(std::memory_order_acquire)));
+
+    if (!is_during_initialization && !throttling_active)
     {
         // Calculate quality using the new feature-based method
         calculated_quality = calcQuality(used_features_map, SLAM_FEATS, state);
     }
     else
     {
-        // WE NEED THIS FOR ARMING IN POSITION 
-        // FIX: During initialization, use basic uncertainty-based quality instead of 0
-        // This allows hysteresis system to properly engage after enough good samples
+        // WE NEED THIS FOR ARMING IN POSITION
+        // FIX: During initialization or when throttling frames, use CEP-based quality.
+        // Throttling reduces feature updates; CEP avoids falsely penalizing quality.
         // Use already-calculated uncertainties to avoid redundant operations
 
-        // Position quality: smaller uncertainty = higher quality (0-100 scale)
-        constexpr double max_allowable_cep = 0.15; // 15cm CEP threshold for init
-        const double pos_quality = 100.0 * (1.0 - std::min(1.0, T_uncertainty / max_allowable_cep));
+        calculated_quality = calculate_cep_quality(T_uncertainty);
 
-        calculated_quality = pos_quality;
-
-        if (en_debug)
+        if (en_debug && is_during_initialization)
         {
-            printf("[QUALITY_INIT] Init quality: pos=%.1f, feat=%.1f (cnt=%d), final=%.1f\n",
-                   pos_quality, feature_quality, vio_packet.n_feature_points, calculated_quality);
+            printf("[QUALITY_INIT] VIO initializing - CEP quality: %.1f (features=%d, T_unc=%.4f m)\n",
+                   calculated_quality, vio_packet.n_feature_points, T_uncertainty);
+        }
+        else if (en_debug && throttling_active)
+        {
+            printf("[QUALITY_THROTTLE] Using CEP quality during throttling: %.1f (T_unc=%.4f m, static=%d, acc_no_jerk=%d)\n",
+                   calculated_quality, T_uncertainty,
+                   !non_static.load(std::memory_order_relaxed),
+                   !has_acc_jerk.load(std::memory_order_relaxed));
         }
     }
 
@@ -560,7 +573,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     static uint32_t last_quality_reset_count = reset_num_counter.load();
 
     // Reset to INITIAL state on VIO reset OR when entering FAILED state
-    const uint32_t current_reset_count = reset_num_counter.load();
     bool should_reset_quality_state = (last_quality_reset_count != current_reset_count) ||
                                       (vio_state.load() == VIO_STATE_FAILED);
 
@@ -648,15 +660,37 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     switch (quality_state)
     {
     case INITIAL:
-        // Report actual quality as-is
-        reported_quality = static_cast<int>(calculated_quality);
+        // Report CEP quality in INITIAL state ONLY if ZUPT update occurred
+        // Otherwise report 0 until system proves itself
+        {
+            if (vio_manager && vio_manager->get_did_zupt_update())
+            {
+                const double cep_quality = calculate_cep_quality(T_uncertainty);
+                reported_quality = static_cast<int>(cep_quality);
+
+                if (en_debug)
+                {
+                    printf("[QUALITY_INIT] INITIAL state - CEP quality: %.1f (T_unc=%.4f m) [ZUPT done]\n",
+                           cep_quality, T_uncertainty);
+                }
+            }
+            else
+            {
+                reported_quality = 0;
+
+                if (en_debug)
+                {
+                    printf("[QUALITY_INIT] INITIAL state - Quality: 0 [waiting for ZUPT]\n");
+                }
+            }
+        }
         break;
     case BAD:
         // Report 0 until quality recovers
         reported_quality = 0;
         break;
     case GOOD:
-        // Report actual quality
+        // Report calculated quality (feature-based or CEP-based depending on VIO state)
         reported_quality = static_cast<int>(calculated_quality);
         break;
     }
@@ -709,24 +743,45 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // 2. FAILED - if auto-reset conditions met (only when fully initialized)
     // 3. OK - normal operation
     // ========================================================================
-    
-    // FIRST: Check if we're still initializing
-    if (!vio_manager || !vio_manager->initialized() || is_resetting.load(std::memory_order_acquire))
+
+    // FIRST: Check if we're still initializing (vio_manager not ready OR currently resetting)
+    // Note: Once vio_manager is initialized, we report OK state externally, even during grace period
+    if (!vio_manager || !vio_manager->initialized())
     {
-        // System is INITIALIZING - don't check for auto-reset yet
-        vio_packet.state = VIO_STATE_INITIALIZING;
+        // System is INITIALIZING - VIO manager not ready yet
+        
         vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
-        
-        // During initialization, respect hysteresis quality
-        vio_packet.quality = (reported_quality == 0) ? 0 : 1;
-        
+        if (vio_manager->get_did_zupt_update())
+        {
+            vio_packet.state = VIO_STATE_OK;
+        }
+        else
+        {
+            vio_packet.state = VIO_STATE_INITIALIZING;
+        }
+        // During initialization, use actual CEP quality for arming checks
+        // This allows position-based arming to work correctly
+        vio_packet.quality = reported_quality;
+
         if (en_debug)
         {
-            printf("[STATE] VIO_STATE_INITIALIZING - vio_manager: %s, initialized: %s, resetting: %s, quality: %d\n",
+            printf("[STATE] VIO_STATE_INITIALIZING - vio_manager: %s, initialized: %s, quality: %d\n",
                    vio_manager ? "exists" : "null",
                    (vio_manager && vio_manager->initialized()) ? "yes" : "no",
-                   is_resetting.load() ? "yes" : "no",
                    vio_packet.quality);
+        }
+    }
+    // Handle resetting state separately - report as INITIALIZING but with different internal handling
+    else if (is_resetting.load(std::memory_order_acquire))
+    {
+        // System is resetting - report as INITIALIZING to external systems
+        vio_packet.state = VIO_STATE_INITIALIZING;
+        vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
+        vio_packet.quality = 0;  // Quality is invalid during reset
+
+        if (en_debug)
+        {
+            printf("[STATE] VIO_STATE_INITIALIZING (resetting) - quality: %d\n", vio_packet.quality);
         }
     }
     // SECOND: Check for auto-reset conditions (only if initialized and not in grace period)
