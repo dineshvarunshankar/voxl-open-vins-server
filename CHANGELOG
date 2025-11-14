@@ -1,3 +1,7 @@
+0.5.7
+    * change for arming in px4 mpc pos
+    * debug fix for jerk+qual compliance
+    * qual only reports cep in init if zup occured
 0.5.6
     * bump vins version for flow API and stereo tracking
     * bug fix for entering zupt, when doing jerk detection
