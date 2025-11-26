@@ -613,6 +613,21 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             {
                 consecutive_below_20 = 0;
             }
+            if (calculated_quality > 40)
+            {
+                consecutive_above_40++;
+                if (consecutive_above_40 >= 60)
+                {
+                    quality_state = GOOD;
+                    consecutive_above_40 = 0;
+                    consecutive_below_20 = 0;
+                    std::cout << "[QUALITY] Transition: INITIAL → GOOD (60 samples > 40)" << std::endl;
+                }
+            }
+            else
+            {
+                consecutive_above_40 = 0;
+            }
             break;
 
         case BAD:
