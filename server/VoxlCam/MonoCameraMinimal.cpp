@@ -241,8 +241,12 @@ namespace voxl
         }
 
         // Determine if mask should be active based on occlusion and altitude
-        const bool should_mask = camera_info_.is_occluded_on_takeoff &&
-                                 std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        const bool altitude_below_threshold = std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        const bool should_mask = camera_info_.is_occluded_on_takeoff && altitude_below_threshold && !occlusion_threshold_passed_;
+
+        if (!altitude_below_threshold && camera_info_.is_occluded_on_takeoff) {
+            occlusion_threshold_passed_ = true;
+        }
 
         // Update mask only when necessary
         update_mask_if_needed(should_mask);
@@ -288,8 +292,12 @@ namespace voxl
         }
 
         // Determine if mask should be active based on occlusion and altitude
-        const bool should_mask = camera_info_.is_occluded_on_takeoff &&
-                                 std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        const bool altitude_below_threshold = std::abs(alt_z.load(std::memory_order_relaxed)) < takeoff_alt_threshold;
+        const bool should_mask = camera_info_.is_occluded_on_takeoff && altitude_below_threshold && !occlusion_threshold_passed_;
+
+        if (!altitude_below_threshold && camera_info_.is_occluded_on_takeoff) {
+            occlusion_threshold_passed_ = true;
+        }
 
         // Update mask only when necessary
         update_mask_if_needed(should_mask);

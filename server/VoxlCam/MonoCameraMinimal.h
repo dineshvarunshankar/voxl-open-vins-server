@@ -137,6 +137,9 @@ namespace voxl
         /** @brief Flag indicating if mask dimensions have changed */
         bool mask_dimensions_changed_{false};
 
+        /** @brief Flag indicating occlusion threshold has already been passed once */
+        bool occlusion_threshold_passed_{false};
+
         /** @brief Timestamp of the last fully processed frame (ns) */
         int64_t last_processed_ts_ns_{0};
 
