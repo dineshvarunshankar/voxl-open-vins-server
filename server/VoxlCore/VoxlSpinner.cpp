@@ -347,11 +347,13 @@ static void print_usage(const char *program_name)
 	printf("  -d, --debug     Enable debug output and detailed logging\n");
 	printf("  -v, --verbose   Enable verbose output and status information\n");
 	printf("  -c, --config    Configuration only mode (load and validate config)\n");
+	printf("  -i, --imu-body  Enable IMU body measurements\n");
 	printf("  -h, --help      Display this help message\n\n");
 	printf("Examples:\n");
 	printf("  %s              Run server with default settings\n", program_name);
 	printf("  %s -d           Run server with debug output enabled\n", program_name);
 	printf("  %s -v -c        Load configuration only with verbose output\n", program_name);
+	printf("  %s --imu-body   Run with IMU body measurements enabled\n", program_name);
 	printf("  %s --debug --verbose  Run with both debug and verbose output\n", program_name);
 }
 
@@ -393,12 +395,13 @@ int main(int argc, char *argv[])
 {
 	// Parse command line options
 	int opt;
-	const char *short_options = "dvhc";
+	const char *short_options = "dvhci";
 	struct option long_options[] = {
 		{"debug", no_argument, 0, 'd'},
 		{"verbose", no_argument, 0, 'v'},
 		{"help", no_argument, 0, 'h'},
 		{"config", no_argument, 0, 'c'},
+		{"imu-body", no_argument, 0, 'i'},
 		{0, 0, 0, 0}
 	};
 
@@ -420,6 +423,12 @@ int main(int argc, char *argv[])
 				config_only = 1;
 				if (en_verbose) {
 					printf("Configuration only mode enabled\n");
+				}
+				break;
+			case 'i':
+				en_imu_body = 1;
+				if (en_verbose) {
+					printf("IMU body measurements enabled\n");
 				}
 				break;
 			case 'h':

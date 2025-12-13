@@ -573,6 +573,14 @@ extern int en_verbose;
 extern int config_only;
 
 /**
+ * @brief Enable IMU body measurements
+ *
+ * Flag to enable the use of IMU body measurements in
+ * the VIO system for enhanced state estimation.
+ */
+extern int en_imu_body;
+
+/**
  * @brief Fusion rate in milliseconds
  *
  * Time interval in milliseconds for the main fusion loop

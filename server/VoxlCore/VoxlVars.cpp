@@ -128,6 +128,9 @@ int en_verbose = 0;
 /** @brief Configuration only mode */
 int config_only = 0;
 
+/** @brief Enable IMU body measurements */
+int en_imu_body = 0;
+
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
 // ============================================================================

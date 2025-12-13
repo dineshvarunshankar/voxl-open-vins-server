@@ -97,6 +97,41 @@ namespace voxl
         if (n_cams < 1)
             return -1;
 
+        // Load body to IMU transformation if IMU body mode is enabled
+        Eigen::Matrix4d T_imu_body = Eigen::Matrix4d::Identity();
+        if (en_imu_body)
+        {
+            vcc_extrinsic_t body_imu_ext;
+            // Fetch the body->imu extrinsic relation
+            if (vcc_fetch_extrinsic("body", vio_cams[0].imu, &body_imu_ext) != 0)
+            {
+                fprintf(stderr, "Failed to fetch body->%s extrinsic. IMU body mode requires this extrinsic to be defined.\n", vio_cams[0].imu);
+                return -1;
+            }
+
+            if (en_verbose) {
+                printf("\n[INFO] IMU body mode enabled - loading body->%s transformation\n", vio_cams[0].imu);
+                printExtrinsic(body_imu_ext);
+            }
+
+            // Convert extrinsic to transformation matrix T_imu_body (from body to imu)
+            Eigen::Vector3d t_imu_wrt_body(
+                body_imu_ext.T_child_wrt_parent[0],
+                body_imu_ext.T_child_wrt_parent[1],
+                body_imu_ext.T_child_wrt_parent[2]
+            );
+            const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_imu_to_body(&body_imu_ext.R_child_to_parent[0][0]);
+
+            // Compute T_imu_body (transformation from body frame to IMU frame)
+            T_imu_body.block<3,3>(0,0) = R_imu_to_body.transpose();              // R_body_to_imu
+            T_imu_body.block<3,1>(0,3) = -R_imu_to_body.transpose() * t_imu_wrt_body;  // translation
+
+            if (en_verbose) {
+                printf("\n[INFO] T_imu_body transformation matrix (body->imu):\n");
+                std::cout << T_imu_body << std::endl;
+            }
+        }
+
         // CHECK IF WE HAVE EXTRINSICS AND CAMERA CALIBRATION
         for (int i = 0; i < n_cams; i++)
         {
@@ -126,6 +161,28 @@ namespace voxl
             {
                 fprintf(stderr, "vio cam %s has a different imu than vio cam %s\n", vio_cams[i].name, vio_cams[0].name);
                 return -1;
+            }
+        }
+
+        // If IMU body mode is enabled, append "_body" to the IMU name
+        if (en_imu_body)
+        {
+            // Ensure we have enough space for "_body" suffix
+            size_t current_len = strlen(imu_name);
+            const char* suffix = "_body";
+            size_t suffix_len = strlen(suffix);
+
+            if (current_len + suffix_len >= sizeof(imu_name))
+            {
+                fprintf(stderr, "Error: IMU name '%s' is too long to append '_body' suffix\n", imu_name);
+                return -1;
+            }
+
+            strncat(imu_name, suffix, sizeof(imu_name) - current_len - 1);
+
+            if (en_verbose) {
+                printf("[INFO] IMU body mode: subscribing to '%s' instead of '%s'\n",
+                       imu_name, vio_cams[0].imu);
             }
         }
         // NOW SYNC ESTIMATOR YAML WITH CONF FILE
@@ -272,17 +329,39 @@ namespace voxl
             );
             const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_cp(&ext.R_child_to_parent[0][0]);
 
-            Eigen::Matrix4d T_child_parent = Eigen::Matrix4d::Identity();
-            T_child_parent.block<3,3>(0,0) =  R_cp.transpose();             // rotation
-            T_child_parent.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;    // translation
+            // Compute T_cam_imu (transformation from IMU to camera)
+            Eigen::Matrix4d T_cam_imu = Eigen::Matrix4d::Identity();
+            T_cam_imu.block<3,3>(0,0) =  R_cp.transpose();             // rotation
+            T_cam_imu.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;    // translation
+
+            // Apply body transformation if IMU body mode is enabled
+            Eigen::Matrix4d T_final;
+            if (en_imu_body)
+            {
+                // Convert T_cam_imu to T_cam_body by applying T_imu_body
+                // T_cam_body = T_cam_imu * T_imu_body
+                T_final = T_cam_imu * T_imu_body;
+
+                if (en_verbose) {
+                    printf("\n[INFO] Camera %d (%s) - Applied body transformation\n", i, vio_cams[i].name);
+                    printf("  T_cam_body (body->cam):\n");
+                    std::cout << T_final << std::endl;
+                }
+            }
+            else
+            {
+                T_final = T_cam_imu;
+            }
 
             for (int row = 0; row < 4; ++row) {
                 YAML::Node row_node = YAML::Node(YAML::NodeType::Sequence);
                 for (int col = 0; col < 4; ++col) {
-                    row_node.push_back(T_child_parent(row, col));
+                    row_node.push_back(T_final(row, col));
                 }
                 extrinsics.push_back(row_node);
             }
+            // Note: When en_imu_body=1, T_cam_imu actually contains the body->cam transformation
+            // This allows the VIO system to work in the body frame instead of the IMU frame
             camchain_config[cam_key]["T_cam_imu"] = extrinsics;
 
             // ADD THIS CAMERA TO OUR INFO VECTOR
@@ -292,6 +371,10 @@ namespace voxl
         if(sync_config){
             try
             {
+                printf("Writing synced camera chain YAML to %s\n", yaml_camchain_path.c_str());
+                if (en_imu_body) {
+                    printf("[INFO] IMU body mode enabled\n");
+                }
                 std::ofstream fout(yaml_camchain_path);
                 // Write YAML header first
                 fout << "%YAML:1.0" << std::endl
