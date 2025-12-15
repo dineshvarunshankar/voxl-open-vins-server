@@ -145,18 +145,18 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // Handle FAILED state - publish failure packet and ensure reset is triggered
     static bool wait_for_steady_init = true;
     vio_packet.quality = -1;
-    
+
     if (vio_state.load() == VIO_STATE_FAILED && !is_resetting.load())
     {
         wait_for_steady_init = true;
-        
+
         // CRITICAL: Ensure reset is requested when in FAILED state
         if (!reset_requested.load(std::memory_order_acquire))
         {
             reset_requested.store(true, std::memory_order_release);
             fprintf(stderr, "[PUBLISH] VIO in FAILED state - REQUESTING RESET\n");
         }
-        
+
         // Publish FAILED packet so external systems know status
         memset(&vio_packet, 0, sizeof(vio_data_t));
         vio_packet.magic_number = VIO_MAGIC_NUMBER;
@@ -164,23 +164,23 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_packet.quality = -1;
         vio_packet.state = VIO_STATE_FAILED;
         vio_packet.error_code = vio_error_codes.load();
-        
+
         pipe_server_write(SIMPLE_CH, (char *)&vio_packet, sizeof(vio_data_t));
-        
+
         if (en_debug)
         {
             static int64_t last_failed_msg = 0;
             int64_t now = _apps_time_monotonic_ns();
             if (now - last_failed_msg > 1000000000) // Print once per second
             {
-                printf("[PUBLISH] Published FAILED packet, reset_requested=%d\n", 
+                printf("[PUBLISH] Published FAILED packet, reset_requested=%d\n",
                        reset_requested.load());
                 last_failed_msg = now;
             }
         }
         return;
     }
-    
+
     vio_packet.magic_number = VIO_MAGIC_NUMBER;
     vio_packet.timestamp_ns = state->_timestamp * 1e9;
 
@@ -205,30 +205,40 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // GRAVITY IS POINTING DOWN Z
     // IF NOT, EXECUTE THE FORBIDDEN TECHNIQUE:
     float grav_vec[3];
-    if (frame_transform.gravity_axis == FrameTransform::Axis::Z && frame_transform.gravity_direction == FrameTransform::Direction::POSITIVE)
+    if (frame_transform.is_initialized)
     {
-        // FORBIDDEN TECHNIQUE (STINGER CASE)
-        RPY(0) = -RPY(0);
-        RPY(1) = M_PI - RPY(1);
-        RPY(2) = -M_PI + RPY(2);
-        R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
-        // GRAVITY VECTOR
-        grav_vec[0] = 0;
-        grav_vec[1] = 0;
-        grav_vec[2] = static_cast<float>(-9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+        if (frame_transform.gravity_axis == FrameTransform::Axis::Z && frame_transform.gravity_direction == FrameTransform::Direction::POSITIVE)
+        {
+            // FORBIDDEN TECHNIQUE (STINGER CASE)
+            RPY(0) = -RPY(0);
+            RPY(1) = M_PI - RPY(1);
+            RPY(2) = -M_PI + RPY(2);
+            R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
+            // GRAVITY VECTOR
+            grav_vec[0] = 0;
+            grav_vec[1] = 0;
+            grav_vec[2] = static_cast<float>(-9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+        }
+        else
+        {
+            // CLASSIC CASE: STARLING2, STARLING MAX, D8V4, D8V5
+            RPY(0) = -RPY(0);
+            RPY(1) = -M_PI + RPY(1);
+            RPY(2) = M_PI - RPY(2);
+            R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
+            // GRAVITY VECTOR
+            grav_vec[0] = 0;
+            grav_vec[1] = 0;
+            grav_vec[2] = static_cast<float>(9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+        }
     }
     else
     {
-        // CLASSIC CASE: STARLING2, STARLING MAX, D8V4, D8V5
-        RPY(0) = -RPY(0);
-        RPY(1) = -M_PI + RPY(1);
-        RPY(2) = M_PI - RPY(2);
-        R_I_G = ov_core::rot_x(RPY(0)) * ov_core::rot_y(RPY(1)) * ov_core::rot_z(RPY(2));
-        // GRAVITY VECTOR
-        grav_vec[0] = 0;
-        grav_vec[1] = 0;
-        grav_vec[2] = static_cast<float>(9.81); // CHECK THIS VALUE OR CALCULATE IT BY MEASURING THE GRAVITY VECTOR
+        // Handle the case where frame_transform is not initialized
+        printf("Frame transform is not initialized. Not publishing packet.\n");
+        return;
     }
+    
     memcpy(vio_packet.gravity_vector, grav_vec, sizeof(float) * 3);
 
     // NOW CONVERT IT TO FRD FRAME
@@ -489,13 +499,14 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // Helper lambda for CEP-based quality calculation (DRY principle)
     constexpr double max_allowable_cep = 0.15; // 15cm CEP threshold
-    auto calculate_cep_quality = [max_allowable_cep](double t_uncertainty) -> double {
+    auto calculate_cep_quality = [max_allowable_cep](double t_uncertainty) -> double
+    {
         return std::max(0.0, 100.0 * (1.0 - t_uncertainty / max_allowable_cep));
     };
 
     // Get used features map from VioManager if not provided and NOT RESETTING!!
     double calculated_quality;
-    bool is_during_initialization = ((!vio_manager || !vio_manager->initialized() ) && (!is_resetting.load(std::memory_order_acquire)));
+    bool is_during_initialization = ((!vio_manager || !vio_manager->initialized()) && (!is_resetting.load(std::memory_order_acquire)));
     const bool throttling_active =
         (vio_manager && vio_manager->initialized() &&
          vio_state.load(std::memory_order_acquire) == VIO_STATE_OK &&
@@ -566,7 +577,12 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // - Any state → INITIAL: On VIO reset or FAILED state
     // ========================================================================
 
-    enum QualityState { INITIAL, BAD, GOOD };
+    enum QualityState
+    {
+        INITIAL,
+        BAD,
+        GOOD
+    };
     static QualityState quality_state = INITIAL;
     static int consecutive_above_40 = 0;
     static int consecutive_below_20 = 0;
@@ -716,8 +732,8 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // Debug logging
     if (en_debug && (quality_state != GOOD || reported_quality < 10))
     {
-        const char* state_str = (quality_state == INITIAL) ? "INITIAL" :
-                               (quality_state == BAD) ? "BAD" : "GOOD";
+        const char *state_str = (quality_state == INITIAL) ? "INITIAL" : (quality_state == BAD) ? "BAD"
+                                                                                                : "GOOD";
         printf("[QUALITY] State: %s, Reported: %d, Calculated: %.1f, Consec(>40): %d, Consec(≤20): %d\n",
                state_str, reported_quality, calculated_quality,
                consecutive_above_40, consecutive_below_20);
@@ -736,7 +752,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     if (vio_manager && vio_manager->initialized())
     {
         const int64_t now_ns = _apps_time_monotonic_ns();
-        
+
         // If we just entered OK (or after a reset), start the grace window.
         if ((last_good_state_ns == 0 || vio_packet.n_feature_points < auto_reset_min_features) && wait_for_steady_init)
         {
@@ -746,7 +762,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         // Duration since OK started
         const int64_t dt_ok_ns = now_ns - last_good_state_ns;
         const int64_t grace_ns = (int64_t)(ok_state_grace_timeout_s * 1e9);
-        
+
         in_grace_period = (dt_ok_ns < grace_ns && wait_for_steady_init);
     }
 
@@ -764,7 +780,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     if (!vio_manager || !vio_manager->initialized())
     {
         // System is INITIALIZING - VIO manager not ready yet
-        
+
         vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
         if (vio_manager->get_did_zupt_update())
         {
@@ -792,7 +808,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         // System is resetting - report as INITIALIZING to external systems
         vio_packet.state = VIO_STATE_INITIALIZING;
         vio_state.store(VIO_STATE_INITIALIZING, std::memory_order_release);
-        vio_packet.quality = 0;  // Quality is invalid during reset
+        vio_packet.quality = 0; // Quality is invalid during reset
 
         if (en_debug)
         {
@@ -800,19 +816,19 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         }
     }
     // SECOND: Check for auto-reset conditions (only if initialized and not in grace period)
-    else if (!in_grace_period && 
-             should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points, 
-                             V_uncertainty, yawrate, current_velocity, 
-                             vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
+    else if (!in_grace_period &&
+             should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points,
+                               V_uncertainty, yawrate, current_velocity,
+                               vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
     {
         // Auto-reset conditions met - system has FAILED
         fprintf(stderr, "WARNING: Auto-reset conditions detected! Quality: %d, Features: %d, V_uncertainty: %f\n",
                 quality_for_error_detection, vio_packet.n_feature_points, V_uncertainty);
-        
+
         vio_packet.quality = -1;
         vio_packet.state = VIO_STATE_FAILED;
         vio_state.store(VIO_STATE_FAILED, std::memory_order_release);
-        
+
         // CRITICAL: Request the actual reset
         if (!reset_requested.load(std::memory_order_acquire))
         {
@@ -831,14 +847,14 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             // During grace period, respect hysteresis while being conservative
             if (reported_quality == 0)
             {
-                vio_packet.quality = 0;  // Respect hysteresis: system needs to prove itself
+                vio_packet.quality = 0; // Respect hysteresis: system needs to prove itself
             }
             else
             {
                 // Quality has passed hysteresis, but still in grace period - cap conservatively
                 vio_packet.quality = std::min(reported_quality, 15);
             }
-            
+
             if (en_debug)
             {
                 printf("[GRACE_PERIOD] In grace period: reported_quality=%d, vio_packet.quality=%d\n",

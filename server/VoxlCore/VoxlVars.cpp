@@ -210,6 +210,10 @@ bool sync_config = true; ///< Flag to indicate if configuration synchronization 
 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
+    if (!en_imu_body){
+        printf("[INFO] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
+        return;
+    }
 
     if (is_initialized)
     {
@@ -219,49 +223,29 @@ void voxl::FrameTransform::update(const imu_data_t &data)
 
     // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
     // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
-    std::array<double, 3> accel{data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]};
-    auto max_it = std::max_element(accel.begin(), accel.end(),
-                                   [](double a, double b)
-                                   { return std::abs(a) < std::abs(b); });
+    Eigen::Vector3d accel(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
+    accel = accel / accel.norm();
 
-    gravity_axis = static_cast<Axis>(std::distance(accel.begin(), max_it));
-    gravity_direction = *max_it > 0 ? Direction::POSITIVE : Direction::NEGATIVE;
-
-    // NOW COMPUTE CORRECTION MATRIX BASED ON GRAVITY AXIS AND DIRECTION
-    // CASES ARE HARD-CODED BUT YOU CAN EDIT AND ADD MORE CASES AS NEEDED
-    switch (gravity_axis)
+    Eigen::Vector3d grav_versor_expected = Eigen::Vector3d::UnitZ(); // Assuming gravity is along Z
+    //now correct for negative z
+    grav_versor_expected = -grav_versor_expected;
+    auto dot_product = accel.dot(grav_versor_expected);
+    dot_product = std::max(-1.0, std::min(1.0, dot_product));
+    double angle_rad = std::acos(dot_product);
+    double angle_deg = angle_rad * 180.0 / M_PI;
+    printf("[INFO] IMU Initialization: Gravity angle = %.2f degrees\n", angle_deg);
+    if (angle_deg > 15.0)
     {
-    case Axis::X:
-        if (data.accl_ms2[2] < 0)
-        {
-            correction_matrix = Eigen::AngleAxisd(
-                                    (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                    Eigen::Vector3d::UnitY())
-                                    .toRotationMatrix();
-        }
-        else
-        {
-            correction_matrix = Eigen::AngleAxisd(
-                                    -(gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                    Eigen::Vector3d::UnitY())
-                                    .toRotationMatrix() *
-                                Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-        }
-        break;
-    case Axis::Y:
-        correction_matrix = Eigen::AngleAxisd(
-                                (gravity_direction == Direction::POSITIVE ? 1 : -1) * M_PI / 2,
-                                Eigen::Vector3d::UnitX())
-                                .toRotationMatrix();
-        break;
-    case Axis::Z:
-        if (gravity_direction == Direction::POSITIVE)
-        {
-            correction_matrix = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-        }
-        break;
+        printf("[ERROR] IMU Initialization: Gravity angle too large, cannot initialize\n");
+        is_initialized = false;
+        return;
+    } else
+    {
+        printf("[INFO] IMU Initialization: Gravity angle within acceptable range\n");
     }
 
+    gravity_axis = Axis::Z;
+    gravity_direction =  Direction::NEGATIVE;
     is_initialized = true;
     printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
            static_cast<int>(gravity_axis),
