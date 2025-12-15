@@ -462,6 +462,9 @@ namespace voxl
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_right", (int *)&occlude_stereo_right, 0);
         json_fetch_bool_with_default(parent, "sync_config", (int *)&sync_config, 1);
         json_fetch_float_with_default(parent, "fusion_rate_dt_ms", &fusion_rate_dt_ms, 20.0f);
+        json_fetch_bool_with_default(parent, "imu_body_frame_mode", (int *)&en_imu_body, 0);
+
+
         if (json_get_parse_error_flag())
         {
             fprintf(stderr, "failed to parse config file %s\n", CONFIG_FILE);

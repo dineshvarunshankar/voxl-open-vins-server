@@ -578,7 +578,7 @@ extern int config_only;
  * Flag to enable the use of IMU body measurements in
  * the VIO system for enhanced state estimation.
  */
-extern int en_imu_body;
+extern bool en_imu_body;
 
 /**
  * @brief Fusion rate in milliseconds

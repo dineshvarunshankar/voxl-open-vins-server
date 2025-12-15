@@ -426,7 +426,7 @@ int main(int argc, char *argv[])
 				}
 				break;
 			case 'i':
-				en_imu_body = 1;
+				en_imu_body = true;
 				if (en_verbose) {
 					printf("IMU body measurements enabled\n");
 				}
