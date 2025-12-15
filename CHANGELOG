@@ -1,3 +1,9 @@
+0.5.9
+    * add max angle for gravity diff assuming body frame FLU
+    * integration with imu_body and gravity guards
+    * guarding gravity vec on server side
+    * add option to use IMU in body frame in config toward agnostic init solution
+
 0.5.8
     * imu_body integrationm extrinsics rotations for imu_body case
     * bmi270 starling support
