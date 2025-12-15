@@ -1,3 +1,8 @@
+0.5.8
+    * imu_body integrationm extrinsics rotations for imu_body case
+    * bmi270 starling support
+    * occlusion on takeoff threshold fix
+    * fix for initial quality transition to good
 0.5.7
     * change for arming in px4 mpc pos
     * debug fix for jerk+qual compliance
