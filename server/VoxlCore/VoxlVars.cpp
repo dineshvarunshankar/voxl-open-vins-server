@@ -210,9 +210,9 @@ bool sync_config = true; ///< Flag to indicate if configuration synchronization 
 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
-    if (!en_imu_body){
+    if (!en_imu_body)
+    {
         printf("[INFO] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
-        return;
     }
 
     if (is_initialized)
@@ -227,26 +227,28 @@ void voxl::FrameTransform::update(const imu_data_t &data)
     accel = accel / accel.norm();
 
     Eigen::Vector3d grav_versor_expected = Eigen::Vector3d::UnitZ(); // Assuming gravity is along Z
-    //now correct for negative z
+    // now correct for negative z
     grav_versor_expected = -grav_versor_expected;
     auto dot_product = accel.dot(grav_versor_expected);
     dot_product = std::max(-1.0, std::min(1.0, dot_product));
     double angle_rad = std::acos(dot_product);
     double angle_deg = angle_rad * 180.0 / M_PI;
+    gravity_axis = Axis::Z;
+    gravity_direction = Direction::NEGATIVE;
     printf("[INFO] IMU Initialization: Gravity angle = %.2f degrees\n", angle_deg);
     if (angle_deg > 15.0)
     {
         printf("[ERROR] IMU Initialization: Gravity angle too large, cannot initialize\n");
         is_initialized = false;
         return;
-    } else
+    }
+    else
     {
         printf("[INFO] IMU Initialization: Gravity angle within acceptable range\n");
+         is_initialized = true;
     }
 
-    gravity_axis = Axis::Z;
-    gravity_direction =  Direction::NEGATIVE;
-    is_initialized = true;
+   
     printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
            static_cast<int>(gravity_axis),
            static_cast<int>(gravity_direction));
