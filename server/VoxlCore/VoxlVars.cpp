@@ -113,6 +113,31 @@ float fast_yaw_thresh = 0.0f;
 /** @brief Fast yaw timeout (seconds) */
 float fast_yaw_timeout_s = 0.0f;
 
+// ============================================================================
+// QUALITY HYSTERESIS THRESHOLD CONFIGURATION
+// ============================================================================
+
+/** @brief Quality low threshold for INITIAL state */
+int quality_low_thresh_initial = 15;
+
+/** @brief Quality low threshold for GOOD state */
+int quality_low_thresh_good = 15;
+
+/** @brief Quality high threshold for recovery */
+int quality_high_thresh = 40;
+
+/** @brief Consecutive samples for INITIAL→BAD transition */
+int quality_initial_to_bad_count = 20;
+
+/** @brief Consecutive samples for INITIAL→GOOD transition */
+int quality_initial_to_good_count = 50;
+
+/** @brief Consecutive samples for BAD→GOOD transition */
+int quality_bad_to_good_count = 50;
+
+/** @brief Consecutive samples for GOOD→BAD transition */
+int quality_good_to_bad_count = 45;
+
 /** @brief using_stereo */
 int using_stereo = 0;
 

@@ -613,10 +613,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         {
         case INITIAL:
             // Report quality as-is, but monitor for degradation
-            if (calculated_quality <= 20)
+            if (calculated_quality <= quality_low_thresh_initial)
             {
                 consecutive_below_20++;
-                if (consecutive_below_20 >= 10)
+                if (consecutive_below_20 >= quality_initial_to_bad_count)
                 {
                     quality_state = BAD;
                     consecutive_below_20 = 0;
@@ -629,15 +629,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             {
                 consecutive_below_20 = 0;
             }
-            if (calculated_quality > 40)
+            if (calculated_quality > quality_high_thresh)
             {
                 consecutive_above_40++;
-                if (consecutive_above_40 >= 60)
+                if (consecutive_above_40 >= quality_initial_to_good_count)
                 {
                     quality_state = GOOD;
                     consecutive_above_40 = 0;
                     consecutive_below_20 = 0;
-                    std::cout << "[QUALITY] Transition: INITIAL → GOOD (60 samples > 40)" << std::endl;
+                    std::cout << "[QUALITY] Transition: INITIAL → GOOD (" << quality_initial_to_good_count << " samples > " << quality_high_thresh << ")" << std::endl;
                 }
             }
             else
@@ -648,15 +648,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
         case BAD:
             // Quality is bad - require strong evidence to recover
-            if (calculated_quality > 40)
+            if (calculated_quality > quality_high_thresh)
             {
                 consecutive_above_40++;
-                if (consecutive_above_40 >= 60)
+                if (consecutive_above_40 >= quality_bad_to_good_count)
                 {
                     quality_state = GOOD;
                     consecutive_above_40 = 0;
                     consecutive_below_20 = 0;
-                    std::cout << "[QUALITY] Transition: BAD → GOOD (60 samples > 40)" << std::endl;
+                    std::cout << "[QUALITY] Transition: BAD → GOOD (" << quality_bad_to_good_count << " samples > " << quality_high_thresh << ")" << std::endl;
                 }
             }
             else
@@ -667,15 +667,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
         case GOOD:
             // Quality is good - require strong evidence of degradation
-            if (calculated_quality <= 20)
+            if (calculated_quality <= quality_low_thresh_good)
             {
                 consecutive_below_20++;
-                if (consecutive_below_20 >= 45)
+                if (consecutive_below_20 >= quality_good_to_bad_count)
                 {
                     quality_state = BAD;
                     consecutive_below_20 = 0;
                     consecutive_above_40 = 0;
-                    std::cout << "[QUALITY] Transition: GOOD → BAD (45 samples ≤ 20)" << std::endl;
+                    std::cout << "[QUALITY] Transition: GOOD → BAD (" << quality_good_to_bad_count << " samples ≤ " << quality_low_thresh_good << ")" << std::endl;
                 }
             }
             else

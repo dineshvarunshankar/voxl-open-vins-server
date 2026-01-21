@@ -464,6 +464,14 @@ namespace voxl
         json_fetch_float_with_default(parent, "fusion_rate_dt_ms", &fusion_rate_dt_ms, 20.0f);
         json_fetch_bool_with_default(parent, "imu_body_frame_mode", (int *)&en_imu_body, 1);
 
+        // Quality hysteresis threshold configuration
+        json_fetch_int_with_default(parent, "quality_low_thresh_initial", &quality_low_thresh_initial, 15);
+        json_fetch_int_with_default(parent, "quality_low_thresh_good", &quality_low_thresh_good, 14);
+        json_fetch_int_with_default(parent, "quality_high_thresh", &quality_high_thresh, 35);
+        json_fetch_int_with_default(parent, "quality_initial_to_bad_count", &quality_initial_to_bad_count, 20);
+        json_fetch_int_with_default(parent, "quality_initial_to_good_count", &quality_initial_to_good_count, 50);
+        json_fetch_int_with_default(parent, "quality_bad_to_good_count", &quality_bad_to_good_count, 60);
+        json_fetch_int_with_default(parent, "quality_good_to_bad_count", &quality_good_to_bad_count, 45);
 
         if (json_get_parse_error_flag())
         {

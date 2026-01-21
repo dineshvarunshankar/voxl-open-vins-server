@@ -531,6 +531,66 @@ extern float fast_yaw_thresh;
  */
 extern float fast_yaw_timeout_s;
 
+// ============================================================================
+// QUALITY HYSTERESIS THRESHOLD CONFIGURATION
+// ============================================================================
+
+/**
+ * @brief Quality low threshold for INITIAL state
+ *
+ * Quality threshold below which degradation is detected in INITIAL state.
+ * When quality drops to or below this value, consecutive sample counter increments.
+ */
+extern int quality_low_thresh_initial;
+
+/**
+ * @brief Quality low threshold for GOOD state
+ *
+ * Quality threshold below which degradation is detected in GOOD state.
+ * When quality drops to or below this value, consecutive sample counter increments.
+ */
+extern int quality_low_thresh_good;
+
+/**
+ * @brief Quality high threshold for recovery
+ *
+ * Quality threshold above which recovery is detected.
+ * Used for transitions from INITIAL→GOOD and BAD→GOOD states.
+ */
+extern int quality_high_thresh;
+
+/**
+ * @brief Consecutive samples for INITIAL→BAD transition
+ *
+ * Number of consecutive samples with quality below low threshold
+ * required to transition from INITIAL to BAD state.
+ */
+extern int quality_initial_to_bad_count;
+
+/**
+ * @brief Consecutive samples for INITIAL→GOOD transition
+ *
+ * Number of consecutive samples with quality above high threshold
+ * required to transition from INITIAL to GOOD state.
+ */
+extern int quality_initial_to_good_count;
+
+/**
+ * @brief Consecutive samples for BAD→GOOD transition
+ *
+ * Number of consecutive samples with quality above high threshold
+ * required to transition from BAD to GOOD state.
+ */
+extern int quality_bad_to_good_count;
+
+/**
+ * @brief Consecutive samples for GOOD→BAD transition
+ *
+ * Number of consecutive samples with quality below low threshold
+ * required to transition from GOOD to BAD state.
+ */
+extern int quality_good_to_bad_count;
+
 /**
  * @brief Using stereo camera configuration
  *
