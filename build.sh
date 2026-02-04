@@ -95,7 +95,7 @@ case "$1" in
 		check_docker "4.4"
 		mkdir -p build
 		cd build
-		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
+		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QCS6490_64} \
 				-DEN_ION_BUF=ON ${OPTS} ../
 		make -j$(nproc)
 		cd ../

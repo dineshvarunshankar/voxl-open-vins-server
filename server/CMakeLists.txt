@@ -10,16 +10,21 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 add_compile_options(-Wall -Wextra -Wuninitialized -Wno-unused-variable -Wno-double-promotion -Wno-unused-parameter -Wmissing-declarations -Wno-unused-function -Wno-maybe-uninitialized)
 
-# Enable compile optimizations
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fsee -fomit-frame-pointer -fno-signed-zeros -fno-math-errno -funroll-loops")
+# Enable compile optimizations for Qualcomm ARM64 (ARMv8.2-A)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8.2-a -O3 -ffast-math -fomit-frame-pointer -fno-signed-zeros -fno-math-errno -funroll-loops -ftree-vectorize")
 
 # Find critical Packages
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4 QUIET)
+
+# Skip find_package if OpenCV was already configured (e.g., for cross-compilation)
 if (NOT OpenCV_FOUND)
-    find_package(OpenCV 3 REQUIRED)
+    find_package(OpenCV 4 QUIET COMPONENTS core imgproc calib3d features2d highgui imgcodecs)
+    if (NOT OpenCV_FOUND)
+        find_package(OpenCV 3 REQUIRED COMPONENTS core imgproc calib3d features2d highgui imgcodecs)
+    endif()
 endif()
 find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
+find_package(Ceres REQUIRED)
 # Try modern CMake config first
 include(FetchContent)
 
@@ -101,9 +106,7 @@ add_executable(${SERVERNAME} ${SRC_FILES})
 
 # Add all the include directories
 include_directories(${EIGEN3_INCLUDE_DIR})
-# have to include this, otherwise ceres will moan about not finding glog/logging.h header
-# its a minimal glog that is included with ceres, not the actual glog
-include_directories(/usr/include/ceres/internal/miniglog/)
+include_directories(${CERES_INCLUDE_DIRS})
 
 include_directories(
     # ${CMAKE_SOURCE_DIR}/external/open_vins/  # prioritize OpenVINS submodule headers
@@ -127,12 +130,12 @@ target_link_libraries(${SERVERNAME}
     modal_json
     modal_pipe
     ${MODAL_FLOW_LIBRARY}
-    ceres
+    ${CERES_LIBRARIES}
     voxl_common_config
     ${OpenCV_LIBRARIES}
     modalcv
     ${OPENCL_LIBRARY}
-    boost_system boost_date_time boost_filesystem
+    ${Boost_LIBRARIES}
 )
 
 
