@@ -21,11 +21,23 @@ imu0:
   ### gyro noise density: 8x datasheet
   ### gyro noise density: 4x random walk
   
-  accelerometer_noise_density: 0.025105024                    
-  accelerometer_random_walk: 0.013271666               
-  gyroscope_noise_density: 0.000977384             
+  ## PAUL OVERNIGHT BOTH FILTERED BEST VALS: ACC ND: 0.08, RW: 0.0004, GYRO ND: 0.0006, RW: 0.015
+  #Joao good vals with both filtered below here: 
+  #accelerometer_noise_density: 0.0809541434
+  #accelerometer_random_walk: 0.0013271666
+  #gyroscope_noise_density: 0.00075753112
+  #gyroscope_random_walk: 0.004618984242097981
+
+  # KALIBR FIRST VALUES:
+  #accelerometer_noise_density: 0.025105024
+  #accelerometer_random_walk: 0.013271666
+  #gyroscope_noise_density: 0.000977384
+  #gyroscope_random_walk: 0.000786612
+
+  accelerometer_noise_density: 0.025105024
+  accelerometer_random_walk: 0.013271666
+  gyroscope_noise_density: 0.000977384
   gyroscope_random_walk: 0.000786612
-  
 
   rostopic: imu_apps #THIS IS NOT A ROSTOPIC, THIS IS A MPA PIPE
   time_offset: 0.0
