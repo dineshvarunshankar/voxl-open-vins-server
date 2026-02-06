@@ -330,5 +330,27 @@ int connect_imu_service(void)
     }
     is_imu_connected = true;
 
+    // Read imu_model from pipe info JSON
+    cJSON *json = pipe_client_get_info_json(IMU_CH);
+    if (json) {
+        cJSON *model = cJSON_GetObjectItem(json, "imu_model");
+        if (model && cJSON_IsString(model) && model->valuestring) {
+            if (strcmp(model->valuestring, "ICM42688") == 0) {
+                imu_model = IMU_MODEL_ICM42688;
+            } else if (strcmp(model->valuestring, "BMI270") == 0) {
+                imu_model = IMU_MODEL_BMI270;
+            } else {
+                imu_model = IMU_MODEL_UNKNOWN;
+                fprintf(stderr, "WARNING: unrecognized IMU model: %s\n", model->valuestring);
+            }
+            printf("IMU model: %s\n", model->valuestring);
+        } else {
+            fprintf(stderr, "WARNING: imu_model field not found in pipe info\n");
+        }
+        cJSON_Delete(json);
+    } else {
+        fprintf(stderr, "WARNING: could not read IMU pipe info JSON\n");
+    }
+
     return 0;
 }

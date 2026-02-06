@@ -163,6 +163,9 @@ bool en_imu_body = false;
 /** @brief IMU device name */
 char imu_name[64];
 
+/** @brief Active IMU model */
+imu_model_t imu_model = IMU_MODEL_UNKNOWN;
+
 /** @brief Vector of camera configuration information */
 std::vector<cam_info> cam_info_vec;
 

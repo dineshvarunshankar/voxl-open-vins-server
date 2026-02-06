@@ -661,6 +661,20 @@ extern float fusion_rate_dt_ms;
 extern char imu_name[64];
 
 /**
+ * @brief Enumeration of supported IMU models
+ */
+enum imu_model_t {
+    IMU_MODEL_UNKNOWN = 0,
+    IMU_MODEL_ICM42688,
+    IMU_MODEL_BMI270,
+};
+
+/**
+ * @brief Active IMU model detected from pipe info JSON
+ */
+extern imu_model_t imu_model;
+
+/**
  * @brief Camera information vector
  *
  * Vector containing configuration and calibration information
