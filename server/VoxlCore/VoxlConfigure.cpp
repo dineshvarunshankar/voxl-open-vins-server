@@ -185,6 +185,32 @@ namespace voxl
                        imu_name, vio_cams[0].imu);
             }
         }
+
+        // Detect IMU model from pipe info JSON
+        // Use the original IMU name (without _body suffix) to query pipe info
+        cJSON *imu_json = pipe_get_info_json(vio_cams[0].imu);
+        if (imu_json) {
+            cJSON *model = cJSON_GetObjectItem(imu_json, "imu_model");
+            if (model && cJSON_IsString(model) && model->valuestring) {
+                if (strcmp(model->valuestring, "ICM42688") == 0) {
+                    imu_model = IMU_MODEL_ICM42688;
+                } else if (strcmp(model->valuestring, "BMI270") == 0) {
+                    imu_model = IMU_MODEL_BMI270;
+                } else {
+                    imu_model = IMU_MODEL_UNKNOWN;
+                    fprintf(stderr, "WARNING: unrecognized IMU model: %s\n", model->valuestring);
+                }
+                printf("IMU model detected: %s\n", model->valuestring);
+            } else {
+                imu_model = IMU_MODEL_UNKNOWN;
+                fprintf(stderr, "WARNING: imu_model field not found in pipe info\n");
+            }
+            cJSON_Delete(imu_json);
+        } else {
+            imu_model = IMU_MODEL_UNKNOWN;
+            fprintf(stderr, "WARNING: could not read IMU pipe info JSON for '%s'\n", vio_cams[0].imu);
+        }
+
         // NOW SYNC ESTIMATOR YAML WITH CONF FILE
         // OPEN ESTIMATOR YAML FILE
         std::string yaml_estimator_path = std::string(folder_base) + "/estimator_config.yaml";
@@ -200,28 +226,38 @@ namespace voxl
             // Create a basic config if file doesn't exist
             config["max_cameras"] = n_cams;
         }
+
+        // Set prop_window and zupt_prop_window based on IMU model
+        switch (imu_model) {
+            case IMU_MODEL_ICM42688:
+                config["prop_window"] = 0.1;      
+                config["zupt_prop_window"] = 0.1; 
+                break;
+            case IMU_MODEL_BMI270:
+                config["prop_window"] = 0.075;      
+                config["zupt_prop_window"] = 0.1; 
+                break;
+            default:
+                config["prop_window"] = 0.075;      // default fallback
+                config["zupt_prop_window"] = 0.1; // default fallback
+                break;
+        }
+
         // SYNC MAX CAMERAS
-        if (config["max_cameras"])
-        {
-            int max_cams = config["max_cameras"].as<int>();
-            if (max_cams != n_cams)
+        config["max_cameras"] = n_cams;
+
+        // Write estimator config with IMU-specific and camera settings
+        if (sync_config) {
+            try
             {
-                config["max_cameras"] = n_cams;
-                if(sync_config){
-                    try
-                    {
-                        std::ofstream fout(yaml_estimator_path);
-                        // Write YAML header first
-                        fout << "%YAML:1.0" << std::endl
-                            << std::endl;
-                        fout << config;
-                    }
-                    catch (const std::exception &e)
-                    {
-                        std::cerr << "Failed to write YAML: " << e.what() << std::endl;
-                        return -1;
-                    }
-                }
+                std::ofstream fout(yaml_estimator_path);
+                fout << "%YAML:1.0" << std::endl << std::endl;
+                fout << config;
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "Failed to write estimator YAML: " << e.what() << std::endl;
+                return -1;
             }
         }
         // NOW SYNC INTRINSICS AND DISTORTION MODEL

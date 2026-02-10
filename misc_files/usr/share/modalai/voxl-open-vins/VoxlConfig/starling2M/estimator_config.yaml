@@ -5,7 +5,7 @@ verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
 use_fej: true # if first-estimate Jacobians should be used (enable for good consistency)
 integration: "rk4" # discrete, rk4, analytical (if rk4 or analytical used then analytical covariance propagation is used)
 use_stereo: false # if we have more than 1 camera, if we should try to track stereo constraints between pairs
-max_cameras: 3 # how many cameras we have 1 = mono, 2 = stereo, >2 = binocular (all mono tracking)
+max_cameras: 1 # how many cameras we have 1 = mono, 2 = stereo, >2 = binocular (all mono tracking)
 
 calib_cam_extrinsics: true # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
 calib_cam_intrinsics: true # if camera intrinsics should be optimized (focal, center, distortion)
@@ -33,7 +33,7 @@ zupt_max_velocity: 0.03
 zupt_noise_multiplier: 1
 zupt_max_disparity: 8 # set to 0 for only imu-based
 zupt_only_at_beginning: true
-prop_window: 0.1
+prop_window: 0.075
 zupt_prop_window: 0.1
 
 # ==================================================================
@@ -110,9 +110,9 @@ downsize_aruco: true
 
 # camera noises and chi-squared threshold multipliers
 up_msckf_sigma_px: 1.2
-up_msckf_chi2_multipler: 3.0
+up_msckf_chi2_multipler: 5.0 
 up_slam_sigma_px: 1.2
-up_slam_chi2_multipler: 3.0
+up_slam_chi2_multipler: 5.0
 up_aruco_sigma_px: 1.0
 up_aruco_chi2_multipler: 3.5
 
