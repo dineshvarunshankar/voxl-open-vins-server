@@ -43,7 +43,7 @@ voxl-cross(4.3):~$
 2) Initialize and update the submodule
 
 ```bash
-voxl-cross(4.4) submodule update --init
+voxl-cross(4.3):~$ git submodule update --init
 ```
 
 3) Install dependencies inside the docker. You must specify both the hardware platform and binary repo section to pull from. CI will use the `dev` binary repo for `dev` branch jobs, otherwise it will select the correct target SDK-release based on tags. When building yourself, you must decide what your intended target is, usually `dev`
