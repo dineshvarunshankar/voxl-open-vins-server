@@ -40,7 +40,13 @@ https://gitlab.com/voxl-public/voxl-docker
 voxl-cross(4.3):~$
 ```
 
-2) Install dependencies inside the docker. You must specify both the hardware platform and binary repo section to pull from. CI will use the `dev` binary repo for `dev` branch jobs, otherwise it will select the correct target SDK-release based on tags. When building yourself, you must decide what your intended target is, usually `dev`
+2) Initialize and update the submodule
+
+```bash
+voxl-cross(4.4) submodule update --init
+```
+
+3) Install dependencies inside the docker. You must specify both the hardware platform and binary repo section to pull from. CI will use the `dev` binary repo for `dev` branch jobs, otherwise it will select the correct target SDK-release based on tags. When building yourself, you must decide what your intended target is, usually `dev`
 
 You must also specify if you are building for a 1.X VOXL 2 system image (Ubtuntu 18.04) or a 2.X VOXL2 system image (Ubuntu 20.04). These are specified as "qrb5165" and "qrb5165-2" platforms respectively.
 
@@ -53,7 +59,7 @@ voxl-cross(4.3):~$ ./install_build_deps.sh qrb5165-2 dev
 ```
 
 
-3) Build scripts should take the hardware platform as an argument: `qrb5165` or `qrb5165-2`. CI will pass these arguments to the build script based on the job target. 
+4) Build scripts should take the hardware platform as an argument: `qrb5165` or `qrb5165-2`. CI will pass these arguments to the build script based on the job target. 
 
 
 ```bash
@@ -63,7 +69,7 @@ voxl-cross(4.3):~$ ./build.sh qrb5165-2
 ```
 
 
-4) Make a deb package while still inside the docker.
+5) Make a deb package while still inside the docker.
 
 ```bash
 voxl-cross(4.3):~$ ./make_package.sh
