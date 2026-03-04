@@ -45,55 +45,50 @@ namespace voxl
 {
 
     // ============================================================================
-    // ENUMERATIONS
-    // ============================================================================
-
-    /**
-     * @enum ANG_VEL_TYPE
-     * @brief Types of angular velocity calculations
-     *
-     * This enumeration defines the different methods available for calculating
-     * angular velocity from quaternion data.
-     */
-    enum class ANG_VEL_TYPE
-    {
-        QUAT_DIRTY, ///< Dirty quaternion-based angular velocity
-        RPY_DIRTY,  ///< Dirty roll-pitch-yaw based angular velocity
-        IMU_BIAS    ///< IMU bias-corrected angular velocity
-    };
-
-    // ============================================================================
     // UTILITY FUNCTIONS
     // ============================================================================
 
     /**
-     * @brief Calculate dirty angular velocity from quaternions
+     * @brief Calculate angular velocity from consecutive quaternions
      *
-     * This function computes the angular velocity using a "dirty" method that
-     * directly differentiates quaternions. It's computationally efficient but
-     * may not be as accurate as more sophisticated methods.
+     * Computes angular velocity via axis-angle extraction from the relative
+     * rotation dq = q1 * inv(q0). Falls back to a small-angle approximation
+     * when the rotation is near-identity (degenerate case).
      *
-     * @param q_k Current quaternion (4x1 vector)
-     * @param q_km1 Previous quaternion (4x1 vector)
-     * @param dt Time difference in seconds
-     * @return Angular velocity vector (3x1) in radians per second
+     * @param q0 Previous quaternion (4x1, JPL convention)
+     * @param q1 Current  quaternion (4x1, JPL convention)
+     * @param dt Time difference in **nanoseconds**
+     * @return Angular velocity vector (3x1) in rad/s
      */
-    inline Eigen::Matrix<double, 3, 1> dirtyOmega(const Eigen::Matrix<double, 4, 1> &q_k,
-                                                  const Eigen::Matrix<double, 4, 1> &q_km1,
-                                                  double dt)
+    inline Eigen::Matrix<double, 3, 1> dirtyOmega(const Eigen::Matrix<double, 4, 1> &q0,
+                                                   const Eigen::Matrix<double, 4, 1> &q1,
+                                                   double dt)
     {
-        dt *= 1e9; // Convert to nanoseconds for VOXL
-        if (dt <= 0.0)
-        {
-            return Eigen::Vector3d::Zero(); // Bad dt
-        }
-        if (q_k.isZero(0) || q_km1.isZero(0))
-        {
-            return Eigen::Vector3d::Zero(); // First call
-        }
+        // Convert nanoseconds to seconds
+        dt *= 1e-9;
 
-        Eigen::Matrix<double, 4, 1> dq = ov_core::quat_multiply(q_k, ov_core::Inv(q_km1));
-        return (2.0 / dt) * dq.head<3>();
+        if (dt <= 0.0) return Eigen::Vector3d::Zero();
+        if (q0.isZero(0) || q1.isZero(0)) return Eigen::Vector3d::Zero();
+
+        // Relative rotation: dq = q1 * inv(q0)
+        Eigen::Matrix<double, 4, 1> dq = ov_core::quat_multiply(q1, ov_core::Inv(q0));
+        dq /= dq.norm();
+
+        // Shortest path
+        if (dq.w() < 0.0)
+            dq = -dq;
+
+        double w = std::clamp(dq.w(), -1.0, 1.0);
+        double sin_half = std::sqrt(std::max(1.0 - w * w, 0.0));
+
+        // Degenerate (small-angle) case: fall back to simple approximation
+        if (sin_half < 1e-8)
+            return (2.0 / dt) * dq.head<3>();
+
+        // General case: proper axis-angle extraction
+        double theta = 2.0 * std::acos(w);
+        Eigen::Vector3d axis = dq.head<3>() / sin_half;
+        return axis * (theta / dt);
     }
 
     /**
@@ -260,14 +255,8 @@ namespace voxl
         /** @brief VIO data packet structure */
         vio_data_t vio_packet;
 
-        /** @brief Previous VIO state for differential calculations */
-        std::shared_ptr<ov_msckf::State> past_state;
-
         /** @brief Previous quaternion for angular velocity calculation */
         Eigen::Matrix<double, 4, 1> past_q_I_G;
-
-        /** @brief Type of angular velocity calculation to use */
-        ANG_VEL_TYPE ang_vel_type = ANG_VEL_TYPE::QUAT_DIRTY;
     };
 
     // ============================================================================

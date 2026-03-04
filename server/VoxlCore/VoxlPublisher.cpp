@@ -276,6 +276,8 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     }
     q_I_G = ov_core::rot_2_quat(R_I_G);
 
+    static int64_t prev_timestamp_ns = 0;
+
     // NOW LET'S HANDLE THE ANGULAR VELOCITY
     if (first_packet)
     {
@@ -285,15 +287,21 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             vio_packet.imu_angular_vel[i] = 0.0f;
         }
         past_q_I_G = q_I_G;
+        prev_timestamp_ns = vio_packet.timestamp_ns;
     }
     else
     {
-        Eigen::Matrix<double, 3, 1> ang_vel_imu = dirtyOmega(q_I_G, past_q_I_G, state->_timestamp - past_state->_timestamp);
+        double dt = (vio_packet.timestamp_ns - prev_timestamp_ns); // in nanoseconds
+
+        Eigen::Matrix<double, 3, 1> ang_vel_imu = dirtyOmega(past_q_I_G, q_I_G, dt);
+
         for (int i = 0; i < 3; i++)
         {
             vio_packet.imu_angular_vel[i] = static_cast<float>(ang_vel_imu(i));
         }
+
         past_q_I_G = q_I_G;
+        prev_timestamp_ns = vio_packet.timestamp_ns;
     }
 
     // NOW HANDLE THE COVARIANCE, HAS TO BE DONE THIS WAY FOR MAVLINK
@@ -871,7 +879,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     // FRAME
     vio_packet.frame = 0; // Set appropriate frame value
-    past_state = state;
 
     // publish the packet
     //  if (pipe_server_get_num_clients(SIMPLE_CH) > 0)
