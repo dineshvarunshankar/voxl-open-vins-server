@@ -238,7 +238,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         printf("Frame transform is not initialized. Not publishing packet.\n");
         return;
     }
-    
+
     memcpy(vio_packet.gravity_vector, grav_vec, sizeof(float) * 3);
 
     // NOW CONVERT IT TO FRD FRAME
@@ -917,10 +917,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                 int cam_id = camera_pair.first;
                 const auto &cam_features = camera_pair.second;
 
-                Eigen::Matrix3d R_I_C = ov_core::quat_2_Rot(state->_calib_IMUtoCAM[cam_id]->quat()).transpose();
-                Eigen::Vector3d p_I_C = state->_calib_IMUtoCAM[cam_id]->pos();
-
-                for (const auto &feature : cam_features)
+               for (const auto &feature : cam_features)
                 {
                     // Check if this feature has measurements for this camera at current timestamp
                     if (feature->timestamps.find(cam_id) == feature->timestamps.end() ||
@@ -963,10 +960,36 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         }
                         else if (SLAM_FEATS[feature->featid]->_feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
                         {
-                            // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
-                            Eigen::Vector3d p_FinA = SLAM_FEATS[feature->featid]->get_xyz(false);
-                            Eigen::Vector3d T_I_C(0, 0, 0); // translation from imu to camera position
-                            p_FinG = R_I_G * (R_I_C * p_FinA + p_I_C) + p_I_G;
+                            try
+                            {
+                                auto &slam_feat = SLAM_FEATS[feature->featid];
+
+                                Eigen::Vector3d p_FinA = slam_feat->get_xyz(false);
+
+                                // Anchor IMU clone
+                                auto imu_clone = state->_clones_IMU.at(slam_feat->_anchor_clone_timestamp);
+                                auto calib = state->_calib_IMUtoCAM.at(slam_feat->_anchor_cam_id);
+
+                                Eigen::Matrix3d R_GtoI = imu_clone->Rot();
+                                Eigen::Vector3d p_IinG = imu_clone->pos();
+
+                                Eigen::Matrix3d R_ItoC = calib->Rot();
+                                Eigen::Vector3d p_IinC = calib->pos();
+
+                                // Camera pose at anchor
+                                Eigen::Matrix3d R_GtoC = R_ItoC * R_GtoI;
+                                Eigen::Vector3d p_CinG = p_IinG - R_GtoC.transpose() * p_IinC;
+
+                                // Feature in OpenVINS global
+                                Eigen::Vector3d p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
+
+                                // Convert to FRD
+                                p_FinG = ov2frd * p_FinG_ov;
+                            }
+                            catch (const std::exception &e)
+                            {
+                                std::cerr << e.what() << '\n';
+                            }
                         }
                         else
                         {
@@ -1003,8 +1026,32 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         }
                         else if (msckf_ref == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
                         {
-                            // FIX THIS --> THIS IS INCORRECT, NEED TO GRAB ROTATIONS AT ANCHOR FRAME
-                            p_FinG = R_I_G * (R_I_C * p_FinA + p_I_C) + p_I_G;
+                            try
+                            {
+                                // Anchor IMU clone
+                                auto imu_clone = state->_clones_IMU.at(feature->anchor_clone_timestamp);
+                                auto calib = state->_calib_IMUtoCAM.at(feature->anchor_cam_id);
+
+                                Eigen::Matrix3d R_GtoI = imu_clone->Rot();
+                                Eigen::Vector3d p_IinG = imu_clone->pos();
+
+                                Eigen::Matrix3d R_ItoC = calib->Rot();
+                                Eigen::Vector3d p_IinC = calib->pos();
+
+                                // Camera pose at anchor
+                                Eigen::Matrix3d R_GtoC = R_ItoC * R_GtoI;
+                                Eigen::Vector3d p_CinG = p_IinG - R_GtoC.transpose() * p_IinC;
+
+                                // Feature in OpenVINS global
+                                Eigen::Vector3d p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
+
+                                // Convert to FRD
+                                p_FinG = ov2frd * p_FinG_ov;
+                            }
+                            catch (const std::exception &e)
+                            {
+                                std::cerr << e.what() << '\n';
+                            }
                         }
                         else
                         {
