@@ -1,3 +1,7 @@
+0.6.1
+    * add qcs support
+    * read and save imu model info
+    * fix ang vel bug
 0.6.0
     * changes for customizable quality gates - D0008-V4
 0.5.9
