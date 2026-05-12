@@ -264,7 +264,7 @@ void voxl::FrameTransform::update(const imu_data_t &data)
     gravity_axis = Axis::Z;
     gravity_direction = Direction::NEGATIVE;
     printf("[INFO] IMU Initialization: Gravity angle = %.2f degrees\n", angle_deg);
-    if (angle_deg > 15.0)
+    if (angle_deg > 5.0)
     {
         printf("[ERROR] IMU Initialization: Gravity angle too large, cannot initialize\n");
         is_initialized = false;
