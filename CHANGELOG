@@ -1,3 +1,6 @@
+0.6.2
+    * fix feature point positions when using anchored MSCKF inverse depth
+    * tighten init gravity max angle
 0.6.1
     * add qcs support
     * read and save imu model info
