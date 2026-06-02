@@ -495,6 +495,14 @@ int main(int argc, char *argv[])
 		ov_core::Printer::setPrintLevel(ov_core::Printer::SILENT);
 	}
 
+	// Re-apply stereo-matcher fields AFTER the YAML reload above wiped them.
+	// VoxlConfigure persisted the packed calib + tunables into VoxlVars
+	// globals precisely so they could be restored at this point.
+	vio_manager_options.stereo_z_min         = stereo_z_min;
+	vio_manager_options.stereo_z_max         = stereo_z_max;
+	vio_manager_options.stereo_calib         = g_stereo_calib;
+	vio_manager_options.stereo_calib_valid   = g_stereo_calib_valid;
+
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
 
 	

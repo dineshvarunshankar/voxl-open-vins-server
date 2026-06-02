@@ -232,6 +232,12 @@ voxl::img_ringbuf_packet *img_ringbuf = nullptr;
 
 bool sync_config = true; ///< Flag to indicate if configuration synchronization is enabled
 
+// Stereo-matcher depth bounds (populated by VoxlConfigure)
+float stereo_z_min = 0.10f;
+float stereo_z_max = 100.0f;
+modal_flow::StereoCalib g_stereo_calib{};
+bool                    g_stereo_calib_valid = false;
+
 // ============================================================================
 // FRAME TRANSFORM IMPLEMENTATION
 // ============================================================================

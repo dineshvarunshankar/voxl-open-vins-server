@@ -263,6 +263,31 @@ void CameraQueueFusion::fusionLoop()
                     merged.push_back(std::move(msg));
                 }
             }
+            // Canonicalize merged frame slots by ascending sensor_id.
+            // std::sort is non-stable and getAllCameras() order is unspecified, but
+            // downstream stereo code assumes slot 0 is the lower-id/left camera.
+            for (auto &m : merged) {
+                if (m.sensor_ids.size() < 2) continue;
+                bool swapped = true;
+                while (swapped) {
+                    swapped = false;
+                    for (size_t i = 0; i + 1 < m.sensor_ids.size(); i++) {
+                        if (m.sensor_ids[i] > m.sensor_ids[i + 1]) {
+                            std::swap(m.sensor_ids[i], m.sensor_ids[i + 1]);
+                            std::swap(m.images[i],     m.images[i + 1]);
+                            std::swap(m.masks[i],      m.masks[i + 1]);
+                            std::swap(m.img_frames[i], m.img_frames[i + 1]);
+                            swapped = true;
+                        }
+                    }
+                }
+            }
+
+            static int pair_n = 0;
+            if (merged.back().sensor_ids.size() == 2 && pair_n++ % 300 == 0)
+                fprintf(stderr, "[STEREO LIVE] fused L+R pair (sids %d+%d) @ %.6f  (#%d)\n",
+                        merged.back().sensor_ids[0], merged.back().sensor_ids[1],
+                        merged.back().timestamp, pair_n);
 
             std::lock_guard<std::mutex> lock(fusion_mutex_);
             fused_frames_.insert(fused_frames_.end(),

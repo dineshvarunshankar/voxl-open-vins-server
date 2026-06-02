@@ -33,6 +33,7 @@
 
 // Third-party includes
 #include <core/VioManager.h>
+#include <modal_flow/StereoMatcher.hpp>
 #include <core/VioManagerOptions.h>
 #include <modal_pipe.h>
 #include <modal_json.h>
@@ -833,5 +834,15 @@ extern voxl::img_ringbuf_packet *img_ringbuf;
 // ============================================================================
 
 extern bool sync_config; ///< Flag to indicate if configuration synchronization is enabled
+
+// ---- stereo-matcher config (read by VoxlConfigure, applied in VoxlSpinner) ----
+// IMPORTANT: VoxlSpinner does `vio_manager_options = VioManagerOptions()` after
+// VoxlConfigure runs, which wipes any direct stash into vio_manager_options.
+// So we keep the packed calib here in VoxlVars (survives the reset) and copy
+// it into vio_manager_options after the reset+YAML load -- see VoxlSpinner.cpp.
+extern float stereo_z_min;                        ///< near depth bound for epipolar search (m)
+extern float stereo_z_max;                        ///< far depth bound for epipolar search (m)
+extern modal_flow::StereoCalib g_stereo_calib;    ///< composed by VoxlConfigure
+extern bool                    g_stereo_calib_valid;
 
 #endif // VOXL_VARS_H

@@ -18,6 +18,7 @@
  */
 
 #include "VoxlConfigure.h"
+#include <modal_flow/StereoMatcher.hpp>
 
 namespace voxl
 {
@@ -114,17 +115,15 @@ namespace voxl
                 printExtrinsic(body_imu_ext);
             }
 
-            // Convert extrinsic to transformation matrix T_imu_body (from body to imu)
+            // Build T_imu_body (body -> imu) from the vcc extrinsic.
             Eigen::Vector3d t_imu_wrt_body(
                 body_imu_ext.T_child_wrt_parent[0],
                 body_imu_ext.T_child_wrt_parent[1],
                 body_imu_ext.T_child_wrt_parent[2]
             );
             const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_imu_to_body(&body_imu_ext.R_child_to_parent[0][0]);
-
-            // Compute T_imu_body (transformation from body frame to IMU frame)
-            T_imu_body.block<3,3>(0,0) = R_imu_to_body.transpose();              // R_body_to_imu
-            T_imu_body.block<3,1>(0,3) = -R_imu_to_body.transpose() * t_imu_wrt_body;  // translation
+            T_imu_body.block<3,3>(0,0) =  R_imu_to_body.transpose();             // R_body_to_imu
+            T_imu_body.block<3,1>(0,3) = -R_imu_to_body.transpose() * t_imu_wrt_body;
 
             if (en_verbose) {
                 printf("\n[INFO] T_imu_body transformation matrix (body->imu):\n");
@@ -275,6 +274,8 @@ namespace voxl
             return -1;
         }
         int is_there_an_occlluded_cam = 0;
+        // Per-cam body/IMU->cam transform; composed into the stereo extrinsic below.
+        std::vector<Eigen::Matrix4d> T_final_per_cam(n_cams, Eigen::Matrix4d::Identity());
         for (int i = 0; i < n_cams; i++)
         {
 
@@ -365,29 +366,19 @@ namespace voxl
             );
             const Eigen::Matrix<double,3,3,Eigen::RowMajor> R_cp(&ext.R_child_to_parent[0][0]);
 
-            // Compute T_cam_imu (transformation from IMU to camera)
+            // T_cam_imu (imu -> cam).
             Eigen::Matrix4d T_cam_imu = Eigen::Matrix4d::Identity();
-            T_cam_imu.block<3,3>(0,0) =  R_cp.transpose();             // rotation
-            T_cam_imu.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;    // translation
+            T_cam_imu.block<3,3>(0,0) =  R_cp.transpose();
+            T_cam_imu.block<3,1>(0,3) = -R_cp.transpose() * t_pc_p;
 
-            // Apply body transformation if IMU body mode is enabled
-            Eigen::Matrix4d T_final;
-            if (en_imu_body)
-            {
-                // Convert T_cam_imu to T_cam_body by applying T_imu_body
-                // T_cam_body = T_cam_imu * T_imu_body
-                T_final = T_cam_imu * T_imu_body;
-
-                if (en_verbose) {
-                    printf("\n[INFO] Camera %d (%s) - Applied body transformation\n", i, vio_cams[i].name);
-                    printf("  T_cam_body (body->cam):\n");
-                    std::cout << T_final << std::endl;
-                }
+            // T_final is body->cam under en_imu_body, otherwise imu->cam.
+            Eigen::Matrix4d T_final = en_imu_body ? (T_cam_imu * T_imu_body) : T_cam_imu;
+            if (en_imu_body && en_verbose) {
+                printf("\n[INFO] Camera %d (%s) - Applied body transformation\n", i, vio_cams[i].name);
+                printf("  T_cam_body (body->cam):\n");
+                std::cout << T_final << std::endl;
             }
-            else
-            {
-                T_final = T_cam_imu;
-            }
+            T_final_per_cam[i] = T_final;
 
             for (int row = 0; row < 4; ++row) {
                 YAML::Node row_node = YAML::Node(YAML::NodeType::Sequence);
@@ -396,13 +387,125 @@ namespace voxl
                 }
                 extrinsics.push_back(row_node);
             }
-            // Note: When en_imu_body=1, T_cam_imu actually contains the body->cam transformation
-            // This allows the VIO system to work in the body frame instead of the IMU frame
+            // Under en_imu_body the YAML "T_cam_imu" key carries body->cam, so the
+            // VIO state lives in body frame instead of IMU frame.
             camchain_config[cam_key]["T_cam_imu"] = extrinsics;
 
-            // ADD THIS CAMERA TO OUR INFO VECTOR
             cam_info_vec.push_back(cam);
         }
+
+        // Pack the stereo calibration for the ZNCC epipolar-band matcher.
+        // Source for the cam0->cam1 extrinsic depends on sync_config:
+        //   true  -> compose from per-cam T_cam_imu (authoritative when sync)
+        //   false -> read T_cn_cnm1 from the yaml directly
+        // We persist into VoxlVars globals here -- VoxlSpinner resets
+        // vio_manager_options to defaults after this runs and then copies the
+        // globals back in.
+        g_stereo_calib_valid = false;
+        printf("[stereo_calib] loaded conf: n_cams=%d  using_stereo=%d  z=[%.2f,%.1f]m\n",
+               n_cams, (int)using_stereo,
+               (double)stereo_z_min, (double)stereo_z_max);
+        if (n_cams >= 2)
+        {
+            modal_flow::StereoCalib &sc = g_stereo_calib;
+            sc.left  = (modal_flow::CameraId)0;
+            sc.right = (modal_flow::CameraId)1;
+            // Intrinsics + equidistant fisheye distortion from vio_cams.cal.
+            sc.K_left [0] = (float)vio_cams[0].cal.fx; sc.K_left [1] = (float)vio_cams[0].cal.fy;
+            sc.K_left [2] = (float)vio_cams[0].cal.cx; sc.K_left [3] = (float)vio_cams[0].cal.cy;
+            sc.K_right[0] = (float)vio_cams[1].cal.fx; sc.K_right[1] = (float)vio_cams[1].cal.fy;
+            sc.K_right[2] = (float)vio_cams[1].cal.cx; sc.K_right[3] = (float)vio_cams[1].cal.cy;
+            for (int j = 0; j < 4; j++) {
+                sc.D_left [j] = (float)vio_cams[0].cal.D[j];
+                sc.D_right[j] = (float)vio_cams[1].cal.D[j];
+            }
+            // Compose T_cam1_cam0 = T_final[1] * T_final[0]^-1; the body/IMU frame cancels.
+            Eigen::Matrix4d T_cam1_cam0 = Eigen::Matrix4d::Identity();
+            if (sync_config) {
+                // NOTE: do NOT use Eigen's general .inverse() here. On this build
+                // chain (Eigen 3.x linked into voxl-open-vins-server) it has been
+                // observed to return a wrong matrix for proper SE(3) inputs:
+                // given T = [R | t; 0 | 1] with orthogonal R (det=+1), .inverse()
+                // returned [R^T * R_z(180) | wrong t; 0 | 1] instead of the SE(3)
+                // closed form, corrupting T_cam1_cam0 with a phantom 180-deg
+                // rotation around the optical axis and doubling ||t|| (silent ZNCC
+                // matcher failure). Compose the inverse explicitly using the SE(3)
+                // closed form ([R t; 0 1]^-1 = [R^T  -R^T t; 0 1]); also faster
+                // than general 4x4 cofactor inversion.
+                Eigen::Matrix4d Tf0_inv = Eigen::Matrix4d::Identity();
+                {
+                    Eigen::Matrix3d R0 = T_final_per_cam[0].block<3,3>(0,0);
+                    Eigen::Vector3d t0 = T_final_per_cam[0].block<3,1>(0,3);
+                    Tf0_inv.block<3,3>(0,0) =  R0.transpose();
+                    Tf0_inv.block<3,1>(0,3) = -R0.transpose() * t0;
+                }
+                T_cam1_cam0 = T_final_per_cam[1] * Tf0_inv;
+            } else {
+                // Parse the in-memory yaml (loaded by camchain_config). Falls
+                // back to identity if the entry isn't there, in which case we
+                // refuse to mark the calib valid below.
+                try {
+                    YAML::Node t_node = camchain_config["cam1"]["T_cn_cnm1"];
+                    if (t_node && t_node.IsSequence() && t_node.size() == 4) {
+                        for (int r = 0; r < 4; r++) {
+                            YAML::Node row = t_node[r];
+                            if (!row || !row.IsSequence() || row.size() != 4) {
+                                throw std::runtime_error("malformed row");
+                            }
+                            for (int c = 0; c < 4; c++) T_cam1_cam0(r, c) = row[c].as<double>();
+                        }
+                    } else {
+                        throw std::runtime_error("missing or malformed T_cn_cnm1");
+                    }
+                } catch (const std::exception &e) {
+                    fprintf(stderr, "[stereo_calib] sync_config=false but T_cn_cnm1 not parseable: %s\n", e.what());
+                    T_cam1_cam0 = Eigen::Matrix4d::Identity(); // sentinel
+                }
+            }
+            Eigen::Matrix3d R = T_cam1_cam0.block<3,3>(0,0);
+            Eigen::Vector3d t = T_cam1_cam0.block<3,1>(0,3);
+            for (int r = 0; r < 3; r++)
+                for (int c = 0; c < 3; c++)
+                    sc.R_lr[r*3+c] = (float)R(r,c);
+            sc.t_lr[0] = (float)t(0); sc.t_lr[1] = (float)t(1); sc.t_lr[2] = (float)t(2);
+            sc.z_min = stereo_z_min;
+            sc.z_max = stereo_z_max;
+
+            // Sanity: reject pathological compositions (zero baseline, non-rotation R).
+            double baseline_mm = 1000.0 * t.norm();
+            printf("[stereo_calib] composed t_cam1_cam0 = [%.4f, %.4f, %.4f] m  (|t|=%.1f mm)\n",
+                   t(0), t(1), t(2), baseline_mm);
+            if (baseline_mm > 5.0 && baseline_mm < 500.0) {
+                g_stereo_calib_valid = true;
+                printf("[stereo_calib] packed for ZNCC matcher: baseline=%.1f mm (sync_config=%d)\n",
+                       baseline_mm, (int)sync_config);
+            } else {
+                fprintf(stderr, "[stereo_calib] composed baseline=%.1f mm out of plausible range; refusing\n",
+                        baseline_mm);
+            }
+
+            // Startup dump: R_lr should be ~I (or a known mount rotation), det=+1,
+            // and is_fisheye=1 on both cams (matcher kernel is equidistant-only).
+            {
+                double det_R = R.determinant();
+                printf("[stereo_calib] R_lr  = [% .4f % .4f % .4f]\n",
+                       R(0,0), R(0,1), R(0,2));
+                printf("[stereo_calib]         [% .4f % .4f % .4f]\n",
+                       R(1,0), R(1,1), R(1,2));
+                printf("[stereo_calib]         [% .4f % .4f % .4f]   det=% .4f\n",
+                       R(2,0), R(2,1), R(2,2), det_R);
+                for (int i = 0; i < 2 && i < (int)n_cams; i++) {
+                    printf("[stereo_calib] cam%d: is_fisheye=%d  fxy=(%.1f,%.1f)  c=(%.1f,%.1f)  "
+                           "D=[%.4f,%.4f,%.4f,%.4f]\n",
+                           i, (int)vio_cams[i].cal.is_fisheye,
+                           vio_cams[i].cal.fx, vio_cams[i].cal.fy,
+                           vio_cams[i].cal.cx, vio_cams[i].cal.cy,
+                           vio_cams[i].cal.D[0], vio_cams[i].cal.D[1],
+                           vio_cams[i].cal.D[2], vio_cams[i].cal.D[3]);
+                }
+            }
+        }
+
         // NOW SAVE CAMCHAIN YAML FILE
         if(sync_config){
             try
@@ -497,6 +600,9 @@ namespace voxl
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_left", (int *)&occlude_stereo_left, 0);
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_right", (int *)&occlude_stereo_right, 0);
         json_fetch_bool_with_default(parent, "sync_config", (int *)&sync_config, 1);
+
+        json_fetch_float_with_default(parent, "stereo_z_min", &stereo_z_min, 0.10f);
+        json_fetch_float_with_default(parent, "stereo_z_max", &stereo_z_max, 100.0f);
         json_fetch_float_with_default(parent, "fusion_rate_dt_ms", &fusion_rate_dt_ms, 20.0f);
         json_fetch_bool_with_default(parent, "imu_body_frame_mode", (int *)&en_imu_body, 1);
 
