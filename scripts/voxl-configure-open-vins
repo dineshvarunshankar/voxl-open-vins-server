@@ -168,6 +168,14 @@ case ${arg} in
 		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/fpv"
 		enable_service_and_exit
 		;;
+	"d8v6")
+		echo "enabling config for D0008V6 with stereo AR0144 cameras"
+		reset_config_file_to_default
+		set_param using_stereo 0
+		set_param sync_config true
+		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/d0008-v6"
+		enable_service_and_exit
+		;;
 	"starling2_2cam")
 		echo "enabling starling2_2cam config"
 		echo "ASSUMING 3 CAMERAS ARE CONNECTED"
