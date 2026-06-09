@@ -284,10 +284,12 @@ void CameraQueueFusion::fusionLoop()
             }
 
             static int pair_n = 0;
-            if (merged.back().sensor_ids.size() == 2 && pair_n++ % 300 == 0)
-                fprintf(stderr, "[STEREO LIVE] fused L+R pair (sids %d+%d) @ %.6f  (#%d)\n",
-                        merged.back().sensor_ids[0], merged.back().sensor_ids[1],
-                        merged.back().timestamp, pair_n);
+            const size_t n_sids = merged.back().sensor_ids.size();
+            if (n_sids >= 1 && pair_n++ % 300 == 0) {
+                const char *mode = (vio_manager_options.use_stereo && n_sids == 2) ? "STEREO" : "MULTI-MONO";
+                fprintf(stderr, "[%s LIVE] fused %zu cam(s) @ %.6f  (#%d)\n",
+                        mode, n_sids, merged.back().timestamp, pair_n);
+            }
 
             std::lock_guard<std::mutex> lock(fusion_mutex_);
             fused_frames_.insert(fused_frames_.end(),
