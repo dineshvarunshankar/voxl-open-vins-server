@@ -600,6 +600,9 @@ namespace voxl
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_left", (int *)&occlude_stereo_left, 0);
         json_fetch_bool_with_default(parent, "takeoff_occlude_stereo_right", (int *)&occlude_stereo_right, 0);
         json_fetch_bool_with_default(parent, "sync_config", (int *)&sync_config, 1);
+        // Server-side IMU frame-transform bring-up gate (deg). Default -1 => any attitude (feed the
+        // estimator immediately so the ceres-free S2 dynamic init can (re)init/reset at any attitude).
+        json_fetch_float_with_default(parent, "imu_init_max_gravity_angle_deg", &imu_init_max_gravity_angle_deg, -1.0f);
 
         json_fetch_float_with_default(parent, "stereo_z_min", &stereo_z_min, 0.10f);
         json_fetch_float_with_default(parent, "stereo_z_max", &stereo_z_max, 100.0f);

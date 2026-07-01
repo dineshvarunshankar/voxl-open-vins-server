@@ -241,6 +241,12 @@ float stereo_z_max = 100.0f;
 modal_flow::StereoCalib g_stereo_calib{};
 bool                    g_stereo_calib_valid = false;
 
+// Server-side IMU frame-transform bring-up gate (degrees). If >= 0, the server holds the sensor feed to
+// the estimator until the measured gravity tilt is within this angle (opt-in "must be level" boot gate).
+// Default -1 => ANY attitude: feed immediately so the ceres-free S2 dynamic init can (re)init/reset at any
+// attitude. Keep this in sync with (and generally >=) the estimator's init_gravity_max_angle.
+float imu_init_max_gravity_angle_deg = -1.0f;
+
 // ============================================================================
 // FRAME TRANSFORM IMPLEMENTATION
 // ============================================================================
@@ -258,37 +264,41 @@ void voxl::FrameTransform::update(const imu_data_t &data)
         return; // CHECK IF WE HAVE ALREADY DONE THIS
     }
 
-    // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
-    // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
+    // Frame-transform bring-up. We only need a plausible gravity sample to START STREAMING sensor data to
+    // the estimator; ATTITUDE IS NOT A GATE HERE. The ceres-free S2 dynamic initializer (re)initializes at
+    // ANY attitude, and the estimator's static path applies its own tight gravity gate downstream -- so
+    // blocking the IMU/camera feed here on a "must be level" assumption would silently defeat any-attitude
+    // (re)init and reset: a pitched boot would never feed data and VIO would never start. The gravity axis
+    // is assumed Z-down (IMU mounted body-aligned); the measured angle is reported for diagnostics only.
     Eigen::Vector3d accel(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
-    accel = accel / accel.norm();
-
-    Eigen::Vector3d grav_versor_expected = Eigen::Vector3d::UnitZ(); // Assuming gravity is along Z
-    // now correct for negative z
-    grav_versor_expected = -grav_versor_expected;
-    auto dot_product = accel.dot(grav_versor_expected);
-    dot_product = std::max(-1.0, std::min(1.0, dot_product));
-    double angle_rad = std::acos(dot_product);
-    double angle_deg = angle_rad * 180.0 / M_PI;
+    double amag = accel.norm();
+    if (amag < 1e-6)
+    {
+        // Degenerate/garbage sample (no gravity signal) -- wait for a valid one, do not initialize on it.
+        return;
+    }
+    Eigen::Vector3d accel_n = accel / amag;
+    Eigen::Vector3d grav_versor_expected = -Eigen::Vector3d::UnitZ();
+    double dot_product = std::max(-1.0, std::min(1.0, accel_n.dot(grav_versor_expected)));
+    double angle_deg = std::acos(dot_product) * 180.0 / M_PI;
     gravity_axis = Axis::Z;
     gravity_direction = Direction::NEGATIVE;
-    printf("[INFO] IMU Initialization: Gravity angle = %.2f degrees\n", angle_deg);
-    if (angle_deg > 5.0)
+
+    // Opt-in level requirement: ONLY a platform that explicitly sets imu_init_max_gravity_angle_deg >= 0
+    // holds the feed until it is within that tilt. Default (-1) => any attitude, feed immediately (required
+    // for SFM any-attitude (re)init/reset). This is the single, config-driven server-side gravity gate --
+    // it must stay in sync with (and generally wider than) the estimator's init_gravity_max_angle.
+    if (imu_init_max_gravity_angle_deg >= 0.0f && angle_deg > (double)imu_init_max_gravity_angle_deg)
     {
-        printf("[ERROR] IMU Initialization: Gravity angle too large, cannot initialize\n");
+        printf("[WARN] IMU init: gravity angle %.2f deg > imu_init_max_gravity_angle_deg %.2f deg -- holding "
+               "sensor feed (opt-in level gate; set <0 for any-attitude)\n",
+               angle_deg, (double)imu_init_max_gravity_angle_deg);
         is_initialized = false;
         return;
     }
-    else
-    {
-        printf("[INFO] IMU Initialization: Gravity angle within acceptable range\n");
-         is_initialized = true;
-    }
 
-   
-    printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
-           static_cast<int>(gravity_axis),
-           static_cast<int>(gravity_direction));
+    is_initialized = true;
+    printf("[INFO] Frame transform initialized (gravity angle %.2f deg, axis Z-, any-attitude feed enabled)\n", angle_deg);
 }
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {

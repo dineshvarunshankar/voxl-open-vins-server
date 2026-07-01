@@ -61,7 +61,8 @@ init_warmstart_inject: true # seed the EKF with the init window's clones + their
 
 init_dyn_bias_g: [ 0.001, 0.001, 0.001 ] # initial gyroscope bias guess
 init_dyn_bias_a: [ 0.001, 0.001, 0.001 ] # initial accelerometer bias guess
-init_gravity_max_angle: 85.0  # Max tilt at init/reset (deg). Wide => reset at ANY attitude; the gram_schmidt argmin tangent basis + S2 gravity keep it well-conditioned. <90 acts as a flip guard.
+init_gravity_max_angle: 85.0  # Max tilt at init/reset (deg) for the DYNAMIC S2 path. Wide => reset at ANY attitude; the gram_schmidt argmin tangent basis + S2 gravity keep it well-conditioned. <90 acts as a flip guard.
+init_static_gravity_max_angle: 5.0  # Tilt gate (deg) for the STATIC initializer ONLY. Kept TIGHT while the dynamic gate stays wide: static init assumes a near-level stationary platform, so a pitched/held drone must fall through to dynamic init instead of getting a bogus confident static seed. <0 => reuse init_gravity_max_angle (legacy coupled).
 # ==================================================================
 # ==================================================================
 

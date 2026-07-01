@@ -255,10 +255,36 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     Eigen::Matrix<double, 3, 1> v_I_G = ov2frd * state->_imu->vel();
     // GLOBAL POSITION IN IMU AXIS:
     Eigen::Matrix<double, 3, 1> p_I_G = ov2frd * (state->_imu->pos());
-    if (vio_manager->initialized())
+    // Re-origin the published trajectory at each init. Only YAW and position are
+    // unobservable, so only those are zeroed; gravity-anchored roll/pitch are
+    // preserved. ned_rot_zero is re-captured on the rising edge of
+    // vio_manager->initialized() so it stays valid across in-flight resets
+    // (doHardReset rebuilds vio_manager but keeps this Publisher alive; soft
+    // reset re-inits in place). Incorporates the origin-heading fix from
+    // origin/tilt_init (a6f8aa6).
+    bool now_init = vio_manager && vio_manager->initialized();
+    if (now_init)
     {
-        static Eigen::Matrix<double, 3, 3> ned_rot_zero = R_I_G;
-        R_I_G = R_I_G * ned_rot_zero.transpose();
+        if (!prev_initialized) // fresh init OR first frame after any reset
+        {
+            double yaw = ov_core::rot2rpy(R_I_G)(2); // body heading (psi) in the world frame at init
+
+            // ned_rot_zero is the world_uncorrected->world_corrected rotation
+            // (Wu->Wc): rot_z(-psi) cancels the init heading. In ZYX,
+            // rot_z(-psi) * R = rot_y(pitch) * rot_x(roll) has EXACTLY zero yaw at
+            // any tilt, so the published heading is 0 at init for any attitude.
+            ned_rot_zero = ov_core::rot_z(-yaw);
+        }
+
+        // Apply Wu->Wc as ONE consistent left-multiply to orientation AND the world
+        // vectors (velocity, position) -- a world-frame gauge (yaw) rotation:
+        //   orientation: R_{Wu->Wc} * R_{B->Wu} = R_{B->Wc}
+        //   vectors:     R_{Wu->Wc} * v_{Wu}     = v_{Wc}
+        // Right-multiplying orientation (R_{B->Wu} * R_{Wc->Wu}) does NOT chain
+        // (B != Wu): it re-references the BODY, desyncing attitude from velocity
+        // -> lateral drift. That was the pre-fix bug (plus it zeroed full R, i.e.
+        // roll/pitch too -- catastrophic at a tilted init).
+        R_I_G = ned_rot_zero * R_I_G;
         v_I_G = ned_rot_zero * v_I_G;
         p_I_G = ned_rot_zero * p_I_G;
 
@@ -268,6 +294,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             vio_state = VIO_STATE_OK;
         }
     }
+    prev_initialized = now_init;
     // FILL IN THE VIO PACKET - Fix casting issues
     for (int i = 0; i < 3; i++)
     {

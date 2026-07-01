@@ -252,6 +252,16 @@ namespace voxl
         /** @brief Flag indicating if this is the first packet */
         bool first_packet = true;
 
+        /** @brief Tracks the rising edge of vio_manager->initialized() so the
+         *  origin snapshot is re-captured on every (re)init, including in-flight
+         *  resets where the Publisher singleton persists. */
+        bool prev_initialized = false;
+
+        /** @brief Yaw-only origin rotation captured at each init. Zeros the
+         *  (unobservable) heading at start while preserving gravity-true
+         *  roll/pitch. Identity until the first init. */
+        Eigen::Matrix3d ned_rot_zero = Eigen::Matrix3d::Identity();
+
         /** @brief VIO data packet structure */
         vio_data_t vio_packet;
 

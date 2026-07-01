@@ -715,6 +715,16 @@ extern std::atomic<double> imu_rate_hz;
 extern std::mutex imu_lock_mutex;
 
 /**
+ * @brief Server-side IMU frame-transform bring-up gravity gate (degrees)
+ *
+ * If >= 0, the server holds the sensor feed to the estimator until the measured gravity tilt is within
+ * this angle (opt-in "must be level" boot gate). Default -1 => any attitude (feed immediately), which is
+ * required for the ceres-free S2 dynamic initializer to (re)init/reset at any attitude. Keep in sync with
+ * (and generally >=) the estimator's init_gravity_max_angle.
+ */
+extern float imu_init_max_gravity_angle_deg;
+
+/**
  * @brief Global frame transform instance
  *
  * Global instance of the frame transform structure used for
