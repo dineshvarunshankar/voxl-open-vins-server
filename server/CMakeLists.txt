@@ -24,7 +24,7 @@ if (NOT OpenCV_FOUND)
     endif()
 endif()
 find_package(Boost REQUIRED COMPONENTS system filesystem thread date_time)
-find_package(Ceres REQUIRED)
+# Ceres intentionally not required/linked -- the server has zero ceres:: usage (ceres-free init).
 # Try modern CMake config first
 include(FetchContent)
 
@@ -106,7 +106,6 @@ add_executable(${SERVERNAME} ${SRC_FILES})
 
 # Add all the include directories
 include_directories(${EIGEN3_INCLUDE_DIR})
-include_directories(${CERES_INCLUDE_DIRS})
 
 include_directories(
     # ${CMAKE_SOURCE_DIR}/external/open_vins/  # prioritize OpenVINS submodule headers
@@ -130,7 +129,6 @@ target_link_libraries(${SERVERNAME}
     modal_json
     modal_pipe
     ${MODAL_FLOW_LIBRARY}
-    ${CERES_LIBRARIES}
     voxl_common_config
     ${OpenCV_LIBRARIES}
     modalcv
