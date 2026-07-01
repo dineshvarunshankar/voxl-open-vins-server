@@ -359,6 +359,9 @@ extern std::atomic<uint32_t> vio_error_codes;
  */
 extern std::atomic<bool> reset_requested;
 
+/** Flag indicating that a front-end-preserving SOFT reset was requested */
+extern std::atomic<bool> soft_reset_requested;
+
 /**
  * @brief VIO reset state flag
  *

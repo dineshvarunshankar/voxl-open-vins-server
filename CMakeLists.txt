@@ -90,6 +90,33 @@ else()
     message(STATUS "Native/unknown platform: Using standard OpenCV find_package")
 endif()
 
+# Detect OpenCL ONCE here and define HAVE_OPENCL GLOBALLY (before any add_subdirectory) so that
+# external/ (ov_core, ov_msckf), server/, and clients/ ALL compile with the SAME value. This macro
+# is not cosmetic: ov_core/src/utils/sensor_data.h gates real members of ov_core::CameraData on it
+# (img_frames, cl_images) plus the <CL/cl.h> include. Previously HAVE_OPENCL was set only inside
+# ov_core/CMakeLists.txt via directory-scoped add_definitions(), so it never reached the sibling
+# server/ subdir -- the server then saw a CameraData with no img_frames and undefined cl_* types
+# (the build break), and even when it "worked" the struct layout differed across the ov_core<->server
+# link boundary (an ODR/ABI mismatch). Defining it at top-level directory scope fixes both.
+find_package(OpenCL QUIET)
+if(OpenCL_FOUND)
+    message(STATUS "OpenCL found (${OpenCL_VERSION}) - GPU path enabled globally (HAVE_OPENCL=1)")
+    include_directories(${OpenCL_INCLUDE_DIRS})
+    add_definitions(-DHAVE_OPENCL=1)
+else()
+    message(STATUS "OpenCL not found - building CPU-only globally (HAVE_OPENCL=0)")
+    add_definitions(-DHAVE_OPENCL=0)
+endif()
+
+# Tolerate undefined symbols that come from the TRANSITIVE deps of shared libraries we link, e.g.
+# TrackOCL -> libmodal_flow.so -> libmodal_pipe.so -> libmodal_json.so / libgbm.so. Those indirect
+# libs are not on each executable's link line, but they ARE present at runtime (/usr/lib64, resolved
+# via the DT_NEEDED chain + ldconfig). This is the minimal fix instead of re-enumerating the whole
+# transitive closure on every target. Set before the subdirs so all binaries inherit it. (Executables
+# still fail on undefined symbols in their OWN objects -- only shared-lib indirect deps are tolerated.)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-shlib-undefined")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-shlib-undefined")
+
 # server and client binaries
 add_subdirectory(external)
 add_subdirectory(server)

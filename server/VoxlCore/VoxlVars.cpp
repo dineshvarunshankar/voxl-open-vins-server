@@ -46,6 +46,9 @@ std::atomic<uint32_t> vio_error_codes(0);
 /** @brief Flag indicating that system should reset */
 std::atomic<bool> reset_requested(false);
 
+/** @brief Flag indicating that a front-end-preserving SOFT reset was requested */
+std::atomic<bool> soft_reset_requested(false);
+
 /** @brief Flag indicating if system is currently resetting */
 std::atomic<bool> is_resetting(false);
 

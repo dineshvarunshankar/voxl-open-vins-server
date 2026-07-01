@@ -396,6 +396,15 @@ namespace voxl
          */
         int doHardReset();
 
+        /**
+         * @brief Perform a front-end-preserving SOFT reset.
+         *
+         * Resets the navigation EKF via VioManager::soft_reset() while keeping the feature DB and
+         * IMU history so re-init fires fast (no full-window re-collection). Escalates to
+         * doHardReset() on failure or if there is no live VIO manager.
+         */
+        int doSoftReset();
+
         // ============================================================================
         // PRIVATE MEMBER VARIABLES
         // ============================================================================

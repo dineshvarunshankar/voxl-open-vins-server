@@ -108,6 +108,14 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
     }
     else if (STR_MATCH(string, RESET_VIO_SOFT))
     {
+        if (reset_requested.load() || soft_reset_requested.load() || is_resetting.load())
+        {
+            fprintf(stderr, "[WARNING] Already resetting VIO, ignoring soft reset command.\n");
+            return;
+        }
+        soft_reset_requested.store(true);
+        fprintf(stderr, "[INFO] Client requested soft reset (front-end preserving)\n");
+        return;
     }
     else
     {

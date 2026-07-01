@@ -414,9 +414,13 @@ void HealthCheck::checkAutoResetConditions()
  */
 void HealthCheck::checkVINSResetRequest()
 {
-    // atomically check if a reset has been requested, if not, return
-    if (!reset_requested.exchange(false, std::memory_order_acq_rel))
+    // atomically check if a (hard or soft) reset has been requested, if not, return
+    bool want_hard = reset_requested.exchange(false, std::memory_order_acq_rel);
+    bool want_soft = soft_reset_requested.exchange(false, std::memory_order_acq_rel);
+    if (!want_hard && !want_soft)
         return;
+    if (want_hard) // a hard request supersedes a pending soft one
+        want_soft = false;
 
     // check time since last reset
     int64_t current_time = _apps_time_monotonic_ns();
@@ -441,7 +445,7 @@ void HealthCheck::checkVINSResetRequest()
     int rc = 0;
     try
     {
-        rc = doHardReset();
+        rc = want_soft ? doSoftReset() : doHardReset();
         reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
     }
     catch (const std::exception &e)
@@ -560,6 +564,43 @@ int HealthCheck::doHardReset()
     // destroy old VIO manager
     old_vio_manager.reset();
 
+    return 0;
+}
+
+int HealthCheck::doSoftReset()
+{
+    // Wait for in-flight sensor callbacks to drain (same handshake as the hard reset).
+    {
+        std::unique_lock<std::mutex> lk(reset_mtx);
+        bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5),
+            [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
+        if (!wait_result)
+        {
+            fprintf(stderr, "[ERROR] Timeout waiting for callbacks during soft reset. active_callbacks=%d\n",
+                    active_callbacks.load(std::memory_order_acquire));
+            return -1;
+        }
+    }
+    Publisher::getInstance().set_first_packet(true);
+    clearErrorCodes(0, true);
+    printf("[HEALTH] Soft reset in progress (front-end preserved)\n");
+
+    if (!vio_manager)
+    {
+        fprintf(stderr, "[ERROR] No VIO manager to soft-reset; escalating to hard reset\n");
+        return doHardReset();
+    }
+    try
+    {
+        // Front-end-preserving EKF reset: keeps the feature DB + IMU history so the improved
+        // any-attitude dynamic initializer re-fires fast (no full-window re-collection).
+        vio_manager->soft_reset();
+    }
+    catch (const std::exception &e)
+    {
+        fprintf(stderr, "[ERROR] Exception during soft reset: %s -- escalating to hard reset\n", e.what());
+        return doHardReset();
+    }
     return 0;
 }
 
