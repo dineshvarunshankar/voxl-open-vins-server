@@ -13,7 +13,6 @@ VIO solution for VOXL based on open_vins (https://github.com/rpng/open_vins)
  - libmodal-flow
  - libmodal-cv
  - voxl-mavlink
- - voxl-ceres-solver
  - voxl-mpa-tools
  - librc-math
  - libmodal-journal
