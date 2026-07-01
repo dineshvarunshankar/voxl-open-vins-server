@@ -52,8 +52,12 @@ std::atomic<bool> soft_reset_requested(false);
 /** @brief Flag indicating if system is currently resetting */
 std::atomic<bool> is_resetting(false);
 
-/** @brief Counter which increments on resets */
+/** @brief Counter which increments on resets (hard + soft) */
 std::atomic<uint32_t> reset_num_counter{0};
+
+/** @brief Counter which increments only on SOFT (front-end-preserving) resets, so field logs can
+ *  distinguish soft from hard (hard count = reset_num_counter - soft_reset_num_counter). */
+std::atomic<uint32_t> soft_reset_num_counter{0};
 
 /** @brief Number of callbacks inside the system */
 std::atomic<uint32_t> active_callbacks{0};

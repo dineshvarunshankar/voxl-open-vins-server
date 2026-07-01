@@ -447,6 +447,11 @@ void HealthCheck::checkVINSResetRequest()
     {
         rc = want_soft ? doSoftReset() : doHardReset();
         reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
+        if (want_soft)
+            soft_reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
+        printf("[HEALTH] reset #%u (%s): soft=%u hard=%u\n", reset_num_counter.load(),
+               want_soft ? "soft" : "hard", soft_reset_num_counter.load(),
+               reset_num_counter.load() - soft_reset_num_counter.load());
     }
     catch (const std::exception &e)
     {

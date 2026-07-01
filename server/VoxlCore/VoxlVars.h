@@ -380,6 +380,14 @@ extern std::atomic<bool> is_resetting;
 extern std::atomic<uint32_t> reset_num_counter;
 
 /**
+ * @brief Counter which increments only on SOFT (front-end-preserving) resets.
+ *
+ * Lets field logs distinguish soft resets from hard ones (hard count =
+ * reset_num_counter - soft_reset_num_counter) without a packet-ABI change.
+ */
+extern std::atomic<uint32_t> soft_reset_num_counter;
+
+/**
  * @brief Number of callbacks inside the system
  *
  * Atomic counter for tracking the number of in-flight
