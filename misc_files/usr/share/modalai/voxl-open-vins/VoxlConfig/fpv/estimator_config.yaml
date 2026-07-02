@@ -47,7 +47,7 @@ init_max_features: 50 # how many features to track during initialization (saves 
 init_dyn_use: true # if dynamic initialization should be used
 init_dyn_mle_opt_calib: false # if we should optimize calibration during intialization (not recommended)
 init_dyn_mle_max_iter: 50 # how many iterations the MLE refinement should use (zero to skip the MLE)
-init_dyn_mle_max_time: 0.1 # how many seconds the MLE should be completed in
+init_dyn_mle_max_time: 0.05 # how many seconds the MLE should be completed in
 init_dyn_mle_max_threads: 4 # how many threads the MLE should use
 init_dyn_num_pose: 8 # number of poses to use within our window time (evenly spaced)
 init_dyn_min_deg: 5.0 # orientation change needed to try to init
@@ -65,6 +65,9 @@ init_gravity_max_angle: 85.0  # Max tilt at init/reset (deg) for the DYNAMIC S2 
 init_static_gravity_max_angle: 5.0  # Tilt gate (deg) for the STATIC initializer ONLY. Kept TIGHT while the dynamic gate stays wide: static init assumes a near-level stationary platform, so a pitched/held drone must fall through to dynamic init instead of getting a bogus confident static seed. <0 => reuse init_gravity_max_angle (legacy coupled).
 init_dyn_grav_prior_sigma: 0.5  # Weak +Z gravity prior (m/s^2 ~ deg) for the dynamic S2 init. Fixes flip rejection (42->49/50 in the NEES gold standard) at negligible accuracy cost. <=0 disables.
 init_dyn_grav_gate_deg: 30.0  # Post-solve reject if the optimized gravity ends up > this many deg from +Z (flip/corruption guard before injection).
+init_dyn_mle_lm_min_lambda: 1.0e-12 # zbft LM lambda floor. 1e-12 = Ceres-exact. The free-S2 solve pays ~9-12 rejected trials climbing lambda back up the gravity/accel-bias valley; raising the floor (e.g. 1e-7) trims that at some convergence-flag risk (bench_zbft_s2 fpv shape: 100/100 -> 84-97/100). A/B on target before changing.
+init_dyn_mle_lm_nu_growth: 2.0 # zbft LM rejected-trial escalation growth. 2.0 = Ceres-exact; larger (e.g. 4.0) climbs the valley wall in fewer rejected trials, same caveat as above.
+init_dyn_mle_lm_initial_lambda: 1.0e-4 # zbft LM initial damping. 1e-4 = Ceres-exact (initial_trust_region_radius 1e4). ORB-SLAM3's inertial-only MAP starts heavily damped (1e3) to keep early steps short/gradient-like in the gravity/bias valley -- candidate for on-target A/B.
 # ==================================================================
 # ==================================================================
 
