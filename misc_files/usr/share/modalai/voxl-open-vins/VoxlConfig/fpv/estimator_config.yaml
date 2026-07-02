@@ -77,7 +77,7 @@ init_dyn_reset_prior_sigma_floor_bg: 0.005 # floor on the tightened bg prior sig
 init_dyn_reset_prior_sigma_floor_ba: 0.02 # floor on the tightened ba prior sigma
 init_dyn_reset_prior_divergence_infl: 3.0 # sigma inflation when the soft reset fired with health errors pending (divergence-suspected)
 init_dyn_fix_ba_on_reset: false # hard-freeze ba during a reset re-init (sqrtVINS-style "biases known"); injected ba covariance = floored prior variance. Requires an accepted prior; tightened-prior mode (false) is the safe default.
-init_dyn_linear_method: 0 # Stage-1 linear seed: 0 = Dong-Si (legacy, features-in-state), 1 = feature-less epipolar-normal 6x6 [v,g] seed, 2 = feature-less with in-call Dong-Si fallback. Feature-less solves no feature positions (O(features), low-parallax robust) -- the short-reset-window fast path. Flip to 2 after on-target A/B.
+init_dyn_linear_method: 2 # Stage-1 linear seed: 0 = Dong-Si (legacy, features-in-state), 1 = feature-less epipolar-normal 6x6 [v,g] seed, 2 = feature-less with in-call Dong-Si fallback (RECOMMENDED: never worse than 0 by construction -- host A/B: on weak 0.6-1.0s windows Dong-Si returns confidently-wrong gravity (10-16 deg, passes the 30 deg gate) while the feature-less gates either produce a better seed or refuse and fall back; full-window quality is parity after the MLE). Set 0 to restore bit-identical legacy.
 init_dyn_fl_min_pairs: 5 # feature-less gates: min keyframe pairs surviving the per-pair checks
 init_dyn_fl_min_feats_per_pair: 10 # min co-observed features for a pair to contribute
 init_dyn_fl_eig_ratio: 20.0 # min mid/min eigenvalue ratio of the epipolar-normal matrix (translation direction well-defined)
@@ -87,6 +87,11 @@ init_dyn_fl_grav_tol: 1.0 # max | |g| - gravity_mag | before sphere projection (
 init_dyn_fl_min_translation: 0.05 # static gate: max implied camera translation below this rejects (m)
 init_dyn_fl_tri_min_dist: 0.10 # triangulation bounds for the MLE feature seed (feature-less path)
 init_dyn_fl_tri_max_dist: 60.0
+init_window_time_reset: -1 # DUAL-WINDOW soft reset: select only the newest N seconds on a reset re-init (needs a VALID bias prior; clamped to [0.3, init_window_time]; <=0 disables). Cuts reset-to-usable latency ~window/window_reset. Enable (e.g. 0.7) after on-target A/B; pair with init_dyn_linear_method 2.
+init_dyn_num_pose_reset: -1 # poses within the reset window (-1 = keep init_dyn_num_pose; suggest 5-6 at 0.7s)
+init_dyn_min_deg_reset: -1 # rotation gate for the reset window (-1 = auto-scale init_dyn_min_deg by the window ratio)
+init_dyn_reset_max_fails: 30 # failed short-window attempts before escalating back to the full window (bias prior kept)
+init_dyn_min_num_meas: -1 # feature min-measurement count (-1 = (int)window floored at 2; the legacy int truncation admitted rank-deficient 1-obs features below 2s windows)
 # ==================================================================
 # ==================================================================
 
