@@ -587,8 +587,13 @@ int HealthCheck::doSoftReset()
         }
     }
     Publisher::getInstance().set_first_packet(true);
+    // Capture the pending health error codes BEFORE clearing them: a soft reset issued while
+    // errors are pending is divergence-suspected, and the initializer's bias-prior gating must
+    // know (it inflates the snapshot sigmas instead of trusting a possibly-poisoned filter).
+    const uint32_t pending_errors = vio_error_codes.load(std::memory_order_acquire);
     clearErrorCodes(0, true);
-    printf("[HEALTH] Soft reset in progress (front-end preserved)\n");
+    printf("[HEALTH] Soft reset in progress (front-end preserved%s)\n",
+           (pending_errors != 0) ? ", divergence-suspected" : "");
 
     if (!vio_manager)
     {
@@ -598,8 +603,10 @@ int HealthCheck::doSoftReset()
     try
     {
         // Front-end-preserving EKF reset: keeps the feature DB + IMU history so the improved
-        // any-attitude dynamic initializer re-fires fast (no full-window re-collection).
-        vio_manager->soft_reset();
+        // any-attitude dynamic initializer re-fires fast (no full-window re-collection). The
+        // cause tag drives the live-bias prior gating inside the initializer.
+        vio_manager->soft_reset(pending_errors != 0 ? ov_msckf::VioManager::SoftResetCause::DIVERGENCE
+                                                    : ov_msckf::VioManager::SoftResetCause::CLIENT);
     }
     catch (const std::exception &e)
     {

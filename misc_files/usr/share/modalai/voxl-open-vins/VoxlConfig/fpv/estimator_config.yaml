@@ -68,6 +68,15 @@ init_dyn_grav_gate_deg: 30.0  # Post-solve reject if the optimized gravity ends 
 init_dyn_mle_lm_min_lambda: 1.0e-12 # zbft LM lambda floor. 1e-12 = Ceres-exact. The free-S2 solve pays ~9-12 rejected trials climbing lambda back up the gravity/accel-bias valley; raising the floor (e.g. 1e-7) trims that at some convergence-flag risk (bench_zbft_s2 fpv shape: 100/100 -> 84-97/100). A/B on target before changing.
 init_dyn_mle_lm_nu_growth: 2.0 # zbft LM rejected-trial escalation growth. 2.0 = Ceres-exact; larger (e.g. 4.0) climbs the valley wall in fewer rejected trials, same caveat as above.
 init_dyn_mle_lm_initial_lambda: 1.0e-4 # zbft LM initial damping. 1e-4 = Ceres-exact (initial_trust_region_radius 1e4). ORB-SLAM3's inertial-only MAP starts heavily damped (1e3) to keep early steps short/gradient-like in the gravity/bias valley -- candidate for on-target A/B.
+init_dyn_reset_prior_use: true # SOFT-RESET bias prior: seed the re-init with the live filter's bg/ba (+ tightened per-axis first-pose bias prior) captured by soft_reset. The main conditioner of the gravity/accel-bias valley on re-init. Cold boot unaffected; a rejected prior degrades to the config seeds below.
+init_dyn_reset_prior_max_bg: 0.2 # reject the snapshot if |bg| exceeds this (rad/s)
+init_dyn_reset_prior_max_ba: 1.0 # reject the snapshot if |ba| exceeds this (m/s^2)
+init_dyn_reset_prior_max_sigma_bg: 0.05 # reject if any bg sigma (after random-walk age inflation) exceeds this
+init_dyn_reset_prior_max_sigma_ba: 0.5 # reject if any ba sigma (after random-walk age inflation) exceeds this
+init_dyn_reset_prior_sigma_floor_bg: 0.005 # floor on the tightened bg prior sigma (protects MLE conditioning)
+init_dyn_reset_prior_sigma_floor_ba: 0.02 # floor on the tightened ba prior sigma
+init_dyn_reset_prior_divergence_infl: 3.0 # sigma inflation when the soft reset fired with health errors pending (divergence-suspected)
+init_dyn_fix_ba_on_reset: false # hard-freeze ba during a reset re-init (sqrtVINS-style "biases known"); injected ba covariance = floored prior variance. Requires an accepted prior; tightened-prior mode (false) is the safe default.
 # ==================================================================
 # ==================================================================
 
