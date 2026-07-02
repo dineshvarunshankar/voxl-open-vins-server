@@ -77,7 +77,7 @@ init_dyn_reset_prior_sigma_floor_bg: 0.005 # floor on the tightened bg prior sig
 init_dyn_reset_prior_sigma_floor_ba: 0.02 # floor on the tightened ba prior sigma
 init_dyn_reset_prior_divergence_infl: 3.0 # sigma inflation when the soft reset fired with health errors pending (divergence-suspected)
 init_dyn_fix_ba_on_reset: false # hard-freeze ba during a reset re-init ("biases known" mode); injected ba covariance = floored prior variance. Requires an accepted prior; tightened-prior mode (false) is the safe default.
-init_dyn_mle_ftol: 1.0e-5 # MLE relative-cost-decrease termination (legacy 1e-5; Ceres default is 1e-6 -- tighten if the injected tilt looks systematically lazy on weak-excitation windows)
+init_dyn_mle_ftol: 1.0e-6 # MLE relative-cost-decrease termination (legacy 1e-5; Ceres default is 1e-6 -- tighten if the injected tilt looks systematically lazy on weak-excitation windows)
 # ==================================================================
 # ==================================================================
 
