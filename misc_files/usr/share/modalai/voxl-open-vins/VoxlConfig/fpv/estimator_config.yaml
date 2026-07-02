@@ -77,6 +77,16 @@ init_dyn_reset_prior_sigma_floor_bg: 0.005 # floor on the tightened bg prior sig
 init_dyn_reset_prior_sigma_floor_ba: 0.02 # floor on the tightened ba prior sigma
 init_dyn_reset_prior_divergence_infl: 3.0 # sigma inflation when the soft reset fired with health errors pending (divergence-suspected)
 init_dyn_fix_ba_on_reset: false # hard-freeze ba during a reset re-init (sqrtVINS-style "biases known"); injected ba covariance = floored prior variance. Requires an accepted prior; tightened-prior mode (false) is the safe default.
+init_dyn_linear_method: 0 # Stage-1 linear seed: 0 = Dong-Si (legacy, features-in-state), 1 = feature-less epipolar-normal 6x6 [v,g] seed, 2 = feature-less with in-call Dong-Si fallback. Feature-less solves no feature positions (O(features), low-parallax robust) -- the short-reset-window fast path. Flip to 2 after on-target A/B.
+init_dyn_fl_min_pairs: 5 # feature-less gates: min keyframe pairs surviving the per-pair checks
+init_dyn_fl_min_feats_per_pair: 10 # min co-observed features for a pair to contribute
+init_dyn_fl_eig_ratio: 20.0 # min mid/min eigenvalue ratio of the epipolar-normal matrix (translation direction well-defined)
+init_dyn_fl_min_parallax_deg: 0.6 # static gate: median feature parallax below this rejects the seed
+init_dyn_fl_max_cond: 1.0e6 # max condition number of the 6x6 normal system
+init_dyn_fl_grav_tol: 1.0 # max | |g| - gravity_mag | before sphere projection (m/s^2)
+init_dyn_fl_min_translation: 0.05 # static gate: max implied camera translation below this rejects (m)
+init_dyn_fl_tri_min_dist: 0.10 # triangulation bounds for the MLE feature seed (feature-less path)
+init_dyn_fl_tri_max_dist: 60.0
 # ==================================================================
 # ==================================================================
 
