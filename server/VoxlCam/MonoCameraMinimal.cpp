@@ -86,10 +86,10 @@ namespace voxl
         // if we are resetting, just return
         if (is_resetting.load(std::memory_order_relaxed))
         {
+            skip_jerk_detection = true;
             if (img_type == voxl::ImageType::CL_MEM)
                 release_cl_mem(frame);
             return;
-            skip_jerk_detection = true;
         }
 
         // indicate that we are processing IMU data
@@ -112,8 +112,11 @@ namespace voxl
         // User reported issues with initialization - process ALL frames until VIO is stable
 
         // Check if VIO is fully initialized AND past grace period
+        // Multi-camera (unsynced) rigs must NOT decimate per-camera: the alternating drops are
+        // asymmetric across streams and break the epoch cadence the estimator anchors on
         const bool vio_ready_for_throttling = vio_manager &&
                                               vio_manager->initialized() &&
+                                              vio_manager_options.state_options.num_cameras <= 1 &&
                                               vio_state.load(std::memory_order_acquire) == VIO_STATE_OK;
 
         // NEVER throttle during: INITIALIZING, FAILED, or first few seconds of OK state
