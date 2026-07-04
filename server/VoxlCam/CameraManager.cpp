@@ -164,9 +164,8 @@ namespace voxl
             std::cout << "Successfully initialized " << cameras_.size() << " cameras" << std::endl;
         }
 
-        // Start the camera fusion thread once all cameras are initialized
-        // This ensures that camera frames are actively consumed and fused
-        CameraQueueFusion::getInstance().start(cameras_.size());
+        // No fusion thread: cameras push straight into the estimator's lock-free per-camera rings
+        // and the IMU feed releases frames in global timestamp order (ov_msckf AsyncCameraBuffer)
 
         initialized_ = true;
         return true;

@@ -14,7 +14,6 @@
 #define STEREOCAMERAMINIMAL_H
 #pragma once
 #include "CameraBase.h"
-#include "CameraQueueFusion.h"
 #include "VoxlVars.h"
 #include <iostream>
 #include <opencv2/opencv.hpp>

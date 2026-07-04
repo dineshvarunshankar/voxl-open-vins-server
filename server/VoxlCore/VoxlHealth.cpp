@@ -9,6 +9,7 @@
  */
 
 #include "VoxlHK.h"
+#include "VoxlVioIngest.h"
 using namespace voxl;
 // ============================================================================
 // HEALTH CHECK IMPLEMENTATION
@@ -525,6 +526,7 @@ int HealthCheck::doHardReset()
         try
         {
             vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+            voxl::register_vio_camera_callback(*vio_manager);
         }
         catch (const std::exception &e)
         {
@@ -542,6 +544,7 @@ int HealthCheck::doHardReset()
     try
     {
         new_vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+        voxl::register_vio_camera_callback(*new_vio_manager);
 
         if (!new_vio_manager)
         {

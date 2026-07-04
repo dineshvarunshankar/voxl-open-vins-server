@@ -104,7 +104,6 @@ namespace voxl
          * @param out Reference to store the popped data
          * @return true if data was popped, false if queue is empty
          */
-        bool popCameraData(ov_core::CameraData &out) { return camera_queue.pop(out); }
 
         /**
          * @brief Get the camera pipe channel
@@ -175,7 +174,6 @@ namespace voxl
          * Used for efficient communication between camera thread and VIO thread.
          * Capacity of 64 provides approximately 2.4 seconds of buffering at 30fps.
          */
-        boost::lockfree::spsc_queue<ov_core::CameraData, boost::lockfree::capacity<64>> camera_queue;
 
         /** @brief Instance-local buffer for image processing */
         img_ringbuf_packet curr_message_;

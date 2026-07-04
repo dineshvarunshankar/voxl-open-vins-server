@@ -32,6 +32,7 @@
 #include <voxl_common_config.h>
 #include "VoxlCommon.h"
 #include "VoxlVars.h"
+#include "VoxlVioIngest.h"
 #include "VoxlConfigure.h"
 #include <unistd.h>
 #include <signal.h>
@@ -504,6 +505,7 @@ int main(int argc, char *argv[])
 	vio_manager_options.stereo_calib_valid   = g_stereo_calib_valid;
 
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
+	voxl::register_vio_camera_callback(*vio_manager);
 
 	
 

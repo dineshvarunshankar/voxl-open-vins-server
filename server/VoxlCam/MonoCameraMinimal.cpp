@@ -263,19 +263,12 @@ namespace voxl
         modal_flow::Frame img_frame({get_id(), 0, iv});
         message.img_frames.push_back(img_frame);
 
-        if (!camera_queue.push(message))
+        // Push straight into the estimator's lock-free per-camera ring (this pipe thread is the
+        // single producer for this stream); the IMU feed releases frames in global time order.
+        // Overflow/late drops are disposed + counted via the processed(false) callback.
+        if (vio_manager && frame_transform.is_initialized)
         {
-            if (true)
-            {
-                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
-                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
-                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
-            }
-        }
-        else
-        {
-            // Notify fusion system that camera data is ready
-            CameraQueueFusion::getInstance().markCameraReady(get_id());
+            vio_manager->feed_measurement_camera(message);
         }
     }
 
@@ -319,19 +312,16 @@ namespace voxl
 
         message.masks.emplace_back(use_mask_);
 
-        if (!camera_queue.push(message))
+        // Push straight into the estimator's lock-free per-camera ring; drops (overflow/late) are
+        // disposed via the processed(false) callback, which releases the cl_mem handle exactly once
+        if (vio_manager && frame_transform.is_initialized)
         {
-            if (true)
-            {
-                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
-                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
-                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
-            }
+            vio_manager->feed_measurement_camera(message);
         }
         else
         {
-            // Notify fusion system that camera data is ready
-            CameraQueueFusion::getInstance().markCameraReady(get_id());
+            // No estimator yet: release the device buffer ourselves so it cannot leak
+            release_cl_mem(frame);
         }
     }
 

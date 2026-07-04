@@ -32,10 +32,6 @@ namespace
     std::thread imu_thread;
     ////////////////////////////////////////////////////////////////////////////////////
 
-    // CACHE SHARED PTR TO AVOID REPEATED ALLOCATION AT HIGH FREQUENCY
-    std::shared_ptr<ov_msckf::State> cached_state;
-    std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
-
     // Rate estimation state
     // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL
     static int64_t last_rate_timestamp_ns = 0;
@@ -193,72 +189,19 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         return;
     }
 
-    // ---- feed IMU ----
+    // ---- feed IMU (this also releases + processes every camera frame whose global ordering the
+    // batch has decided: the lock-free per-camera ingest lives inside ov_msckf, and per-frame
+    // cl_mem release + publishing run through the VoxlVioIngest callback on this same thread) ----
     int imu_batch_size = (imu_model == IMU_MODEL_BMI270) ? 800 : 330;
     if (frame_transform.is_initialized) vio_manager->feed_measurement_batch_imu(imu_batch, imu_batch_size);
-    // int64_t t_feed_imu = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] fed IMU batch into VIO manager\n",
-    //        (t_feed_imu - t_prev)/1e6);
-    // t_prev = t_feed_imu;
-
-    // ---- sync camera ----
-    // TODO: CLEAR IMPORTANT CONSIDERARTION: OVINS DOES NOT SUPPORT MULTI-CAM TIME OFFSET CALIBRATION --> That's mainly because of the central image queue design
-    // Independently calibrating camera offset can be supported by either modfiying the feed function in OVINS + state vars
-    // or manually keeping tabs on relative camera offsets and correcting at the CameraQueueFusion level, either solution is kosher but for now we will just use the average offset
     last_imu_timestamp_ns = imu_batch.back().timestamp * 1e9;
-    double ts_cutoff = (last_imu_timestamp_ns * 1e-9) -
-                       vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-
-    std::vector<ov_core::CameraData> batch;
-    if (CameraQueueFusion::getInstance().getSortedBatch(ts_cutoff, batch))
-    {
-        for (const auto &msg : batch)
-        {
-            if (frame_transform.is_initialized) vio_manager->feed_measurement_camera(msg);
-            cached_state = vio_manager->get_state();
-
-            // release cl_mem objects
-            for (auto &frame : msg.img_frames)
-            {
-                if (frame.img.handle_type == modal_flow::ExternalType::ClMem &&
-                    frame.img.external_handle != 0)
-                {
-                    cl_mem handle = reinterpret_cast<cl_mem>(
-                        static_cast<uintptr_t>(frame.img.external_handle));
-
-                    cl_int err = clReleaseMemObject(handle);
-                    if (err != CL_SUCCESS)
-                    {
-                        fprintf(stderr, "Failed to release Frame cl_mem, err=%d\n", err);
-                    }
-                    // reset so no double free
-                    const_cast<modal_flow::ImageView &>(frame.img).external_handle = 0;
-                }
-            }
-
-            if (is_resetting.load(std::memory_order_acquire))
-            {
-                break;
-            }
-            cached_features_map = vio_manager->get_used_features_map();
-            if (is_resetting.load(std::memory_order_relaxed))
-            {
-                break;
-            }
-            voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
-        }
-    }
-    int64_t t_cam = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] processed %zu camera frames\n",
-    //        (t_cam - t_prev)/1e6, batch.size());
-    // t_prev = t_cam;
 
     // ---- finish ----
     int64_t t_end = _apps_time_monotonic_ns();
     double dt_ms = (double)(t_end - t_start) / 1e6;
-    if (dt_ms / batch.size() > 32.0 && en_debug)
+    if (dt_ms > 32.0 && en_debug)
     {
-        printf("WARNING: IMU callback took too long: %8.3f ms for %d msgs\n", dt_ms, (int)batch.size());
+        printf("WARNING: IMU callback took too long: %8.3f ms\n", dt_ms);
     }
 
     if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)

@@ -25,7 +25,6 @@
 // Local includes
 #include "VoxlVars.h"
 #include "VoxlCommon.h"
-#include "CameraQueueFusion.h"
 #include "VoxlHK.h"
 
 // ============================================================================

@@ -175,19 +175,11 @@ namespace voxl
         message.images.emplace_back(imgR.clone());
         message.masks.emplace_back(use_mask2_);
 
-        if (!camera_queue.push(message))
+        // Push the paired two-sensor message straight into the estimator's lock-free ring (this
+        // stereo pipe thread is the single producer for its stream); ordering happens at release
+        if (vio_manager && frame_transform.is_initialized)
         {
-            if (true)
-            {
-                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
-                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
-                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
-            }
-        }
-        else
-        {
-            // Notify fusion system that camera data is ready
-            CameraQueueFusion::getInstance().markCameraReady(get_id());
+            vio_manager->feed_measurement_camera(message);
         }
     }
 
