@@ -62,14 +62,13 @@ brute force for now, take a list of params and pre compute a few hundred iterati
 #include <stdio.h>
 #include <signal.h>
 #include <getopt.h>
-#include <unistd.h>	// for usleep()
+#include <unistd.h>	// for usleep(), access()
 #include <string>
 #include <string.h>
 #include <stdlib.h> // for atoi()
 #include <math.h>
 #include <sys/stat.h>	// for mkdir
 #include <sys/wait.h>	// for waitpid()
-#include <unistd.h>		// for access()
 #include <limits.h>		// for access()
 #include <vector>
 #include <map>
@@ -365,7 +364,6 @@ static int start_sub_processes(int processes_left){
             sub_pid_list[3-processes_left] = pid;
 
             //parent
-            // printf("Parent %d\n", processes_left);
             usleep(500000);
             start_sub_processes(processes_left - 1);
         }
@@ -726,10 +724,7 @@ int main(int argc, char* argv[])
             if (failure) break;
 
             for (int i = 0; i < 3; i++){
-                if (!kill(sub_pid_list[i], 0)) {
-                    // fprintf(stderr, "pid: %d\n", sub_pid_list[i]);
-                    // perror("ERROR: ");
-                }
+                kill(sub_pid_list[i], 0); // liveness probe: sets errno=ESRCH when the child is gone
                 if (errno == ESRCH) {
                     failure = true;
                     break;

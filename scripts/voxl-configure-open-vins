@@ -43,7 +43,9 @@ print_usage () {
 	echo "voxl-configure-open-vins factory_enable"
 	echo "voxl-configure-open-vins enable"
 	echo "voxl-configure-open-vins d8v4"
+	echo "voxl-configure-open-vins d8v6"
 	echo "voxl-configure-open-vins fpv"
+	echo "voxl-configure-open-vins fpvhires"
 	echo "voxl-configure-open-vins starling2_2cam"
 	echo ""
 	echo "show this help message:"
@@ -157,15 +159,22 @@ case ${arg} in
 		set_param using_stereo 0
 		set_param sync_config true
 		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/d0008-v4"
-		set_param fusion_rate_dt_ms 34.0
 		enable_service_and_exit
 		;;
 	"fpv")
-		echo "enabling config for FPV duo AR0144 cameras"
+		echo "enabling config for FPV duo AR0144 cameras (synced)"
 		reset_config_file_to_default
 		set_param using_stereo 0
 		set_param sync_config true
 		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/fpv"
+		enable_service_and_exit
+		;;
+	"fpvhires")
+		echo "enabling config for FPV hires IMX664 (rolling shutter) + AR0144 tracking, UNSYNCED"
+		reset_config_file_to_default
+		set_param using_stereo 0
+		set_param sync_config true
+		set_param_string yaml_folder "/usr/share/modalai/voxl-open-vins/VoxlConfig/fpvhires"
 		enable_service_and_exit
 		;;
 	"d8v6")

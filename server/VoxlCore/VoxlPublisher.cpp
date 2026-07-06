@@ -1,7 +1,7 @@
 /**
  * @file VoxlPublisher.cpp
  * @brief Publisher implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -10,6 +10,7 @@
 
 #include "VoxlHK.h"
 #include <atomic>
+#include <iterator>
 using namespace voxl;
 
 #define STR_MATCH(s, lit) (strncmp((s), (lit), strlen(lit)) == 0)
@@ -148,7 +149,7 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
  * @param state Current VIO state containing pose, velocity, and covariance
  */
 void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
-                        std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map)
+                        const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map)
 {
     // Handle FAILED state - publish failure packet and ensure reset is triggered
     static bool wait_for_steady_init = true;
@@ -199,14 +200,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // LET'S GRAB THE QUATERNIONS FROM THE STATE: IN LATEX: {I}q_{G}
     // USING FEJ -- LESS NOISY BUT "DELAYED" --> NOT A PROBLEM DUE TO IMU RATE
     Eigen::Matrix<double, 4, 1> q_I_G = state->_imu->quat_fej();
-    // TODO: Validate quat_fej() vs. quat() usage
-    //  Eigen::Matrix<double, 4, 1> q_I_G = state->_imu->quat();
 
     // NOW DEAL WITH VELOCITY AND POSITION FROM THE STATE: IN LATEX: {G}p_{I} AND {G}v_{I}
     // GLOBAL VELOCITY IN IMU FRAME FOLLOWS: v_I = {I}q_{G} \otimes v_G \otimes {G}q_{I}
     Eigen::Matrix3d R_I_G = ov_core::quat_2_Rot(q_I_G);
     auto RPY = ov_core::rot2rpy(R_I_G);
-    // printf("gravity axis: %d, gravity direction: %d\n", static_cast<int>(frame_transform.gravity_axis), static_cast<int>(frame_transform.gravity_direction));
     // AT THIS POINT, BETTER TO ROTATE IT USING THE CORRECTION MATRIX...
     // EXECUTE THE FORBIDDEN TECHNIQUE:
     // CHECK IF THE IMU IS MOUNTED IN THE CORRECT WAY, I.E.,
@@ -375,12 +373,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         vio_packet.T_cam_wrt_imu[i] = static_cast<float>(t_cam_wrt_imu(i));
     }
 
-    // GYRO AND ACCELEROMETER BIAS --> NOT USING FEJ HERE...
-    //  Note: These fields don't exist in the standard vio_data_t struct
-    //  for(int i = 0; i < 3; i++) {
-    //      vio_packet.gyro_bias[i] = static_cast<float>(state->_imu->bias_g()(i));
-    //      vio_packet.accl_bias[i] = static_cast<float>(state->_imu->bias_a()(i));
-    //  }
     // ERROR CODE - Update atomic variable and copy to packet
     // Check for covariance issues (negative diagonal elements)
     if (covariance_posori(3, 3) < 0.0 || covariance_posori(4, 4) < 0.0 || covariance_posori(5, 5) < 0.0)
@@ -406,7 +398,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             { // 1ms in nanoseconds
                 fprintf(stderr, "WARNING: skipping pose data from the past %ld %ld (diff: %ld ns)\n",
                         vio_packet.timestamp_ns, last_sent_timestamp_ns, time_diff);
-                printf("[DEBUG-HK] Setting ERROR_CODE_BAD_TIMESTAMP in VIO packet\n");
                 vio_error_codes |= ERROR_CODE_BAD_TIMESTAMP;
             }
         }
@@ -420,12 +411,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     V_uncertainty += covariance_posori(8, 8) * covariance_posori(8, 8);
     V_uncertainty = sqrt(V_uncertainty);
 
-    if (is_armed && V_uncertainty > auto_reset_max_v_cov_instant)
-    {
-        fprintf(stderr, "ERROR: exceeded velocity uncertainty threshold %f vs %f\n",
-                V_uncertainty, auto_reset_max_v_cov_instant);
-        vio_error_codes |= ERROR_CODE_VEL_INST_CERT;
-    }
 
     // Check for excessive velocity
     double current_velocity = state->_imu->vel().norm();
@@ -525,8 +510,6 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     vio_packet.error_code = vio_error_codes.load();
 
     // QUALITY CALCULATION
-    // Get SLAM features from state
-    // std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> SLAM_FEATS = state->_features_SLAM;
     // Calculate uncertainty metrics
     double T_uncertainty = 0.0;
     T_uncertainty += covariance_posori(0, 0) * covariance_posori(0, 0);
@@ -587,10 +570,19 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     calculated_quality = std::max(0.0, std::min(100.0, calculated_quality));
 
     // Check for quality issues using ACTUAL calculated quality (not hysteresis-filtered)
-    // Only perform this check if VIO is initialized and past grace period
-    // This check monitors if quality has been consistently bad for too long
+    // This check monitors if quality has been consistently bad for too long. It only runs while
+    // initialized, so the timer must be armed at the INITIALIZED RISING EDGE: last_good_qual_ts
+    // was last refreshed before/at the reset, and measuring the whole multi-second re-init window
+    // against the sub-second threshold fired the error on the first initialized packet -- a
+    // freshly re-initialized filter never got a chance (auto-reset loop).
+    static bool qual_check_armed = false;
     if (vio_manager && vio_manager->initialized())
     {
+        if (!qual_check_armed)
+        {
+            last_good_qual_ts = vio_packet.timestamp_ns;
+            qual_check_armed = true;
+        }
         double ts_threshold = auto_reset_max_v_cov_timeout_s;
         if (calculated_quality >= 1)
         {
@@ -603,6 +595,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             fprintf(stderr, "ERROR: actual quality was bad for too long!\n");
             vio_error_codes |= ERROR_CODE_NOT_STATIONARY;
         }
+    }
+    else
+    {
+        qual_check_armed = false;
     }
 
     // ========================================================================
@@ -641,6 +637,14 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         consecutive_above_40 = 0;
         consecutive_below_20 = 0;
         last_quality_reset_count = current_reset_count;
+        // Quality-metric lifecycle matches the hysteresis machine: reset_num_counter bumps for
+        // BOTH hard and soft resets, so smoothed values from the previous episode can never
+        // pre-charge this one (sensor time is continuous across resets)
+        qual_ema = -1.0;
+        qual_ema_t = 0.0;
+        qual_src_key = 0.0;
+        qual_src_size = 0;
+        qual_src_map_size = 0;
 
         if (en_debug)
         {
@@ -649,8 +653,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         }
     }
 
-    // State machine transitions based on current quality
-    if (!should_reset_quality_state)
+    // State machine transitions based on current quality.
+    // Gated on initialized(): during (re)initialization calculated_quality is CEP of a freshly
+    // seeded covariance (~1e-3 sigma => CEP ~100), which would latch GOOD before the filter has
+    // earned it -- the counters must only evolve on real feature-backed samples.
+    if (!should_reset_quality_state && vio_manager && vio_manager->initialized())
     {
         switch (quality_state)
         {
@@ -834,8 +841,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             vio_packet.state = VIO_STATE_INITIALIZING;
         }
         // During initialization, use actual CEP quality for arming checks
-        // This allows position-based arming to work correctly
-        vio_packet.quality = reported_quality;
+        // This allows position-based arming to work correctly -- but never claim more than the
+        // grace-period cap: a freshly (re)built covariance makes CEP read ~100 before the filter
+        // has earned it (a stale-ZUPT soft reset would otherwise publish near-perfect quality
+        // throughout re-init)
+        vio_packet.quality = std::min(reported_quality, 15);
 
         if (en_debug)
         {
@@ -861,7 +871,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // SECOND: Check for auto-reset conditions (only if initialized and not in grace period)
     else if (!in_grace_period &&
              should_auto_reset(state, quality_for_error_detection, vio_packet.n_feature_points,
-                               V_uncertainty, yawrate, current_velocity,
+                               yawrate, current_velocity,
                                vio_packet.vel_imu_wrt_vio[0], vio_packet.vel_imu_wrt_vio[1]))
     {
         // Auto-reset conditions met - system has FAILED
@@ -915,8 +925,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
     // FRAME
     vio_packet.frame = 0; // Set appropriate frame value
 
+    // A reset can begin while this (pre-reset) publish is still in flight -- do not let one last
+    // stale-good packet race the teardown
+    if (is_resetting.load(std::memory_order_acquire))
+    {
+        vio_packet.quality = 0;
+        vio_packet.state = VIO_STATE_INITIALIZING;
+    }
+
     // publish the packet
-    //  if (pipe_server_get_num_clients(SIMPLE_CH) > 0)
     pipe_server_write(SIMPLE_CH, (char *)&vio_packet, sizeof(vio_data_t));
 
     if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
@@ -927,6 +944,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
         double current_timestamp = state->_timestamp;
         auto timestamp_iter = used_features_map.find(current_timestamp);
+        // Async/ZUPT ticks may have no entry at the exact state time (the state advanced without
+        // a feature update) -- fall back to the newest entry so the extended feature list does
+        // not flicker empty. The per-measurement search below must then use the ENTRY's key:
+        // epoch-snapped measurements are stamped with the entry time, not the state time.
+        if (timestamp_iter == used_features_map.end() && !used_features_map.empty())
+        {
+            timestamp_iter = std::prev(used_features_map.end());
+            current_timestamp = timestamp_iter->first;
+        }
 
         if (timestamp_iter != used_features_map.end())
         {
@@ -1116,13 +1142,11 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
  * @param state Current VIO state
  * @param quality Current quality value
  * @param n_features Number of tracked features
- * @param V_uncertainty Velocity uncertainty
  * @return true if auto-reset should be triggered, false otherwise
  */
 bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
                                   int quality,
                                   int n_features,
-                                  double V_uncertainty,
                                   double yawrate,
                                   double current_velocity,
                                   double vel_x,
@@ -1157,9 +1181,6 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
                    current_reset_count);
         }
     }
-
-    // Check if VIO manager is in a bad state
-    constexpr bool vio_manager_bad = false; // FUTURE IMPLEMENTATION WITH SfM
 
     // CRITICAL FIX: Remove instant quality check - conflicts with hysteresis
     // Quality hysteresis reports 0 during transition, but actual quality may be good
@@ -1206,7 +1227,6 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
 
     // Check velocity conditions using passed values
     bool too_fast = current_velocity > auto_reset_max_velocity;
-    bool too_uncertain = is_armed && V_uncertainty > auto_reset_max_v_cov_instant;
 
     // Check for excessive spinning using passed yawrate
     // FIX: Reset spin tracking on VIO reset
@@ -1245,111 +1265,106 @@ bool Publisher::should_auto_reset(std::shared_ptr<ov_msckf::State> state,
 
     // Return true if any condition is met
     // CRITICAL FIX: Removed quality_bad - was causing resets during hysteresis transitions
-    return vio_manager_bad || stable_quality_bad ||
-           stable_features_bad || too_fast || too_uncertain || too_much_spinning;
+    return stable_quality_bad || stable_features_bad || too_fast || too_much_spinning;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quality metric internals (async-aware, per-camera freshness ledger)
+//
+// Async dual-cam updates are per-camera: the reference camera opens a new epoch entry in
+// used_features_map and the other camera's features append to the SAME entry up to one bind
+// horizon later (or land in their own entry on an epoch fallback). Scoring only the entry at
+// exactly state->_timestamp therefore sees HALF the rig on ref-camera ticks, and nothing at all
+// on ZUPT/featureless ticks (flat 10) -- which starved the downstream hysteresis (needs >40 for
+// 50 CONSECUTIVE samples) and pinned published async quality at 0.
+//
+// Fix: pool every entry inside a short union window (dedup by featid) and score each camera over
+// the POOLED set with the unchanged synced-path scorer, sum-then-clamp as sync always fused. One
+// update's used-feature list is a sparse, noisy sample of tracking health (MSCKF features only
+// appear when their tracks end), so scoring single entries makes the value jumpy; the union
+// reproduces the full per-camera track set the synced batches effectively scored, and a
+// time-constant EMA removes what noise remains. Everything here runs exclusively on the VIO
+// thread (the ingest camera-processed callback) -- single writer, no locks by construction.
+// ---------------------------------------------------------------------------------------------
+
+static constexpr int QUAL_DEDUP_CAP = 256;           // max unique features pooled per window
+static constexpr double QUAL_UNION_WINDOW_S = 0.120; // pool entries this far back (~3-4 epochs
+                                                     // at 30 Hz -- also the horizon over which a
+                                                     // dead camera's evidence ages out)
+static constexpr double QUAL_EMA_TAU_S = 0.25;       // published-value smoothing time constant:
+                                                     // one weak update moves the value ~2 pts; a
+                                                     // real collapse reaches the BAD band in ~0.5 s
+
+/// Append an entry's features into a fixed dedup array (by featid), returning the new count --
+/// epoch entries accumulate per-camera update lists and the union spans several entries, so the
+/// same feature object shows up repeatedly. O(n^2) pointer walk, n <= QUAL_DEDUP_CAP; zero
+/// allocation.
+static int collect_unique_features(const std::vector<std::shared_ptr<ov_core::Feature>> &entry_feats,
+                                   const ov_core::Feature **uniq, int n, int cap)
+{
+    for (const auto &f : entry_feats)
+    {
+        if (f == nullptr)
+            continue;
+        bool dup = false;
+        for (int i = 0; i < n; i++)
+        {
+            if (uniq[i]->featid == f->featid)
+            {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup)
+        {
+            if (n >= cap)
+                break;
+            uniq[n++] = f.get();
+        }
+    }
+    return n;
 }
 
 /**
- * @brief Calculate Quality of the VIO state
+ * @brief Score one camera's used-feature entry on a 5x5 coverage grid
  *
- * This function computes the quality score based on the features used at
- * the current timestamp. The quality calculation considers:
- * 1. Grid distribution: 5x5 grid per camera with 50 features target (2 per grid)
- * 2. Active SLAM features: weighted by covariance largest eigenvalue and quality field
- * 3. MSCKF features: weighted by quality field and number of measurements
+ * Scoring is UNCHANGED from the original synced-path metric: SLAM features weighted by
+ * marginal-covariance largest eigenvalue and tracker quality field, MSCKF features by quality
+ * field and track length, combined 50/50 with grid coverage. Features without measurements on
+ * cam_id are skipped, so the whole (multi-camera, already deduplicated) union can be passed
+ * directly.
  *
- * @param used_features_map Map of used features at the current timestamp
- * @param slam_features Map of SLAM features from the state
- * @param state Current VIO state for covariance access
- * @return Quality score (0-100, higher is better)
+ * Called only from calcQuality() on the VIO thread.
  */
-double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map,
-                              std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
-                              std::shared_ptr<ov_msckf::State> state)
+static float score_camera_features(int cam_id,
+                                   const ov_core::Feature **feats,
+                                   int n_feats,
+                                   std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
+                                   const std::shared_ptr<ov_msckf::State> &state,
+                                   int &slam_count,
+                                   int &msckf_count)
 {
     // Constants for quality calculation
-    const int GRID_SIZE = 5;                                                                // 5x5 grid
-    const int TARGET_FEATURES_PER_CAM = 50;                                                 // 50 features per camera
-    const int TARGET_FEATURES_PER_GRID = TARGET_FEATURES_PER_CAM / (GRID_SIZE * GRID_SIZE); // 2 features per grid
-    const int CLONES = 11;                                                                  // Number of clones for MSCKF weighting
-    const double MAX_GRID_SCORE = 100.0;                                                    // Maximum score when 50% of grids are filled
-    const double GRID_FILL_THRESHOLD = 0.5;                                                 // 50% of grids should be filled for max score
+    constexpr int GRID_SIZE = 5;                                                                // 5x5 grid
+    constexpr int TARGET_FEATURES_PER_CAM = 50;                                                 // 50 features per camera
+    constexpr int TARGET_FEATURES_PER_GRID = TARGET_FEATURES_PER_CAM / (GRID_SIZE * GRID_SIZE); // 2 features per grid
+    constexpr int CLONES = 11;                                                                  // Number of clones for MSCKF weighting
+    constexpr double MAX_GRID_SCORE = 100.0;                                                    // Maximum score when 50% of grids are filled
+    constexpr double GRID_FILL_THRESHOLD = 0.5;                                                 // 50% of grids should be filled for max score
     const int en_qual_debug = 0;
 
-    double total_quality = 0.0;
-    int total_grids_filled = 0;
-    int total_grids = 0;
+    // Fixed-size grids on the stack -- no per-call allocation
+    int grid[GRID_SIZE][GRID_SIZE] = {};
+    double grid_quality[GRID_SIZE][GRID_SIZE] = {};
 
-    // Debug: Print total features available
-    if (en_qual_debug)
     {
-        printf("[QUALITY_DEBUG] Total features in used_features_map: %zu\n", used_features_map.size());
-        printf("[QUALITY_DEBUG] Total SLAM features in state: %zu\n", slam_features.size());
-    }
-
-    // Get the current timestamp to find the most recent features
-    double current_timestamp = state->_timestamp;
-    if (en_qual_debug)
-        printf("[QUALITY_DEBUG] Current timestamp: %.6f\n", current_timestamp);
-
-    // Find the features for the current timestamp
-    auto timestamp_iter = used_features_map.find(current_timestamp);
-    if (timestamp_iter == used_features_map.end())
-    {
-        // No features for current timestamp, return low quality
-        if (en_qual_debug)
-            printf("[QUALITY_DEBUG] No features found for current timestamp, returning low quality\n");
-        return 10.0;
-    }
-
-    const auto &features = timestamp_iter->second;
-    if (en_qual_debug)
-        printf("[QUALITY_DEBUG] Features found for current timestamp: %zu\n", features.size());
-
-    // Group features by camera ID
-    std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
-    for (const auto &feature : features)
-    {
-        // Get camera ID from feature measurements
-        for (const auto &cam_meas : feature->timestamps)
-        {
-            int cam_id = static_cast<int>(cam_meas.first);
-            features_by_camera[cam_id].push_back(feature);
-        }
-    }
-
-    if (en_qual_debug)
-    {
-        printf("[QUALITY_DEBUG] Features grouped by camera:\n");
-        for (const auto &cam_pair : features_by_camera)
-        {
-            printf("[QUALITY_DEBUG]   Camera %d: %zu features\n", cam_pair.first, cam_pair.second.size());
-        }
-    }
-
-    // Count active SLAM and MSCKF features
-    int total_active_slam = 0;
-    int total_active_msckf = 0;
-
-    // Process each camera's features
-    for (const auto &camera_pair : features_by_camera)
-    {
-        int cam_id = camera_pair.first;
-        const auto &cam_features = camera_pair.second;
-
-        if (en_qual_debug)
-            printf("[QUALITY_DEBUG] Processing camera %d with %zu features\n", cam_id, cam_features.size());
-
-        // Initialize 5x5 grid for this camera
-        std::vector<std::vector<int>> grid(GRID_SIZE, std::vector<int>(GRID_SIZE, 0));
-        std::vector<std::vector<double>> grid_quality(GRID_SIZE, std::vector<double>(GRID_SIZE, 0.0));
-
         int cam_slam_count = 0;
         int cam_msckf_count = 0;
 
-        // Process features for this camera
-        for (const auto &feature : cam_features)
+        // Process features for this camera (already deduplicated by the caller)
+        for (int fi = 0; fi < n_feats; fi++)
         {
+            const ov_core::Feature *feature = feats[fi];
             // Get feature position in image for this camera
             if (feature->timestamps.find(cam_id) != feature->timestamps.end() &&
                 !feature->uvs_norm.empty() &&
@@ -1455,8 +1470,8 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
             }
         }
 
-        total_active_slam += cam_slam_count;
-        total_active_msckf += cam_msckf_count;
+        slam_count = cam_slam_count;
+        msckf_count = cam_msckf_count;
 
         if (en_qual_debug)
             printf("[QUALITY_DEBUG] Camera %d summary - SLAM: %d, MSCKF: %d\n", cam_id, cam_slam_count, cam_msckf_count);
@@ -1519,31 +1534,121 @@ double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr
             printf("[QUALITY_DEBUG] Camera %d scores - Grid fill ratio: %.3f, Grid distribution: %.3f, Grid quality: %.3f, Final camera score: %.3f\n",
                    cam_id, grid_fill_ratio, grid_distribution_score, camera_grid_score, camera_score);
 
-        total_quality += camera_score;
-        total_grids_filled += grids_with_features;
-        total_grids += GRID_SIZE * GRID_SIZE;
+        return static_cast<float>(camera_score);
     }
+}
 
-    if (en_qual_debug)
-        printf("[QUALITY_DEBUG] Overall feature counts - Active SLAM: %d, Active MSCKF: %d\n", total_active_slam, total_active_msckf);
+double Publisher::calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map,
+                              std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
+                              std::shared_ptr<ov_msckf::State> state)
+{
+    // Metric-level floor: quality alone must never drive the sustained quality<1 auto-reset
+    // timers (should_auto_reset / ERROR_CODE_NOT_STATIONARY refresh on quality >= 1). Collapse
+    // is reported through the hysteresis machine instead (10 <= BAD threshold -> reported 0),
+    // and the reset/FAILED paths force 0/-1 through their own branches in publish().
+    constexpr double QUAL_FLOOR = 10.0;
+    const int en_qual_debug = 0;
 
-    // Calculate final quality score
-    double final_quality = 0.0;
-    if (!features_by_camera.empty())
+    if (used_features_map.empty())
+        return QUAL_FLOOR;
+
+    // ZUPT ticks advance state->_timestamp without inserting a map entry: anchor the evaluation
+    // clock at the newest feature-update time on those ticks so a parked vehicle holds its last
+    // smoothed value instead of decaying it (and then drifting the hysteresis machine).
+    double t_now = state->_timestamp;
+    const double newest_key = used_features_map.rbegin()->first;
+    bool anchored = false;
+    if (t_now > newest_key && vio_manager && vio_manager->get_did_zupt_update())
     {
-        // Average across all cameras
-        final_quality = total_quality / features_by_camera.size();
+        t_now = newest_key;
+        anchored = true;
     }
 
-    // Ensure quality is within bounds
-    // do not use the averaged one, use the total quality
-    final_quality = std::max(0.0, std::min(100.0, total_quality));
+    // Rescore only when the union can have changed: entries are append-only, so the newest key,
+    // its vector size, and the map size are a sufficient fingerprint. Time passing WITHOUT new
+    // entries (mid-flight starvation) must also re-evaluate so the union thins honestly -- but
+    // not while ZUPT-anchored.
+    const size_t newest_size = used_features_map.rbegin()->second.size();
+    const bool dirty = (newest_key != qual_src_key) || (newest_size != qual_src_size) ||
+                       (used_features_map.size() != qual_src_map_size) ||
+                       (!anchored && t_now > qual_ema_t);
 
-    if (en_qual_debug)
-        printf("[QUALITY_DEBUG] Final quality calculation - Total quality: %.3f, Num cameras: %zu, Final quality: %.3f\n",
-               total_quality, features_by_camera.size(), final_quality);
+    if (dirty)
+    {
+        qual_src_key = newest_key;
+        qual_src_size = newest_size;
+        qual_src_map_size = used_features_map.size();
 
-    return final_quality;
+        // Pool every entry inside the union window, deduplicated by featid. One update's
+        // used-feature list is a sparse, noisy sample of the rig's tracking health (MSCKF
+        // features only enter it when their tracks END), and scoring single entries is what
+        // made the published value jumpy. The pooled set is each camera's full recent track
+        // set -- the same thing the synced batches effectively scored -- so healthy flight
+        // saturates the sum at 100 exactly like the synced path did.
+        const ov_core::Feature *uniq[QUAL_DEDUP_CAP];
+        int n_uniq = 0;
+        const double t_min = t_now - QUAL_UNION_WINDOW_S;
+        for (auto it = used_features_map.rbegin(); it != used_features_map.rend() && it->first >= t_min; ++it)
+        {
+            n_uniq = collect_unique_features(it->second, uniq, n_uniq, QUAL_DEDUP_CAP);
+        }
+
+        // Which cameras have recent evidence?
+        bool cam_present[QUAL_MAX_CAMS] = {};
+        for (int fi = 0; fi < n_uniq; fi++)
+        {
+            for (const auto &cam_meas : uniq[fi]->timestamps)
+            {
+                const int cam_id = static_cast<int>(cam_meas.first);
+                if (cam_id < 0 || cam_id >= QUAL_MAX_CAMS)
+                    continue;
+                auto uv_it = uniq[fi]->uvs_norm.find(cam_meas.first);
+                if (uv_it != uniq[fi]->uvs_norm.end() && !uv_it->second.empty())
+                    cam_present[cam_id] = true;
+            }
+        }
+
+        // Per-camera scores over the union, sum-then-clamp -- exactly the synced fusion
+        double fused = 0.0;
+        for (int c = 0; c < QUAL_MAX_CAMS; c++)
+        {
+            if (!cam_present[c])
+                continue;
+            int n_slam = 0, n_msckf = 0;
+            const double cam_score = score_camera_features(c, uniq, n_uniq, slam_features, state, n_slam, n_msckf);
+            fused += cam_score;
+
+            if (en_qual_debug)
+                printf("[QUALITY_DEBUG] cam %d: %.1f (SLAM %d, MSCKF %d, union %d)\n",
+                       c, cam_score, n_slam, n_msckf, n_uniq);
+        }
+        fused = std::max(0.0, std::min(100.0, fused));
+
+        // Time-constant smoothing of the published value: a single weak update moves it by only
+        // a couple of points (the synced metric hid this noise inside its 2x clamp headroom); a
+        // real collapse still reaches the hysteresis BAD band in ~2*tau, well under the
+        // 45-consecutive-sample requirement the machine itself imposes on top.
+        if (qual_ema < 0.0)
+        {
+            qual_ema = fused;
+        }
+        else
+        {
+            const double dt = std::max(0.0, t_now - qual_ema_t);
+            const double alpha = std::min(1.0, dt / QUAL_EMA_TAU_S);
+            qual_ema += alpha * (fused - qual_ema);
+        }
+        qual_ema_t = t_now;
+
+        if (en_qual_debug)
+            printf("[QUALITY_DEBUG] fused %.1f -> ema %.1f (union %d feats, window %.0f ms)\n",
+                   fused, qual_ema, n_uniq, QUAL_UNION_WINDOW_S * 1e3);
+    }
+
+    if (qual_ema < 0.0)
+        return QUAL_FLOOR;
+
+    return std::max(QUAL_FLOOR, std::min(100.0, qual_ema));
 }
 
 void Publisher::publishBlank()

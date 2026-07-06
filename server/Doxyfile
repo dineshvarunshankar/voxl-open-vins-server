@@ -2,7 +2,7 @@
 
 # Project information
 PROJECT_NAME           = "VOXL OpenVINS Server"
-PROJECT_NUMBER         = 1.0
+PROJECT_NUMBER         = 0.7.0
 PROJECT_BRIEF          = "Visual Inertial Odometry Server for VOXL Platform"
 OUTPUT_DIRECTORY       = doc
 CREATE_SUBDIRS         = YES

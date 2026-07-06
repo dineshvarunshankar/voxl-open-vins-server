@@ -1,7 +1,7 @@
 /**
  * @file VoxlVars.cpp
  * @brief Global variable definitions for VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -69,7 +69,6 @@ std::mutex reset_mtx;
 std::condition_variable reset_cv;
 
 /** @brief Flag indicating if system is armed */
-std::atomic<bool> is_armed(false);
 
 /** @brief Flag indicating if camera is connected */
 std::atomic<bool> is_cam_connected(false);
@@ -88,10 +87,8 @@ int en_auto_reset = 0;
 float auto_reset_max_velocity = 0.0f;
 
 /** @brief Maximum velocity covariance for instant reset */
-float auto_reset_max_v_cov_instant = 0.0f;
 
 /** @brief Maximum velocity covariance for timeout reset */
-float auto_reset_max_v_cov = 0.0f;
 
 /** @brief Timeout duration for velocity covariance reset (seconds) */
 float auto_reset_max_v_cov_timeout_s = 0.0f;
@@ -106,13 +103,10 @@ float auto_reset_min_feature_timeout_s = 0.0f;
 float ok_state_grace_timeout_s = 3.0f;
 
 /** @brief Auto fallback timeout (seconds) */
-float auto_fallback_timeout_s = 0.0f;
 
 /** @brief Minimum velocity for auto fallback */
-float auto_fallback_min_v = 0.0f;
 
 /** @brief Enable continuous yaw checks */
-bool en_cont_yaw_checks = false;
 
 /** @brief Fast yaw threshold */
 float fast_yaw_thresh = 0.0f;
@@ -183,24 +177,12 @@ std::vector<cam_info> cam_info_vec;
 /** @brief Timestamp of last IMU data (nanoseconds) */
 volatile int64_t last_imu_timestamp_ns = 0;
 
-/** @brief Estimated IMU sampling rate in Hz */
-std::atomic<double> imu_rate_hz(1024.0);
-
 /** @brief Global frame transform instance */
 voxl::FrameTransform frame_transform;
 
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES
 // ============================================================================
-
-/** @brief Takeoff camera identifier */
-int takeoff_cam = 0;
-
-/** @brief Enable takeoff camera functionality */
-int en_takeoff_cam = 0;
-
-/** @brief Vector of takeoff camera identifiers */
-std::vector<int> takeoff_cams;
 
 /** @brief Timestamp of last camera data (nanoseconds) */
 volatile int64_t last_cam_time = 0;
@@ -221,7 +203,6 @@ bool occlude_stereo_left = false;
 bool occlude_stereo_right = false;
 
 /** @brief Fusion rate in milliseconds */
-float fusion_rate_dt_ms = 20.0; // 50Hz
 
 // ============================================================================
 // PIPE COMMUNICATION VARIABLES
@@ -233,9 +214,6 @@ int camera_pipe_channels[MAX_CAM_CNT] = {0};
 // ============================================================================
 // IMAGE PROCESSING VARIABLES
 // ============================================================================
-
-/** @brief Image ring buffer for processing */
-voxl::img_ringbuf_packet *img_ringbuf = nullptr;
 
 bool sync_config = true; ///< Flag to indicate if configuration synchronization is enabled
 
@@ -257,9 +235,12 @@ float imu_init_max_gravity_angle_deg = -1.0f;
 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
-    if (!en_imu_body)
+    static bool warned_no_imu_body = false;
+    if (!en_imu_body && !warned_no_imu_body)
     {
-        printf("[INFO] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
+        // once, not per IMU sample -- update() runs at IMU rate
+        printf("[WARN] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
+        warned_no_imu_body = true;
     }
 
     if (is_initialized)
@@ -306,22 +287,6 @@ void voxl::FrameTransform::update(const imu_data_t &data)
 }
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {
-    // C++17 real-time optimization: Load velocity once with proper memory ordering
-    const float vel_mag_current = vel_mag.load(std::memory_order_acquire);
-
-    // FIX: Only skip jerk detection if in-flight AND we've completed at least one full cycle
-    // This prevents deadlock on first initialization
-    if (vel_mag_current > VEL_MAG_JERK_THRESHOLD)
-    {
-        // In-flight: Only reset if we've already collected enough samples
-        // This allows first initialization to complete even if there's movement
-        if (current_total_samples >= expected_total_samples * 0.5f)
-        {
-            resetJerkDetection();
-            return;
-        }
-        // Otherwise, continue collecting samples for initial calibration
-    }
     // C++17 Real-time optimization: Construct vectors in-place, avoid temporaries
     const Eigen::Vector3d acc_sample(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
     const Eigen::Vector3d gyro_sample(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
@@ -402,7 +367,6 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         // FIX: Report jerk status but DON'T reset counters - allows detection to continue
         // This prevents infinite reset loops on first initialization
         has_acc_jerk.store(accel_jerk_detected, std::memory_order_release);
-        has_gyro_jerk.store(gyro_jerk_detected, std::memory_order_release);
         non_static.store(accel_jerk_detected || gyro_jerk_detected, std::memory_order_release);
         avg_acc_1t0.setZero();  // avg_acc_2t1;
         avg_gyro_1t0.setZero(); // avg_gyro_2t1;
@@ -421,7 +385,6 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 void voxl::FrameTransform::resetJerkDetection()
 {
     has_acc_jerk.store(true, std::memory_order_release);
-    has_gyro_jerk.store(true, std::memory_order_release);
     non_static.store(true, std::memory_order_release);
     // reset for next window
     // note that we do not reset the entirity of the window, but only the second half
@@ -445,18 +408,6 @@ void voxl::FrameTransform::resetJerkDetection()
 std::atomic<bool> has_acc_jerk(false);
 
 /**
- * @brief Flag indicating if gyroscope jerk is detected
- */
-std::atomic<bool> has_gyro_jerk(false);
-
-/**
  * @brief Non-static flag for jerk detection
  */
 std::atomic<bool> non_static(false);
-
-/**
- * @brief Window size in seconds for jerk detection
- */
-double window_size_s = 1.0;
-
-std::atomic<float> vel_mag(0.0f); ///< Current velocity magnitude

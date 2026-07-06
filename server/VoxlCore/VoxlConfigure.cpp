@@ -1,7 +1,7 @@
 /**
  * @file VoxlConfigure.cpp
  * @brief Configuration management implementation for VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -88,8 +88,6 @@ namespace voxl
     int sync_cam_config(void)
     {
         // Initialize global variables
-        takeoff_cam = -1;
-        takeoff_cams.clear();
         cam_info_vec.clear();
 
         // GRAB CAMERA VIO CONF FILE
@@ -273,7 +271,6 @@ namespace voxl
             fprintf(stderr, "Failed to load YAML: %s\n", e.what());
             return -1;
         }
-        int is_there_an_occlluded_cam = 0;
         // Per-cam body/IMU->cam transform; composed into the stereo extrinsic below.
         std::vector<Eigen::Matrix4d> T_final_per_cam(n_cams, Eigen::Matrix4d::Identity());
         for (int i = 0; i < n_cams; i++)
@@ -289,46 +286,13 @@ namespace voxl
             strncpy(cam.tracking_name, vio_cams[i].pipe_for_tracking, sizeof(cam.tracking_name) - 1);
             cam.tracking_name[sizeof(cam.tracking_name) - 1] = '\0';
 
-            strncpy(cam.preview_name, vio_cams[i].pipe_for_preview, sizeof(cam.preview_name) - 1);
-            cam.preview_name[sizeof(cam.preview_name) - 1] = '\0';
-
             cam.mode = using_stereo ? STEREO : MONO;
             cam.cam_id = i;
 
-            // GRAB LIST OF REALIBLE CAMERAS FOR TAKEOFF
-            if (takeoff_cam < 0 && !vio_cams[i].is_occluded_on_ground)
-            {
-                takeoff_cam = i;
-            }
             printf("vio cam: %d is occluded: %d\n", i, vio_cams[i].is_occluded_on_ground);
-            if (!vio_cams[i].is_occluded_on_ground)
-            {
-                takeoff_cams.push_back(i);
-                cam.is_occluded_on_takeoff = 0;
-            }
-            if (vio_cams[i].is_occluded_on_ground){
-                is_there_an_occlluded_cam = 1;
-                cam.is_occluded_on_takeoff = vio_cams[i].is_occluded_on_ground;
-            }
-
-            // GRAB INTRINSICS AND DISTORTION MODEL
-            // THIS WHOLE SECTION CAN BE REMOVED -- PENDING CHECK
-            //  ------------------------------------------------------------
-            cam.width = vio_cams[i].cal.width;
-            cam.height = vio_cams[i].cal.height;
-            cam.cam_calib_intrinsic(0, 0) = vio_cams[i].cal.fx;
-            cam.cam_calib_intrinsic(1, 0) = vio_cams[i].cal.fy;
-            cam.cam_calib_intrinsic(2, 0) = vio_cams[i].cal.cx;
-            cam.cam_calib_intrinsic(3, 0) = vio_cams[i].cal.cy;
-            cam.cam_calib_intrinsic(4, 0) = vio_cams[i].cal.D[0];
-            cam.cam_calib_intrinsic(5, 0) = vio_cams[i].cal.D[1];
-            cam.cam_calib_intrinsic(6, 0) = vio_cams[i].cal.D[2];
-            cam.cam_calib_intrinsic(7, 0) = vio_cams[i].cal.D[3];
-            // ------------------------------------------------------------
-            if (vio_cams[i].cal.is_fisheye)
-                cam.is_fisheye = 1;
-            else
-                cam.is_fisheye = 0;
+            // Only the occlusion flag is consumed downstream (takeoff masking in MonoCamera);
+            // the estimator gets intrinsics/extrinsics from the YAML chain, not cam_info
+            cam.is_occluded_on_takeoff = vio_cams[i].is_occluded_on_ground;
 
             // INTRINSICS, DISTORTION MODEL, AND RESOLUTION
             //  Set intrinsics as array [fx, fy, cx, cy]
@@ -527,18 +491,6 @@ namespace voxl
             }
         }
 
-        // BLIND TAKEOFF FEATURE PREPARATION
-        if (takeoff_cam < 0)
-            takeoff_cam = 0;
-        if (takeoff_cams.empty())
-            takeoff_cams.push_back(0);
-
-        // if no cams were occluded, we can disable the blind takeoff feature
-        if (!is_there_an_occlluded_cam)
-        {
-            takeoff_cam = -1;
-            takeoff_cams.clear();
-        }
         return 0;
     }
 
@@ -583,15 +535,10 @@ namespace voxl
         memset(string_holder, '\0', CHAR_BUF_SIZE);
         json_fetch_bool_with_default(parent, "en_auto_reset", &en_auto_reset, 1);
         json_fetch_float_with_default(parent, "auto_reset_max_velocity", &auto_reset_max_velocity, 20.0f);
-        json_fetch_float_with_default(parent, "auto_reset_max_v_cov_instant", &auto_reset_max_v_cov_instant, 0.2f);
-        json_fetch_float_with_default(parent, "auto_reset_max_v_cov", &auto_reset_max_v_cov, 0.2f);
         json_fetch_float_with_default(parent, "auto_reset_max_v_cov_timeout_s", &auto_reset_max_v_cov_timeout_s, 0.5f);
         json_fetch_int_with_default(parent, "auto_reset_min_features", &auto_reset_min_features, 1);
         json_fetch_float_with_default(parent, "auto_reset_min_feature_timeout_s", &auto_reset_min_feature_timeout_s, 10.0f);
         json_fetch_float_with_default(parent, "ok_state_grace_timeout_s", &ok_state_grace_timeout_s, 2.0f);
-        json_fetch_float_with_default(parent, "auto_fallback_timeout_s", &auto_fallback_timeout_s, 3.0f);
-        json_fetch_float_with_default(parent, "auto_fallback_min_v", &auto_fallback_min_v, 0.6f);
-        json_fetch_bool_with_default(parent, "en_cont_yaw_checks", (int *)&en_cont_yaw_checks, 0);
         json_fetch_float_with_default(parent, "fast_yaw_thresh", &fast_yaw_thresh, 5.0f);
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
         json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/usr/share/modalai/voxl-open-vins/VoxlConfig/starling2");
@@ -606,7 +553,6 @@ namespace voxl
 
         json_fetch_float_with_default(parent, "stereo_z_min", &stereo_z_min, 0.10f);
         json_fetch_float_with_default(parent, "stereo_z_max", &stereo_z_max, 100.0f);
-        json_fetch_float_with_default(parent, "fusion_rate_dt_ms", &fusion_rate_dt_ms, 20.0f);
         json_fetch_bool_with_default(parent, "imu_body_frame_mode", (int *)&en_imu_body, 1);
 
         // Quality hysteresis threshold configuration

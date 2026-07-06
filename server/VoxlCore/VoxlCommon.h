@@ -1,7 +1,7 @@
 /**
  * @file VoxlCommon.h
  * @brief Common definitions and utilities for the VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -130,61 +130,9 @@ static std::string camera_mode_as_string(camera_mode cm)
         return "UNKNOWN";
 }
 
-/**
- * @brief Convert string representation to camera mode enumeration
- *
- * This function converts a string representation of a camera mode to its
- * corresponding enumeration value. Used for parsing configuration files
- * and command-line arguments.
- *
- * @param str_cm String representation of camera mode
- * @return Camera mode enumeration value
- */
-static camera_mode string_camera_mode_to_enum(const char *str_cm)
-{
-    if (!strncmp(str_cm, "MONO", sizeof("MONO")))
-    {
-        return MONO;
-    }
-    if (!strncmp(str_cm, "STEREO", sizeof("STEREO")))
-    {
-        return STEREO;
-    }
-    if (!strncmp(str_cm, "STEREO_LEFT_ONLY", sizeof("STEREO_LEFT_ONLY")))
-    {
-        return STEREO_LEFT_ONLY;
-    }
-    if (!strncmp(str_cm, "STEREO_RIGHT_ONLY", sizeof("STEREO_RIGHT_ONLY")))
-    {
-        return STEREO_RIGHT_ONLY;
-    }
-    else
-        return UNKNOWN;
-}
-
 // ============================================================================
 // DATA STRUCTURES
 // ============================================================================
-
-/**
- * @struct image_data
- * @brief Base packet structure for image data fed to trackers
- *
- * This structure contains all the necessary information for processing
- * images in the VIO system, including timestamps, tracker identifiers,
- * image data, and masking information.
- *
- * The structure is used as the primary data container for all image
- * processing operations in the tracking pipeline.
- */
-typedef struct image_data
-{
-    int64_t timestamp_ns;            ///< Timestamp of image in nanoseconds
-    std::vector<size_t> tracker_ids; ///< Vector of tracker IDs per camera, matching order of images + masks
-    std::vector<cv::Mat> images;     ///< Vector of images to track across, in order matching ids vector
-    std::vector<cv::Mat> masks;      ///< Vector of masks denoting regions of non-interest, in order matching ids vector
-                                     ///< Mask regions with val == 255 will be ignored in tracking process
-} image_data;
 
 /**
  * @struct cam_info
@@ -196,17 +144,11 @@ typedef struct image_data
  */
 typedef struct cam_info
 {
-    char name[128];                                  ///< Camera name identifier
-    char tracking_name[128];                         ///< Name used for tracking operations
-    char preview_name[128];                          ///< Name used for preview/display
-    camera_mode mode;                                ///< Camera operation mode
-    Eigen::Matrix<double, 7, 1> cam_wrt_imu;         ///< Camera pose relative to IMU (quaternion + position)
-    Eigen::Matrix<double, 8, 1> cam_calib_intrinsic; ///< Camera intrinsic calibration parameters
-    int width;                                       ///< Image width in pixels
-    int height;                                      ///< Image height in pixels
-    bool is_fisheye;                                 ///< Flag indicating if camera uses fisheye lens
-    bool is_occluded_on_takeoff;                     ///< Flag indicating if camera is occluded on takeoff
-    size_t cam_id;                                   ///< Unique camera identifier
+    char name[128];              ///< Camera name identifier
+    char tracking_name[128];     ///< Name used for tracking operations
+    camera_mode mode;            ///< Camera operation mode
+    bool is_occluded_on_takeoff; ///< Flag indicating if camera is occluded on takeoff
+    size_t cam_id;               ///< Unique camera identifier
 } cam_info;
 
 // ============================================================================
@@ -233,84 +175,6 @@ static int64_t _apps_time_monotonic_ns()
         return -1;
     }
     return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
-}
-
-/**
- * @brief Mathematical sign function
- *
- * Returns the sign of a double value: 1.0 for positive, -1.0 for negative,
- * and 0.0 for zero.
- *
- * @param x Input value
- * @return Sign of the input value
- */
-static double sign(double x)
-{
-    return x > 0 ? 1.0 : (x < 0 ? -1.0 : 0.0);
-}
-
-// ============================================================================
-// MEMORY MANAGEMENT UTILITIES
-// ============================================================================
-
-/**
- * @brief Extract memory usage value from /proc/self/status
- *
- * This function reads the /proc/self/status file to extract specific
- * memory usage statistics for the current process.
- *
- * @param fieldName Name of the field to extract (e.g., "VmSize:", "VmRSS:")
- * @return Memory value in bytes, or 0 if not found
- */
-static long getValueFromStatus(const std::string &fieldName)
-{
-    std::ifstream status("/proc/self/status");
-    std::string line;
-    while (std::getline(status, line))
-    {
-        if (line.find(fieldName) == 0)
-        {
-            long value = 0;
-            char unit[4] = {0}; // Initialize buffer to zeros for safety
-            // Security: Use field width limit to prevent buffer overflow
-            // %3s reads at most 3 chars + null terminator (4 bytes total)
-            sscanf(line.c_str(), "%*s %ld %3s", &value, unit);
-            // Ensure null termination (defensive programming)
-            unit[sizeof(unit) - 1] = '\0';
-            // Convert to bytes based on unit
-            if (strcmp(unit, "kB") == 0)
-                value *= 1024;
-            return value;
-        }
-    }
-    return 0;
-}
-
-/**
- * @brief Print comprehensive memory usage statistics
- *
- * This function displays detailed memory usage information for the current
- * process, including virtual memory size, resident set size, data segment
- * size, and stack size. Useful for debugging and performance monitoring.
- *
- * @param label Label to identify the memory usage report
- */
-static void printMemoryUsage(const std::string &label)
-{
-    const double mb = 1024.0 * 1024.0;
-
-    long vmSize = getValueFromStatus("VmSize:");
-    long vmRSS = getValueFromStatus("VmRSS:");
-    long vmData = getValueFromStatus("VmData:");
-    long vmStk = getValueFromStatus("VmStk:");
-
-    std::cout << "\n=== " << label << " ===\n"
-              << std::fixed << std::setprecision(2)
-              << "Virtual Memory Size: " << vmSize / mb << " MB\n"
-              << "Resident Set Size: " << vmRSS / mb << " MB\n"
-              << "Data Segment Size: " << vmData / mb << " MB\n"
-              << "Stack Size: " << vmStk / mb << " MB\n"
-              << std::endl;
 }
 
 #endif // VOXL_COMMON_H

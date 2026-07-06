@@ -1,7 +1,7 @@
 /**
  * @file CameraManager.h
  * @brief Camera management system for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -90,16 +90,6 @@ namespace voxl
         void shutdown();
 
         /**
-         * @brief Get a camera by its ID
-         *
-         * Retrieves a specific camera instance by its unique identifier.
-         *
-         * @param camera_id The ID of the camera to retrieve
-         * @return Shared pointer to the camera, or nullptr if not found
-         */
-        std::shared_ptr<CameraBase> getCamera(size_t camera_id);
-
-        /**
          * @brief Get all cameras
          *
          * Returns a vector containing all managed camera instances.
@@ -107,25 +97,6 @@ namespace voxl
          * @return Vector of camera shared pointers
          */
         std::vector<std::shared_ptr<CameraBase>> getAllCameras();
-
-        /**
-         * @brief Get the number of cameras
-         *
-         * Returns the total number of cameras currently managed by the system.
-         *
-         * @return Number of cameras managed
-         */
-        size_t getCameraCount() const;
-
-        /**
-         * @brief Check if the camera manager is initialized
-         *
-         * Determines whether the camera manager has been successfully
-         * initialized with camera configurations.
-         *
-         * @return True if initialized, false otherwise
-         */
-        bool isInitialized() const;
 
     private:
         /**

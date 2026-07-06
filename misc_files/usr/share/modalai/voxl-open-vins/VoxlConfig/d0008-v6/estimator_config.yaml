@@ -7,6 +7,18 @@ integration: "rk4" # discrete, rk4, analytical (if rk4 or analytical used then a
 use_stereo: false # if we have more than 1 camera, if we should try to track stereo constraints between pairs
 max_cameras: 2 # how many cameras we have 1 = mono, 2 = stereo, >2 = binocular (all mono tracking)
 
+# ------------------------------------------------------------------
+# Per-camera acquisition declaration (REQUIRED knowledge for async rigs)
+# ------------------------------------------------------------------
+# D0008-v6: dual unsynced AR0144 tracking cams, both GLOBAL shutter, 30 fps nominal.
+# (See the fpv config for a rolling-shutter example with online readout refinement.)
+cam0_shutter: "global"
+cam0_readout_time_s: 0.0
+cam0_fps: 30.0
+cam1_shutter: "global"
+cam1_readout_time_s: 0.0
+cam1_fps: 30.0
+
 calib_cam_extrinsics: true # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
 calib_cam_intrinsics: true # if camera intrinsics should be optimized (focal, center, distortion)
 calib_cam_timeoffset: true # if timeoffset between camera and IMU should be optimized

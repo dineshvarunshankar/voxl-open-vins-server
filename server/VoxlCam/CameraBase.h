@@ -1,7 +1,7 @@
 /**
  * @file CameraBase.h
  * @brief Base class for camera implementations in VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *

@@ -1,7 +1,7 @@
 /**
  * @file MonoCameraMinimal.cpp
  * @brief Monocular camera implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -202,9 +202,6 @@ namespace voxl
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
         }
-
-        // Mark last processed timestamp (only when we actually processed)
-        last_processed_ts_ns_ = meta.timestamp_ns;
     }
 
     /**
@@ -357,18 +354,6 @@ namespace voxl
         }
     }
 
-    /**
-     * @brief Check if system is in reset state
-     *
-     * Determines whether the VIO system is currently in a reset state,
-     * which affects how image processing should be handled.
-     *
-     * @return true if system is resetting, false otherwise
-     */
-    bool MonoCamera::is_system_resetting() const
-    {
-        return is_resetting;
-    }
 
     /**
      * @brief Check if system is ready to process images

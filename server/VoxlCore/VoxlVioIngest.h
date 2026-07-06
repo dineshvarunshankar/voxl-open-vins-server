@@ -2,6 +2,8 @@
 /**
  * VoxlVioIngest.h -- wires the server's per-frame post-processing into VioManager's async ingest.
  *
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
+ *
  * Since the lock-free camera ingest lives inside ov_msckf (AsyncCameraBuffer), the server no
  * longer loops over camera batches: cameras push frames straight into the VioManager from their
  * pipe threads, and the IMU feed releases them in global timestamp order on the VIO thread.
@@ -56,9 +58,12 @@ inline void register_vio_camera_callback(ov_msckf::VioManager &vm) {
         if (is_resetting.load(std::memory_order_acquire)) {
             return false; // pause draining; the reset path owns the estimator now
         }
-        // Publish the updated state (same VIO thread that ran the update)
+        // Publish the updated state (same VIO thread that ran the update). The map is taken by
+        // reference -- valid for the whole callback because publish never re-enters feed/drain --
+        // which deletes two full deep copies (~12 tree nodes + ~50 shared_ptr refcount pairs per
+        // entry) per camera tick.
         auto st = vio_manager->get_state();
-        auto feats = vio_manager->get_used_features_map();
+        const auto &feats = vio_manager->get_used_features_map_ref();
         if (is_resetting.load(std::memory_order_relaxed)) {
             return false;
         }

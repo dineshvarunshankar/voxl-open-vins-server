@@ -1,7 +1,7 @@
 /**
  * @file VoxlConfigure.h
  * @brief Configuration management for VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -96,7 +96,6 @@ namespace voxl
      * - Updates distortion model parameters
      * - Validates configuration consistency
      *
-     * TODO: Add support for extrinsic calibration parameters
      *
      * @return 0 on success, non-zero on failure
      * @see read_server_config()

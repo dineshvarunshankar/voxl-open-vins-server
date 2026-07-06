@@ -1,7 +1,7 @@
 /**
  * @file MonoCameraMinimal.h
  * @brief Monocular camera implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -105,16 +105,6 @@ namespace voxl
         void update_mask_if_needed(bool should_mask);
 
         /**
-         * @brief Check if system is in reset state
-         *
-         * Determines whether the VIO system is currently in a reset state,
-         * which affects how image processing should be handled.
-         *
-         * @return True if system is resetting, false otherwise
-         */
-        bool is_system_resetting() const;
-
-        /**
          * @brief Check if system is ready to process images
          *
          * Determines whether the VIO system is ready to accept and process
@@ -138,12 +128,6 @@ namespace voxl
 
         /** @brief Flag indicating occlusion threshold has already been passed once */
         bool occlusion_threshold_passed_{false};
-
-        /** @brief Timestamp of the last fully processed frame (ns) */
-        int64_t last_processed_ts_ns_{0};
-
-        /** @brief Minimum interval to process frames when static (ms) */
-        int throttle_static_min_interval_ms_{100};
     };
 
 } // namespace voxl

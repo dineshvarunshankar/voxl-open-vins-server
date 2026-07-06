@@ -12,3 +12,4 @@ pkg/data
 .vscode
 .gitconfig
 .vscode/*
+server/doc

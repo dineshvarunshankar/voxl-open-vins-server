@@ -1,7 +1,7 @@
 /**
  * @file StereoCameraMinimal.h
  * @brief Stereo camera implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -93,16 +93,6 @@ namespace voxl
          * @param should_mask_right Whether the right camera mask should be active
          */
         void update_masks_if_needed(bool should_mask_left, bool should_mask_right);
-
-        /**
-         * @brief Check if system is in reset state
-         *
-         * Determines whether the VIO system is currently in a reset state,
-         * which affects how image processing should be handled.
-         *
-         * @return True if system is resetting, false otherwise
-         */
-        bool is_system_resetting() const;
 
         /**
          * @brief Check if system is ready to process images
