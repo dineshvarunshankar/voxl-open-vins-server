@@ -13,7 +13,6 @@ VIO solution for VOXL based on open_vins (https://github.com/rpng/open_vins)
  - libmodal-flow
  - libmodal-cv
  - voxl-mavlink
- - voxl-ceres-solver
  - voxl-mpa-tools
  - librc-math
  - libmodal-journal
@@ -21,6 +20,18 @@ VIO solution for VOXL based on open_vins (https://github.com/rpng/open_vins)
 
 
 This README covers building this package. See docs.modalai.com for usage.
+
+## Initialization (ceres-free)
+
+The dynamic (moving) initializer runs a purpose-built, Ceres-free, lock-free solver
+(`external/open_vins/ov_init/src/ceres_free/` -- see its README for design, knobs, and
+verification). Highlights: projector-free Dong-Si linear bootstrap, S2-gravity MLE with a
+full-orientation gauge (init/reset at any attitude), covariance-consistent gravity re-align,
+warm-start clone injection, and a soft-reset path (`RESET_VIO_SOFT`) that preserves the
+feature/IMU front-end and seeds the re-init with the live filter's bias estimates.
+Measured on a QRB5165 with the shipped `fpv` config: full dynamic initialization in ~17-20 ms
+end-to-end (the legacy Ceres path was ~65 ms), including an aggressive-motion example with
+177 deg of rotation across the window converging to a 0.1 deg gravity tilt in 2 MLE iterations.
 
 
 ## Build Environment

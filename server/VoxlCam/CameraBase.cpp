@@ -1,7 +1,7 @@
 /**
  * @file CameraBase.cpp
  * @brief Base camera implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -155,8 +155,6 @@ namespace voxl
         // Small delay to ensure pending operations complete
         usleep(50000);
 
-        // // Close the pipe
-        // pipe_client_close(channel_);
         is_connected_ = false;
 
         if (en_debug)

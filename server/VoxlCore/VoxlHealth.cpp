@@ -1,7 +1,7 @@
 /**
  * @file VoxlHealth.cpp
  * @brief Health check implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -9,6 +9,7 @@
  */
 
 #include "VoxlHK.h"
+#include "VoxlVioIngest.h"
 using namespace voxl;
 // ============================================================================
 // HEALTH CHECK IMPLEMENTATION
@@ -153,8 +154,8 @@ void HealthCheck::analyzeErrorCodes()
 
     if (new_errors != 0)
     {
-        std::cerr << "[HEALTH] New errors detected: 0x" << std::hex << (int)new_errors << std::dec << std::endl;
-        printf("[DEBUG] Current error codes: 0x%x, New errors: 0x%x\n", (int)current_error_codes, (int)new_errors);
+        std::cerr << "[HEALTH] New errors detected: 0x" << std::hex << (int)new_errors
+                  << " (all current: 0x" << (int)current_error_codes << ")" << std::dec << std::endl;
 
         // Log specific error details
         if (new_errors & ERROR_CODE_COVARIANCE)
@@ -171,7 +172,10 @@ void HealthCheck::analyzeErrorCodes()
         }
         if (new_errors & ERROR_CODE_NOT_STATIONARY)
         {
-            std::cerr << "[HEALTH] ERROR: System not stationary at initialization" << std::endl;
+            // NOTE: this bit is raised by the publisher's quality-bad-for-too-long timeout
+            // (auto_reset_max_v_cov_timeout_s), not by a stationarity check -- the pipe
+            // interface has no dedicated code for it, so it reuses NOT_STATIONARY
+            std::cerr << "[HEALTH] ERROR: estimation quality below threshold for too long (bit reused: NOT_STATIONARY)" << std::endl;
         }
         if (new_errors & ERROR_CODE_NO_FEATURES)
         {
@@ -216,7 +220,6 @@ void HealthCheck::analyzeErrorCodes()
         if (new_errors & ERROR_CODE_BAD_TIMESTAMP)
         {
             std::cerr << "[HEALTH] ERROR: Sensor measurements with bad timestamps" << std::endl;
-            printf("[DEBUG] Health check detected ERROR_CODE_BAD_TIMESTAMP\n");
         }
         if (new_errors & ERROR_CODE_IMU_MISSING)
         {
@@ -373,6 +376,20 @@ void HealthCheck::monitorSystemPerformance()
  * Evaluates whether auto-reset conditions are met based on
  * current system state and error conditions.
  */
+// Only estimator-health codes justify an automatic hard reset: they mean the filter itself is
+// (suspected) poisoned. Transport warnings -- DROPPED_CAM/IMU/GPS, LOW_FEATURES, bad
+// format/timestamp glitches -- and missing-sensor codes must NOT nuke a healthy filter: the
+// async ingest legitimately disposes frames (ordering, staleness, reset teardown), and a single
+// such drop used to hard-reset the estimator mid-flight and loop. Missing sensors have their
+// own reconnect handling above.
+static constexpr uint32_t AUTO_RESET_ERROR_MASK =
+    ERROR_CODE_COVARIANCE | ERROR_CODE_IMU_OOB | ERROR_CODE_IMU_BW | ERROR_CODE_NOT_STATIONARY | ERROR_CODE_NO_FEATURES |
+    ERROR_CODE_CONSTRAINT | ERROR_CODE_FEATURE_ADD | ERROR_CODE_VEL_INST_CERT | ERROR_CODE_VEL_WINDOW_CERT;
+
+// Warning-class codes decay after this quiet period (no new raise) so a one-off drop does not
+// stick in the published error field forever (they only cleared on reconnect transitions before).
+static constexpr int64_t WARNING_DECAY_NS = 10000000000LL; // 10 s
+
 void HealthCheck::checkAutoResetConditions()
 {
     if (!en_auto_reset)
@@ -397,9 +414,25 @@ void HealthCheck::checkAutoResetConditions()
 
     uint32_t current_error_codes = vio_error_codes.load();
 
-    if (current_error_codes != 0)
+    // Decay stale transport warnings (single-writer: this health thread)
+    static uint32_t last_warn_codes = 0;
+    static int64_t last_warn_raise_ns = 0;
+    uint32_t warn_codes = current_error_codes & ~AUTO_RESET_ERROR_MASK;
+    if ((warn_codes & ~last_warn_codes) != 0)
     {
-        std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x" << std::hex << (int)current_error_codes << std::dec << std::endl;
+        last_warn_raise_ns = now;
+    }
+    last_warn_codes = warn_codes;
+    if (warn_codes != 0 && (now - last_warn_raise_ns) > WARNING_DECAY_NS)
+    {
+        clearErrorCodes(warn_codes);
+    }
+
+    uint32_t reset_codes = current_error_codes & AUTO_RESET_ERROR_MASK;
+    if (reset_codes != 0)
+    {
+        std::cerr << "[HEALTH] AUTO-RESET RECOMMENDED: Error code(s) detected: 0x" << std::hex << (int)reset_codes
+                  << " (all codes: 0x" << (int)current_error_codes << ")" << std::dec << std::endl;
         clearErrorCodes(0, true);
         // Set reset flag (this would trigger reset in main loop)
         reset_requested.store(true, std::memory_order_release);
@@ -414,9 +447,13 @@ void HealthCheck::checkAutoResetConditions()
  */
 void HealthCheck::checkVINSResetRequest()
 {
-    // atomically check if a reset has been requested, if not, return
-    if (!reset_requested.exchange(false, std::memory_order_acq_rel))
+    // atomically check if a (hard or soft) reset has been requested, if not, return
+    bool want_hard = reset_requested.exchange(false, std::memory_order_acq_rel);
+    bool want_soft = soft_reset_requested.exchange(false, std::memory_order_acq_rel);
+    if (!want_hard && !want_soft)
         return;
+    if (want_hard) // a hard request supersedes a pending soft one
+        want_soft = false;
 
     // check time since last reset
     int64_t current_time = _apps_time_monotonic_ns();
@@ -441,8 +478,13 @@ void HealthCheck::checkVINSResetRequest()
     int rc = 0;
     try
     {
-        rc = doHardReset();
+        rc = want_soft ? doSoftReset() : doHardReset();
         reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
+        if (want_soft)
+            soft_reset_num_counter.fetch_add(1, std::memory_order_acq_rel);
+        printf("[HEALTH] reset #%u (%s): soft=%u hard=%u\n", reset_num_counter.load(),
+               want_soft ? "soft" : "hard", soft_reset_num_counter.load(),
+               reset_num_counter.load() - soft_reset_num_counter.load());
     }
     catch (const std::exception &e)
     {
@@ -507,8 +549,10 @@ int HealthCheck::doHardReset()
     clearErrorCodes(0, true);
     printf("[HEALTH] Hard reset in progress\n");
 
-    // ensure we have a valid and initialized VIO manager; if not, create one directly
-    if (!vio_manager && !vio_manager->initialized())
+    // ensure we have a valid VIO manager; if not, create one directly
+    // (was `!vio_manager && !vio_manager->initialized()`: short-circuit guaranteed a null deref
+    // whenever the first operand was true)
+    if (!vio_manager)
     {
         if (en_debug)
             std::cout << "[HEALTH] VIO manager was uninitialized, creating a fresh instance" << std::endl;
@@ -516,6 +560,7 @@ int HealthCheck::doHardReset()
         try
         {
             vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+            voxl::register_vio_camera_callback(*vio_manager);
         }
         catch (const std::exception &e)
         {
@@ -533,6 +578,7 @@ int HealthCheck::doHardReset()
     try
     {
         new_vio_manager = std::make_unique<ov_msckf::VioManager>(vio_manager_options);
+        voxl::register_vio_camera_callback(*new_vio_manager);
 
         if (!new_vio_manager)
         {
@@ -560,6 +606,56 @@ int HealthCheck::doHardReset()
     // destroy old VIO manager
     old_vio_manager.reset();
 
+    // The old manager's ingest buffer just disposed every still-queued frame through the
+    // processed-callback, which re-raised ERROR_CODE_DROPPED_CAM AFTER the clear at the top of
+    // this reset -- the fresh manager then booted pre-poisoned and re-reset the moment it
+    // initialized. Teardown housekeeping is not a health event: clear again.
+    clearErrorCodes(0, true);
+
+    return 0;
+}
+
+int HealthCheck::doSoftReset()
+{
+    // Wait for in-flight sensor callbacks to drain (same handshake as the hard reset).
+    {
+        std::unique_lock<std::mutex> lk(reset_mtx);
+        bool wait_result = reset_cv.wait_for(lk, std::chrono::seconds(5),
+            [this] { return active_callbacks.load(std::memory_order_acquire) == 0; });
+        if (!wait_result)
+        {
+            fprintf(stderr, "[ERROR] Timeout waiting for callbacks during soft reset. active_callbacks=%d\n",
+                    active_callbacks.load(std::memory_order_acquire));
+            return -1;
+        }
+    }
+    Publisher::getInstance().set_first_packet(true);
+    // Capture the pending health error codes BEFORE clearing them: a soft reset issued while
+    // errors are pending is divergence-suspected, and the initializer's bias-prior gating must
+    // know (it inflates the snapshot sigmas instead of trusting a possibly-poisoned filter).
+    const uint32_t pending_errors = vio_error_codes.load(std::memory_order_acquire);
+    clearErrorCodes(0, true);
+    printf("[HEALTH] Soft reset in progress (front-end preserved%s)\n",
+           (pending_errors != 0) ? ", divergence-suspected" : "");
+
+    if (!vio_manager)
+    {
+        fprintf(stderr, "[ERROR] No VIO manager to soft-reset; escalating to hard reset\n");
+        return doHardReset();
+    }
+    try
+    {
+        // Front-end-preserving EKF reset: keeps the feature DB + IMU history so the improved
+        // any-attitude dynamic initializer re-fires fast (no full-window re-collection). The
+        // cause tag drives the live-bias prior gating inside the initializer.
+        vio_manager->soft_reset(pending_errors != 0 ? ov_msckf::VioManager::SoftResetCause::DIVERGENCE
+                                                    : ov_msckf::VioManager::SoftResetCause::CLIENT);
+    }
+    catch (const std::exception &e)
+    {
+        fprintf(stderr, "[ERROR] Exception during soft reset: %s -- escalating to hard reset\n", e.what());
+        return doHardReset();
+    }
     return 0;
 }
 

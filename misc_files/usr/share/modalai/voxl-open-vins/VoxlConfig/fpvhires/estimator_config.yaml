@@ -1,23 +1,61 @@
 %YAML:1.0 # need to specify the file type at the top!
 
-verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
+verbosity: "ALL" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
 
 use_fej: true # if first-estimate Jacobians should be used (enable for good consistency)
 integration: "rk4" # discrete, rk4, analytical (if rk4 or analytical used then analytical covariance propagation is used)
 use_stereo: false # if we have more than 1 camera, if we should try to track stereo constraints between pairs
 max_cameras: 2 # how many cameras we have 1 = mono, 2 = stereo, >2 = binocular (all mono tracking)
 
-calib_cam_extrinsics: true # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
-calib_cam_intrinsics: true # if camera intrinsics should be optimized (focal, center, distortion)
-calib_cam_timeoffset: true # if timeoffset between camera and IMU should be optimized
+# ------------------------------------------------------------------
+# Per-camera acquisition declaration (REQUIRED knowledge for async rigs)
+# ------------------------------------------------------------------
+# Declare what each physical camera IS. The estimator refuses a "rolling" camera without a
+# positive readout time (silent 0 = unmodeled RS skew on every row), zeroes any stale readout
+# on a "global" camera, and uses the nominal fps to seed the epoch-binding horizon and the
+# ingest staleness gates from the first frame (fresh start AND every hard reset).
+# The RS measurement model runs whenever the readout is nonzero -- calib_cam_readout below
+# only controls whether the value is REFINED online.
+#
+# fpvhires rig (UNSYNCED dual-cam; the synced duo-AR0144 rig keeps VoxlConfig/fpv):
+#   cam0 = IMX412 hires, ROLLING shutter, 60 fps nominal (epoch reference camera)
+#   cam1 = AR0144 tracking, GLOBAL shutter, 30 fps nominal
+# camN_fps must match the STREAMED sensor mode: it seeds the epoch-binding horizon and the
+# ingest staleness gates, and it sanity-bounds the readout time (readout <= 1/fps).
+cam0_shutter: "rolling"
+cam0_readout_time_s: 0.001   # BRING-UP: RS deliberately UNMODELED (loud boot warning). The 15ms guess
+                           # ran on hardware and its error aliased ~-4.3ms into cam0's dt (mean of the
+                           # row-time error) while the row-dependent part helped walk the calibration
+                           # off a cliff -- a WRONG readout is worse than none. Set the MEASURED value
+                           # (active_rows x line_time of the streamed sensor mode; camx table
+                           # line_length_pclk / vt_pix_clk) -- dt aliasing suggests ~3-6ms, NOT 12-15.
+cam0_fps: 60.0
+cam1_shutter: "global" # readout stays hard 0 and is NEVER estimated (no spurious DOF on the GS stream)
+cam1_readout_time_s: 0.0
+cam1_fps: 30.0
+
+# --- BRING-UP CALIBRATION FREEZE -------------------------------------------------------------
+# Hardware run 2026-07-04: with all four camera-calibration groups free and only 1-5 MSCKF
+# features per update (SLAM starved), the calibration states random-walked: extrinsics moved
+# 8-14cm, cam0 dt slid -4.3ms (readout-error aliasing), ba reached 0.45 m/s^2 -> triangulation
+# died (retri 0/N), overlay features died young, filter diverged at ~0.5 m/s position drift.
+# Freeze everything at kalibr until the pipeline soaks clean (retri N~M, SLAM map pinned ~30,
+# stable dt/ba). Re-enable ONE group per soak, in this order:
+#   1) measured cam0 readout (value only, calib still off)
+#   2) calib_cam_timeoffset
+#   3) calib_cam_readout (needs the measured seed; sigma below)
+#   4) extrinsics/intrinsics last -- or leave frozen for production (factory cal is good)
+calib_cam_extrinsics: true # BRING-UP freeze (was true): moved 8-14cm during the divergent run
+calib_cam_intrinsics: true # BRING-UP freeze (was true)
+calib_cam_timeoffset: true # BRING-UP freeze (was true): per-cam kalibr timeshift is trusted
 calib_imu_intrinsics: false # if imu intrinsics should be calibrated (rotation and skew-scale matrix)
 calib_imu_g_sensitivity: false # if gyroscope gravity sensitivity (Tg) should be calibrated
 
 max_clones: 11 # how many clones in the sliding window
 max_slam: 30 # number of features in our state vector
 max_slam_in_update: 15 # update can be split into sequential updates of batches, how many in a batch
-max_msckf_in_update: 10 # how many MSCKF features to use in the update
-dt_slam_delay: 2 # delay before initializing (helps with stability from bad initialization...)
+max_msckf_in_update: 20 # how many MSCKF features to use in the update
+dt_slam_delay: 1 # delay before initializing (helps with stability from bad initialization...)
 
 gravity_mag: 9.81 # magnitude of gravity in this location
 
@@ -33,8 +71,8 @@ zupt_max_velocity: 0.03
 zupt_noise_multiplier: 1
 zupt_max_disparity: 8 # set to 0 for only imu-based
 zupt_only_at_beginning: true
-prop_window: 0.1
-zupt_prop_window: 0.1
+prop_window: 0.15
+zupt_prop_window: 0.15
 
 # ==================================================================
 # ==================================================================
@@ -104,7 +142,9 @@ grid_x: 5 # extraction sub-grid count for horizontal direction (uniform tracking
 grid_y: 5 # extraction sub-grid count for vertical direction (uniform tracking)
 min_px_dist: 50 # distance between features (features near each other provide less information)
 knn_ratio: 0.70 # descriptor knn threshold for the top two descriptor matches
-track_frequency: 30.0 # frequency we will perform feature tracking at (in frames per second / hertz)
+track_frequency: 30.0 # NOT ENFORCED by the VOXL server (only the ROS wrappers throttle with this):
+                      # every camera frame is tracked at its native rate (60+30 here), which is what
+                      # epoch-anchored cloning wants -- regular reference-camera cadence, no aliasing drops
 downsample_cameras: false # will downsample image in half if true
 num_opencv_threads: 4 # -1: auto, 0-1: serial, >1: number of threads
 histogram_method: "HISTOGRAM" # NONE, HISTOGRAM, CLAHE
@@ -112,7 +152,7 @@ histogram_method: "HISTOGRAM" # NONE, HISTOGRAM, CLAHE
 
 fi_min_dist: 0.1
 fi_max_dist: 60
-fi_max_baseline: 40
+fi_max_baseline: 200
 fi_refine_features: true # if we should refine the features after tracking
 fi_max_runs: 5 # how many times to refine the features
 # aruco tag tracker for the system
@@ -126,9 +166,12 @@ downsize_aruco: true
 
 # camera noises and chi-squared threshold multipliers
 up_msckf_sigma_px: 1.2
-up_msckf_chi2_multipler: 20.0
+up_msckf_chi2_multipler: 5.0 # was 20.0 -- far too permissive: systematically-biased rows (wrong RS
+                             # readout, drifted calib) passed the gate and dragged the calibration
+                             # states (the divergent-run mechanism). The synced-rig heritage value
+                             # was 3.0; 5.0 is the bring-up compromise while RS is unmodeled.
 up_slam_sigma_px: 1.2
-up_slam_chi2_multipler: 1.0
+up_slam_chi2_multipler: 5.0
 up_aruco_sigma_px: 1.0
 up_aruco_chi2_multipler: 3.5
 
@@ -140,6 +183,47 @@ use_mask: false
 # imu config should also have the correct noise values
 relative_config_imu: "kalibr_imu_chain.yaml"
 relative_config_imucam: "kalibr_imucam_chain.yaml"
+
+# ==================================================================
+# Asynchronous (unsynced) multi-camera support
+# ==================================================================
+# Epoch-anchored cloning: clones only at the REFERENCE camera's frame times; other cameras'
+# frames snap onto the epoch clone via an exact ACI2 preintegration bridge over their known
+# time residual. Restores the full clone-window baseline for unsynced dual-mono rigs and
+# lets each camera's cam-IMU time offset be estimated individually (timeshift_cam_imu is
+# now read for EVERY camera from the kalibr chain).
+epoch_mode: true
+# The reference camera MUST be the FASTEST camera (cam0 @ 60fps here). The binding horizon is
+# ref_period x epoch_bind_factor; a slower reference (e.g. cam1 @ 30fps) makes the faster camera
+# deliver >1 frame per epoch, and every extra frame hits the one-frame-per-(camera,epoch) rule
+# and FALLS BACK to its own clone: the window fragments into mixed epoch/fallback times, the fast
+# camera's tracks split across them, max-track/SLAM graduation dies, and updates starve
+# (hardware run 2026-07-04 with ref=1: 1-5 MSCKF feats/update -> calibration random-walk).
+cam_imu_dt_ref_camid: 0
+epoch_bind_factor: 1.5
+epoch_bridge_bias_cols: true # BRING-UP escape hatch (was true): with ANY timing/RS mismodeling the
+                              # analytic bridge bias columns let camera residuals drive the IMU biases
+                              # (ba hit 0.45 m/s^2 in the divergent run). 
+                              # CAN TRY FALSE OR TRUE
+# Rolling-shutter readout ONLINE CALIBRATION. The readout VALUE comes from the per-camera
+# declaration block at the top (camN_shutter / camN_readout_time_s; kalibr t_readout is the
+# fallback); this flag only controls whether it is REFINED in-state. Refinement applies ONLY
+# to declared-rolling cameras (cam0 here); global-shutter cameras stay pinned at 0. The
+# init sigma below must admit the seed error: 1ms suits a measured readout, 5ms a datasheet
+# guess. dt_calib_gate freezes the column in degenerate motion (hover/constant velocity).
+calib_cam_readout: true # BRING-UP freeze (stage 3): enable only after cam0_readout_time_s holds a
+                         # MEASURED seed and the frozen-calib soak is clean. Refinement applies only
+                         # to declared-rolling cameras (cam0); the GS cam is never estimated.
+calib_cam_readout_init_sigma: 0.005
+# Temporal-calibration observability gate (freeze dt/readout columns while hovering/static) WOULD LEAVE THIS AS FALSE... 
+dt_calib_gate: false
+dt_calib_gate_min_omega: 0.10
+dt_calib_gate_min_vel_spread: 0.10
+# Lock-free ingest (per-camera rings inside the estimator; release ordered against IMU time)
+async_ring_size: 16
+async_guard: 0.002
+async_stale_factor: 1.5
+
 
 
 

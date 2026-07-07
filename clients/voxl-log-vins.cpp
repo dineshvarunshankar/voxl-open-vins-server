@@ -73,7 +73,6 @@ typedef struct _klt_feature_t{
     uint32_t  id;               ///< unique ID for feature point
     int32_t cam_id;             ///< ID of camera which the point was seen from (typically first)
     float pix_loc[2];           ///< pixel location in the last frame
-//    float depth_error_stddev;   ///< depth error in meters
 } klt_feature_t;
 
 typedef struct _ov_status_t {
@@ -157,13 +156,8 @@ static void _disconnect_cb(__attribute__((unused)) int ch, __attribute__((unused
 }
 
 
-#define MAX_DB_SZ 2048
 static void _print_data(ov_status_t d)
 {
-
-//	if (_featDB.size() > MAX_DB_SZ)
-//		_featDB.clear();
-
 	printf("*, %d, %f, %f, %f, %f, %d,",(int) _featDB.size(), (double) d.timestamp_ns*1e-9, 
 			(double)d.quality, 
 			(double)d.p_dop, 

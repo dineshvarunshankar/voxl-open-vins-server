@@ -1,7 +1,7 @@
 /**
  * @file VoxlVars.cpp
  * @brief Global variable definitions for VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -46,11 +46,18 @@ std::atomic<uint32_t> vio_error_codes(0);
 /** @brief Flag indicating that system should reset */
 std::atomic<bool> reset_requested(false);
 
+/** @brief Flag indicating that a front-end-preserving SOFT reset was requested */
+std::atomic<bool> soft_reset_requested(false);
+
 /** @brief Flag indicating if system is currently resetting */
 std::atomic<bool> is_resetting(false);
 
-/** @brief Counter which increments on resets */
+/** @brief Counter which increments on resets (hard + soft) */
 std::atomic<uint32_t> reset_num_counter{0};
+
+/** @brief Counter which increments only on SOFT (front-end-preserving) resets, so field logs can
+ *  distinguish soft from hard (hard count = reset_num_counter - soft_reset_num_counter). */
+std::atomic<uint32_t> soft_reset_num_counter{0};
 
 /** @brief Number of callbacks inside the system */
 std::atomic<uint32_t> active_callbacks{0};
@@ -62,7 +69,6 @@ std::mutex reset_mtx;
 std::condition_variable reset_cv;
 
 /** @brief Flag indicating if system is armed */
-std::atomic<bool> is_armed(false);
 
 /** @brief Flag indicating if camera is connected */
 std::atomic<bool> is_cam_connected(false);
@@ -81,10 +87,8 @@ int en_auto_reset = 0;
 float auto_reset_max_velocity = 0.0f;
 
 /** @brief Maximum velocity covariance for instant reset */
-float auto_reset_max_v_cov_instant = 0.0f;
 
 /** @brief Maximum velocity covariance for timeout reset */
-float auto_reset_max_v_cov = 0.0f;
 
 /** @brief Timeout duration for velocity covariance reset (seconds) */
 float auto_reset_max_v_cov_timeout_s = 0.0f;
@@ -99,13 +103,10 @@ float auto_reset_min_feature_timeout_s = 0.0f;
 float ok_state_grace_timeout_s = 3.0f;
 
 /** @brief Auto fallback timeout (seconds) */
-float auto_fallback_timeout_s = 0.0f;
 
 /** @brief Minimum velocity for auto fallback */
-float auto_fallback_min_v = 0.0f;
 
 /** @brief Enable continuous yaw checks */
-bool en_cont_yaw_checks = false;
 
 /** @brief Fast yaw threshold */
 float fast_yaw_thresh = 0.0f;
@@ -176,24 +177,12 @@ std::vector<cam_info> cam_info_vec;
 /** @brief Timestamp of last IMU data (nanoseconds) */
 volatile int64_t last_imu_timestamp_ns = 0;
 
-/** @brief Estimated IMU sampling rate in Hz */
-std::atomic<double> imu_rate_hz(1024.0);
-
 /** @brief Global frame transform instance */
 voxl::FrameTransform frame_transform;
 
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES
 // ============================================================================
-
-/** @brief Takeoff camera identifier */
-int takeoff_cam = 0;
-
-/** @brief Enable takeoff camera functionality */
-int en_takeoff_cam = 0;
-
-/** @brief Vector of takeoff camera identifiers */
-std::vector<int> takeoff_cams;
 
 /** @brief Timestamp of last camera data (nanoseconds) */
 volatile int64_t last_cam_time = 0;
@@ -214,7 +203,6 @@ bool occlude_stereo_left = false;
 bool occlude_stereo_right = false;
 
 /** @brief Fusion rate in milliseconds */
-float fusion_rate_dt_ms = 20.0; // 50Hz
 
 // ============================================================================
 // PIPE COMMUNICATION VARIABLES
@@ -227,9 +215,6 @@ int camera_pipe_channels[MAX_CAM_CNT] = {0};
 // IMAGE PROCESSING VARIABLES
 // ============================================================================
 
-/** @brief Image ring buffer for processing */
-voxl::img_ringbuf_packet *img_ringbuf = nullptr;
-
 bool sync_config = true; ///< Flag to indicate if configuration synchronization is enabled
 
 // Stereo-matcher depth bounds (populated by VoxlConfigure)
@@ -238,15 +223,24 @@ float stereo_z_max = 100.0f;
 modal_flow::StereoCalib g_stereo_calib{};
 bool                    g_stereo_calib_valid = false;
 
+// Server-side IMU frame-transform bring-up gate (degrees). If >= 0, the server holds the sensor feed to
+// the estimator until the measured gravity tilt is within this angle (opt-in "must be level" boot gate).
+// Default -1 => ANY attitude: feed immediately so the ceres-free S2 dynamic init can (re)init/reset at any
+// attitude. Keep this in sync with (and generally >=) the estimator's init_gravity_max_angle.
+float imu_init_max_gravity_angle_deg = -1.0f;
+
 // ============================================================================
 // FRAME TRANSFORM IMPLEMENTATION
 // ============================================================================
 
 void voxl::FrameTransform::update(const imu_data_t &data)
 {
-    if (!en_imu_body)
+    static bool warned_no_imu_body = false;
+    if (!en_imu_body && !warned_no_imu_body)
     {
-        printf("[INFO] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
+        // once, not per IMU sample -- update() runs at IMU rate
+        printf("[WARN] IMU body measurements are disabled, THIS WON'T WORK AS EXPECTED.\n");
+        warned_no_imu_body = true;
     }
 
     if (is_initialized)
@@ -255,56 +249,44 @@ void voxl::FrameTransform::update(const imu_data_t &data)
         return; // CHECK IF WE HAVE ALREADY DONE THIS
     }
 
-    // FOR NOW WE ARE CHECKING WITH ONE SAMPLE -- PARTIALLY ASSUMING STATIC INITIALIZATION
-    // MAX ELEMENT NORM IS THE AXIS WHERE GRAVITY IS MOST PREDOMINANT
+    // Frame-transform bring-up. We only need a plausible gravity sample to START STREAMING sensor data to
+    // the estimator; ATTITUDE IS NOT A GATE HERE. The ceres-free S2 dynamic initializer (re)initializes at
+    // ANY attitude, and the estimator's static path applies its own tight gravity gate downstream -- so
+    // blocking the IMU/camera feed here on a "must be level" assumption would silently defeat any-attitude
+    // (re)init and reset: a pitched boot would never feed data and VIO would never start. The gravity axis
+    // is assumed Z-down (IMU mounted body-aligned); the measured angle is reported for diagnostics only.
     Eigen::Vector3d accel(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
-    accel = accel / accel.norm();
-
-    Eigen::Vector3d grav_versor_expected = Eigen::Vector3d::UnitZ(); // Assuming gravity is along Z
-    // now correct for negative z
-    grav_versor_expected = -grav_versor_expected;
-    auto dot_product = accel.dot(grav_versor_expected);
-    dot_product = std::max(-1.0, std::min(1.0, dot_product));
-    double angle_rad = std::acos(dot_product);
-    double angle_deg = angle_rad * 180.0 / M_PI;
+    double amag = accel.norm();
+    if (amag < 1e-6)
+    {
+        // Degenerate/garbage sample (no gravity signal) -- wait for a valid one, do not initialize on it.
+        return;
+    }
+    Eigen::Vector3d accel_n = accel / amag;
+    Eigen::Vector3d grav_versor_expected = -Eigen::Vector3d::UnitZ();
+    double dot_product = std::max(-1.0, std::min(1.0, accel_n.dot(grav_versor_expected)));
+    double angle_deg = std::acos(dot_product) * 180.0 / M_PI;
     gravity_axis = Axis::Z;
     gravity_direction = Direction::NEGATIVE;
-    printf("[INFO] IMU Initialization: Gravity angle = %.2f degrees\n", angle_deg);
-    if (angle_deg > 5.0)
+
+    // Opt-in level requirement: ONLY a platform that explicitly sets imu_init_max_gravity_angle_deg >= 0
+    // holds the feed until it is within that tilt. Default (-1) => any attitude, feed immediately (required
+    // for SFM any-attitude (re)init/reset). This is the single, config-driven server-side gravity gate --
+    // it must stay in sync with (and generally wider than) the estimator's init_gravity_max_angle.
+    if (imu_init_max_gravity_angle_deg >= 0.0f && angle_deg > (double)imu_init_max_gravity_angle_deg)
     {
-        printf("[ERROR] IMU Initialization: Gravity angle too large, cannot initialize\n");
+        printf("[WARN] IMU init: gravity angle %.2f deg > imu_init_max_gravity_angle_deg %.2f deg -- holding "
+               "sensor feed (opt-in level gate; set <0 for any-attitude)\n",
+               angle_deg, (double)imu_init_max_gravity_angle_deg);
         is_initialized = false;
         return;
     }
-    else
-    {
-        printf("[INFO] IMU Initialization: Gravity angle within acceptable range\n");
-         is_initialized = true;
-    }
 
-   
-    printf("[INFO] Frame transform initialized - Gravity axis: %d, Direction: %d\n",
-           static_cast<int>(gravity_axis),
-           static_cast<int>(gravity_direction));
+    is_initialized = true;
+    printf("[INFO] Frame transform initialized (gravity angle %.2f deg, axis Z-, any-attitude feed enabled)\n", angle_deg);
 }
 void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 {
-    // C++17 real-time optimization: Load velocity once with proper memory ordering
-    const float vel_mag_current = vel_mag.load(std::memory_order_acquire);
-
-    // FIX: Only skip jerk detection if in-flight AND we've completed at least one full cycle
-    // This prevents deadlock on first initialization
-    if (vel_mag_current > VEL_MAG_JERK_THRESHOLD)
-    {
-        // In-flight: Only reset if we've already collected enough samples
-        // This allows first initialization to complete even if there's movement
-        if (current_total_samples >= expected_total_samples * 0.5f)
-        {
-            resetJerkDetection();
-            return;
-        }
-        // Otherwise, continue collecting samples for initial calibration
-    }
     // C++17 Real-time optimization: Construct vectors in-place, avoid temporaries
     const Eigen::Vector3d acc_sample(data.accl_ms2[0], data.accl_ms2[1], data.accl_ms2[2]);
     const Eigen::Vector3d gyro_sample(data.gyro_rad[0], data.gyro_rad[1], data.gyro_rad[2]);
@@ -385,7 +367,6 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
         // FIX: Report jerk status but DON'T reset counters - allows detection to continue
         // This prevents infinite reset loops on first initialization
         has_acc_jerk.store(accel_jerk_detected, std::memory_order_release);
-        has_gyro_jerk.store(gyro_jerk_detected, std::memory_order_release);
         non_static.store(accel_jerk_detected || gyro_jerk_detected, std::memory_order_release);
         avg_acc_1t0.setZero();  // avg_acc_2t1;
         avg_gyro_1t0.setZero(); // avg_gyro_2t1;
@@ -404,7 +385,6 @@ void voxl::FrameTransform::detectJerk(const imu_data_t &data)
 void voxl::FrameTransform::resetJerkDetection()
 {
     has_acc_jerk.store(true, std::memory_order_release);
-    has_gyro_jerk.store(true, std::memory_order_release);
     non_static.store(true, std::memory_order_release);
     // reset for next window
     // note that we do not reset the entirity of the window, but only the second half
@@ -428,18 +408,6 @@ void voxl::FrameTransform::resetJerkDetection()
 std::atomic<bool> has_acc_jerk(false);
 
 /**
- * @brief Flag indicating if gyroscope jerk is detected
- */
-std::atomic<bool> has_gyro_jerk(false);
-
-/**
  * @brief Non-static flag for jerk detection
  */
 std::atomic<bool> non_static(false);
-
-/**
- * @brief Window size in seconds for jerk detection
- */
-double window_size_s = 1.0;
-
-std::atomic<float> vel_mag(0.0f); ///< Current velocity magnitude

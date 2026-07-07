@@ -1,7 +1,7 @@
 /**
  * @file MonoCameraMinimal.cpp
  * @brief Monocular camera implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -86,10 +86,10 @@ namespace voxl
         // if we are resetting, just return
         if (is_resetting.load(std::memory_order_relaxed))
         {
+            skip_jerk_detection = true;
             if (img_type == voxl::ImageType::CL_MEM)
                 release_cl_mem(frame);
             return;
-            skip_jerk_detection = true;
         }
 
         // indicate that we are processing IMU data
@@ -112,8 +112,11 @@ namespace voxl
         // User reported issues with initialization - process ALL frames until VIO is stable
 
         // Check if VIO is fully initialized AND past grace period
+        // Multi-camera (unsynced) rigs must NOT decimate per-camera: the alternating drops are
+        // asymmetric across streams and break the epoch cadence the estimator anchors on
         const bool vio_ready_for_throttling = vio_manager &&
                                               vio_manager->initialized() &&
+                                              vio_manager_options.state_options.num_cameras <= 1 &&
                                               vio_state.load(std::memory_order_acquire) == VIO_STATE_OK;
 
         // NEVER throttle during: INITIALIZING, FAILED, or first few seconds of OK state
@@ -199,9 +202,6 @@ namespace voxl
             std::lock_guard<std::mutex> lk(reset_mtx);
             reset_cv.notify_one();
         }
-
-        // Mark last processed timestamp (only when we actually processed)
-        last_processed_ts_ns_ = meta.timestamp_ns;
     }
 
     /**
@@ -263,19 +263,12 @@ namespace voxl
         modal_flow::Frame img_frame({get_id(), 0, iv});
         message.img_frames.push_back(img_frame);
 
-        if (!camera_queue.push(message))
+        // Push straight into the estimator's lock-free per-camera ring (this pipe thread is the
+        // single producer for this stream); the IMU feed releases frames in global time order.
+        // Overflow/late drops are disposed + counted via the processed(false) callback.
+        if (vio_manager && frame_transform.is_initialized)
         {
-            if (true)
-            {
-                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
-                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
-                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
-            }
-        }
-        else
-        {
-            // Notify fusion system that camera data is ready
-            CameraQueueFusion::getInstance().markCameraReady(get_id());
+            vio_manager->feed_measurement_camera(message);
         }
     }
 
@@ -319,19 +312,16 @@ namespace voxl
 
         message.masks.emplace_back(use_mask_);
 
-        if (!camera_queue.push(message))
+        // Push straight into the estimator's lock-free per-camera ring; drops (overflow/late) are
+        // disposed via the processed(false) callback, which releases the cl_mem handle exactly once
+        if (vio_manager && frame_transform.is_initialized)
         {
-            if (true)
-            {
-                // TODO: DROP OLDEST FRAME, ADD NEW FRAME --> RIGHT NOW WE JUST DROP THE NEW FRAME, NOT KOSHER
-                std::cerr << "Camera queue full — dropping frame from cam " << get_channel() << std::endl;
-                vio_error_codes |= ERROR_CODE_DROPPED_CAM;
-            }
+            vio_manager->feed_measurement_camera(message);
         }
         else
         {
-            // Notify fusion system that camera data is ready
-            CameraQueueFusion::getInstance().markCameraReady(get_id());
+            // No estimator yet: release the device buffer ourselves so it cannot leak
+            release_cl_mem(frame);
         }
     }
 
@@ -364,18 +354,6 @@ namespace voxl
         }
     }
 
-    /**
-     * @brief Check if system is in reset state
-     *
-     * Determines whether the VIO system is currently in a reset state,
-     * which affects how image processing should be handled.
-     *
-     * @return true if system is resetting, false otherwise
-     */
-    bool MonoCamera::is_system_resetting() const
-    {
-        return is_resetting;
-    }
 
     /**
      * @brief Check if system is ready to process images

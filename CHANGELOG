@@ -1,3 +1,16 @@
+0.7.0
+    * async unsynced multi-camera support: lock-free per-camera ingest rings, epoch-anchored cloning, ACI2 preintegration bridge, deferred epoch marginalization (async meets synced; synced path bit-identical)
+    * per-camera cam-IMU time offset and rolling-shutter readout states with online calibration and degenerate-motion gating
+    * per-camera acquisition declarations (camN_shutter / camN_readout_time_s / camN_fps) with boot validation and config-drift guards
+    * ceres-free dynamic initialization (ov_init::zbft_sfm): lock-free LM solver, S2 gravity, ~17-20 ms init (legacy ceres path was ~65 ms); drop voxl-ceres-solver runtime dep
+    * any-attitude init/reset: server gravity gate, heading re-origin, warm-start clone injection
+    * divergence-aware soft reset (RESET_VIO_SOFT) with live bias priors; episode purge of used-features map and zupt flags
+    * async-aware quality metric: windowed feature union + time-constant EMA (replaces exact-timestamp scoring that starved async rigs)
+    * auto-reset hardening: estimator-health error mask (transport warnings no longer hard-reset), warning decay, re-init grace arming, reset-race guards, hard-reset null-deref fix
+    * new fpvhires config (IMX412 rolling-shutter + AR0144 tracking, unsynced); fpv restored to synced duo AR0144; fpvhires and d8v6 wired into voxl-configure-open-vins
+    * estimator verbosity driven by the YAML key (-v only raises to ALL; warnings can no longer be swallowed)
+    * stale-code purge: CameraQueueFusion removed, dead config knobs/globals/branches removed (~1.3k lines); duplicate includes fixed
+    * docs: ov_msckf/README_ASYNC.md design doc (epoch cloning, ACI2 bridge, RS model, resets, YAML reference); authorship/copyright pass across both repos
 0.6.2
     * fix feature point positions when using anchored MSCKF inverse depth
     * tighten init gravity max angle

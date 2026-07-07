@@ -7,6 +7,18 @@ integration: "rk4" # discrete, rk4, analytical (if rk4 or analytical used then a
 use_stereo: false # if we have more than 1 camera, if we should try to track stereo constraints between pairs
 max_cameras: 2 # how many cameras we have 1 = mono, 2 = stereo, >2 = binocular (all mono tracking)
 
+# ------------------------------------------------------------------
+# Per-camera acquisition declaration (REQUIRED knowledge for async rigs)
+# ------------------------------------------------------------------
+# D0008-v6: dual unsynced AR0144 tracking cams, both GLOBAL shutter, 30 fps nominal.
+# (See the fpv config for a rolling-shutter example with online readout refinement.)
+cam0_shutter: "global"
+cam0_readout_time_s: 0.0
+cam0_fps: 30.0
+cam1_shutter: "global"
+cam1_readout_time_s: 0.0
+cam1_fps: 30.0
+
 calib_cam_extrinsics: true # if the transform between camera and IMU should be optimized R_ItoC, p_CinI
 calib_cam_intrinsics: true # if camera intrinsics should be optimized (focal, center, distortion)
 calib_cam_timeoffset: true # if timeoffset between camera and IMU should be optimized
@@ -123,6 +135,31 @@ use_mask: false
 # imu config should also have the correct noise values
 relative_config_imu: "kalibr_imu_chain.yaml"
 relative_config_imucam: "kalibr_imucam_chain.yaml"
+
+# ==================================================================
+# Asynchronous (unsynced) multi-camera support
+# ==================================================================
+# Epoch-anchored cloning: clones only at the REFERENCE camera's frame times; other cameras'
+# frames snap onto the epoch clone via an exact ACI2 preintegration bridge over their known
+# time residual. Restores the full clone-window baseline for unsynced dual-mono rigs and
+# lets each camera's cam-IMU time offset be estimated individually (timeshift_cam_imu is
+# now read for EVERY camera from the kalibr chain).
+epoch_mode: true
+cam_imu_dt_ref_camid: 0
+epoch_bind_factor: 1.2
+epoch_bridge_bias_cols: true
+# Rolling-shutter readout calibration (enable for RS/hires second cameras; add per-camera
+# t_readout to the kalibr chain). Global-shutter tracking cams leave this off.
+calib_cam_readout: false
+# Temporal-calibration observability gate (freeze dt/readout columns while hovering/static)
+dt_calib_gate: true
+dt_calib_gate_min_omega: 0.10
+dt_calib_gate_min_vel_spread: 0.10
+# Lock-free ingest (per-camera rings inside the estimator; release ordered against IMU time)
+async_ring_size: 16
+async_guard: 0.002
+async_stale_factor: 1.5
+
 
 
 

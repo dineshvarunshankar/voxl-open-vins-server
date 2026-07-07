@@ -1,7 +1,7 @@
 /**
  * @file ImuMinimal.h
  * @brief IMU interface and data handling for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -25,7 +25,6 @@
 // Local includes
 #include "VoxlVars.h"
 #include "VoxlCommon.h"
-#include "CameraQueueFusion.h"
 #include "VoxlHK.h"
 
 // ============================================================================

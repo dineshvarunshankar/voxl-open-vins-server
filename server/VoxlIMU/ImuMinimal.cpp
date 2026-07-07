@@ -1,7 +1,7 @@
 /**
  * @file ImuMinimal.cpp
  * @brief IMU interface and data handling implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -22,69 +22,9 @@
 #include <cstdio>
 #include <state/State.h>
 
-namespace
-{
-    // THIS IS NOT CURRENTLY USED -- BUT IT IS HERE FOR FUTURE USE WITH MULTI-IMU SUPPORT
-    ////////////////////////////////////////////////////////////////////////////////////
-    constexpr int kIMUQueueSize = 512;
-    boost::lockfree::spsc_queue<imu_data_t, boost::lockfree::capacity<kIMUQueueSize>> imu_queue;
-    std::atomic<bool> imu_thread_running{false};
-    std::thread imu_thread;
-    ////////////////////////////////////////////////////////////////////////////////////
-
-    // CACHE SHARED PTR TO AVOID REPEATED ALLOCATION AT HIGH FREQUENCY
-    std::shared_ptr<ov_msckf::State> cached_state;
-    std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> cached_features_map;
-
-    // Rate estimation state
-    // NOT USED FOR NOW -- LIKELY IT WONT BE NECESSARY AT ALL
-    static int64_t last_rate_timestamp_ns = 0;
-    static constexpr double kImuRateAlpha = 0.1; // EMA smoothing factor
-
-    static inline void update_imu_rate_estimate(const imu_data_t *arr, int n_packets)
-    {
-        if (n_packets <= 0 || arr == nullptr)
-            return;
-        // Prefer intra-batch estimate if we have multiple packets
-        if (n_packets >= 2)
-        {
-            int64_t dt_ns = arr[n_packets - 1].timestamp_ns - arr[0].timestamp_ns;
-            int64_t samples = (n_packets - 1);
-            if (dt_ns > 0 && samples > 0)
-            {
-                double avg_dt_ns = static_cast<double>(dt_ns) / static_cast<double>(samples);
-                double inst_rate_hz = 1e9 / avg_dt_ns;
-                double prev = imu_rate_hz.load(std::memory_order_relaxed);
-                double updated = (1.0 - kImuRateAlpha) * prev + kImuRateAlpha * inst_rate_hz;
-                imu_rate_hz.store(updated, std::memory_order_relaxed);
-                last_rate_timestamp_ns = arr[n_packets - 1].timestamp_ns;
-                return;
-            }
-        }
-        // Fallback to inter-batch estimate
-        int64_t t = arr[n_packets - 1].timestamp_ns;
-        if (last_rate_timestamp_ns > 0 && t > last_rate_timestamp_ns)
-        {
-            double dt_ns = static_cast<double>(t - last_rate_timestamp_ns);
-            double inst_rate_hz = 1e9 / dt_ns; // one sample over this interval
-            double prev = imu_rate_hz.load(std::memory_order_relaxed);
-            double updated = (1.0 - kImuRateAlpha) * prev + kImuRateAlpha * inst_rate_hz;
-            imu_rate_hz.store(updated, std::memory_order_relaxed);
-        }
-        printf("imu_rate_hz: %f\n", imu_rate_hz.load(std::memory_order_relaxed));
-        last_rate_timestamp_ns = t;
-    }
-}
 
 /** @brief Mutex for IMU data access synchronization */
 std::mutex imu_lock_mutex;
-
-#define TS_PRINT(msg)                             \
-    do                                            \
-    {                                             \
-        int64_t __ts = _apps_time_monotonic_ns(); \
-        printf("[TS %ld ns] %s\n", __ts, msg);    \
-    } while (0)
 
 /**
  * @brief Handler for incoming IMU data
@@ -114,20 +54,18 @@ std::mutex imu_lock_mutex;
 void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
 {
     int64_t t_start = _apps_time_monotonic_ns();
-    int64_t t_prev = t_start;
     is_imu_connected.store(true, std::memory_order_release);
-    // printf("[TS %ld ns] IMU callback start, bytes=%d\n", t_start, bytes);
 
     // ---- validate data ----
     int n_packets = 0;
     imu_data_t *arr = pipe_validate_imu_data_t(data, bytes, &n_packets);
-    int64_t t_validate = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] validate done, n_packets=%d\n",
-    //        (t_validate - t_prev)/1e6, n_packets);
-    // t_prev = t_validate;
 
     active_callbacks.fetch_add(1, std::memory_order_acquire);
-    if (is_resetting.load(std::memory_order_relaxed))
+    // acquire: pairs with the release store that clears is_resetting at the end of a reset, so
+    // the first post-reset callback also observes the bumped reset_num_counter -- a relaxed load
+    // could pair the NEW VioManager with the publisher's OLD quality/hysteresis statics for one
+    // packet (no happens-before edge from the reset thread otherwise)
+    if (is_resetting.load(std::memory_order_acquire))
     {
         active_callbacks.fetch_sub(1, std::memory_order_release);
         return;
@@ -148,9 +86,6 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     std::vector<ov_core::ImuData> imu_batch;
     imu_batch.reserve(n_packets);
 
-    // Update IMU rate estimate for jerk window sizing
-    // update_imu_rate_estimate(arr, n_packets);
-
     for (int i = 0; i < n_packets; ++i)
     {
         frame_transform.update(arr[i]);
@@ -166,21 +101,13 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
             int64_t time_diff = last_imu_timestamp_ns - (sample.timestamp * 1e9);
             if (time_diff > 1000000) // 1 ms
             {
-                printf("[DEBUG] IMU timestamp regression %ld ns\n", time_diff);
+                // No print here: this runs per-sample at IMU rate; HealthCheck reports the
+                // BAD_TIMESTAMP code edge-triggered instead
                 vio_error_codes |= ERROR_CODE_BAD_TIMESTAMP;
             }
         }
         imu_batch.push_back(std::move(sample));
-        // DO NOT DOWNSAMPLE FOR NOW
-        // if (has_acc_jerk.load(std::memory_order_acquire) == false && non_static.load(std::memory_order_acquire) == false) {
-        //     //CUT RAW IMU SAMPLING FREQUENCY IN ROUGHLY 50%
-        //     i = i +1;
-        // }
     }
-    int64_t t_batch = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] batch conversion done, count=%zu\n",
-    //        (t_batch - t_prev)/1e6, imu_batch.size());
-    // t_prev = t_batch;
 
     if (imu_batch.empty())
     {
@@ -193,72 +120,19 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
         return;
     }
 
-    // ---- feed IMU ----
+    // ---- feed IMU (this also releases + processes every camera frame whose global ordering the
+    // batch has decided: the lock-free per-camera ingest lives inside ov_msckf, and per-frame
+    // cl_mem release + publishing run through the VoxlVioIngest callback on this same thread) ----
     int imu_batch_size = (imu_model == IMU_MODEL_BMI270) ? 800 : 330;
     if (frame_transform.is_initialized) vio_manager->feed_measurement_batch_imu(imu_batch, imu_batch_size);
-    // int64_t t_feed_imu = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] fed IMU batch into VIO manager\n",
-    //        (t_feed_imu - t_prev)/1e6);
-    // t_prev = t_feed_imu;
-
-    // ---- sync camera ----
-    // TODO: CLEAR IMPORTANT CONSIDERARTION: OVINS DOES NOT SUPPORT MULTI-CAM TIME OFFSET CALIBRATION --> That's mainly because of the central image queue design
-    // Independently calibrating camera offset can be supported by either modfiying the feed function in OVINS + state vars
-    // or manually keeping tabs on relative camera offsets and correcting at the CameraQueueFusion level, either solution is kosher but for now we will just use the average offset
     last_imu_timestamp_ns = imu_batch.back().timestamp * 1e9;
-    double ts_cutoff = (last_imu_timestamp_ns * 1e-9) -
-                       vio_manager->get_state()->_calib_dt_CAMtoIMU->value()(0);
-
-    std::vector<ov_core::CameraData> batch;
-    if (CameraQueueFusion::getInstance().getSortedBatch(ts_cutoff, batch))
-    {
-        for (const auto &msg : batch)
-        {
-            if (frame_transform.is_initialized) vio_manager->feed_measurement_camera(msg);
-            cached_state = vio_manager->get_state();
-
-            // release cl_mem objects
-            for (auto &frame : msg.img_frames)
-            {
-                if (frame.img.handle_type == modal_flow::ExternalType::ClMem &&
-                    frame.img.external_handle != 0)
-                {
-                    cl_mem handle = reinterpret_cast<cl_mem>(
-                        static_cast<uintptr_t>(frame.img.external_handle));
-
-                    cl_int err = clReleaseMemObject(handle);
-                    if (err != CL_SUCCESS)
-                    {
-                        fprintf(stderr, "Failed to release Frame cl_mem, err=%d\n", err);
-                    }
-                    // reset so no double free
-                    const_cast<modal_flow::ImageView &>(frame.img).external_handle = 0;
-                }
-            }
-
-            if (is_resetting.load(std::memory_order_acquire))
-            {
-                break;
-            }
-            cached_features_map = vio_manager->get_used_features_map();
-            if (is_resetting.load(std::memory_order_relaxed))
-            {
-                break;
-            }
-            voxl::Publisher::getInstance().publish(cached_state, cached_features_map);
-        }
-    }
-    int64_t t_cam = _apps_time_monotonic_ns();
-    // printf("[DT %8.3f ms] processed %zu camera frames\n",
-    //        (t_cam - t_prev)/1e6, batch.size());
-    // t_prev = t_cam;
 
     // ---- finish ----
     int64_t t_end = _apps_time_monotonic_ns();
     double dt_ms = (double)(t_end - t_start) / 1e6;
-    if (dt_ms / batch.size() > 32.0 && en_debug)
+    if (dt_ms > 32.0 && en_debug)
     {
-        printf("WARNING: IMU callback took too long: %8.3f ms for %d msgs\n", dt_ms, (int)batch.size());
+        printf("WARNING: IMU callback took too long: %8.3f ms\n", dt_ms);
     }
 
     if (active_callbacks.fetch_sub(1, std::memory_order_release) == 1)
@@ -290,7 +164,6 @@ void _imu_disconnect_cb(__attribute__((unused)) int ch,
     pipe_client_flush(IMU_CH);
     // Small delay to ensure pending operations complete
     usleep(50000);
-    // pipe_client_close(IMU_CH);
     is_imu_connected.store(false, std::memory_order_release);
     return;
 }

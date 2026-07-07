@@ -1,7 +1,7 @@
 /**
  * @file CameraManager.cpp
  * @brief Camera management system implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -164,9 +164,8 @@ namespace voxl
             std::cout << "Successfully initialized " << cameras_.size() << " cameras" << std::endl;
         }
 
-        // Start the camera fusion thread once all cameras are initialized
-        // This ensures that camera frames are actively consumed and fused
-        CameraQueueFusion::getInstance().start(cameras_.size());
+        // No fusion thread: cameras push straight into the estimator's lock-free per-camera rings
+        // and the IMU feed releases frames in global timestamp order (ov_msckf AsyncCameraBuffer)
 
         initialized_ = true;
         return true;
@@ -256,33 +255,5 @@ namespace voxl
         return result;
     }
 
-    /**
-     * @brief Get the number of cameras
-     *
-     * Returns the total number of cameras currently managed by the system.
-     * The method is thread-safe and provides a consistent count.
-     *
-     * @return Number of cameras managed
-     */
-    size_t CameraManager::getCameraCount() const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return cameras_.size();
-    }
-
-    /**
-     * @brief Check if the camera manager is initialized
-     *
-     * Determines whether the camera manager has been successfully
-     * initialized with camera configurations. The method is thread-safe
-     * and provides a consistent state check.
-     *
-     * @return true if initialized, false otherwise
-     */
-    bool CameraManager::isInitialized() const
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return initialized_;
-    }
 
 } // namespace voxl

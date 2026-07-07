@@ -1,7 +1,7 @@
 /**
  * @file VoxlVars.h
  * @brief Global variable declarations and constants for VOXL OpenVINS server
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -44,7 +44,6 @@
 // FOR NOW WE FORCE TO SUBSAMPLE IT ALWAYS TO CHECK THE EFFECTS OF IT
 #define GYRO_VAR_THRESHOLD 0.09f     ///< Gyro variance threshold for motion detection
 #define ACC_VAR_THRESHOLD 0.09f      ///< Accelerometer variance threshold for motion detection
-#define VEL_MAG_JERK_THRESHOLD 0.02f ///< Velocity magnitude threshold for jerk detection
 
 // ============================================================================
 // DATA STRUCTURES
@@ -155,14 +154,6 @@ namespace voxl
 #define SIMPLE_CH 1
 
 /**
- * @brief MPA server channel for overlay data output
- *
- * Channel used for publishing visual overlay data for debugging
- * and visualization purposes.
- */
-#define OVERLAY_CH 2
-
-/**
  * @brief MPA server channel for status information
  *
  * Channel used for publishing system status, health information,
@@ -181,30 +172,6 @@ namespace voxl
  * from the IMU service.
  */
 #define IMU_CH 0
-
-/**
- * @brief MPA client channel for feature overlay data
- *
- * Channel used for receiving feature tracking overlay data
- * for visualization and debugging.
- */
-#define FEAT_OVERLAY_CH 9
-
-/**
- * @brief MPA client channel for barometer data input
- *
- * Channel used for receiving barometric pressure data
- * for altitude estimation.
- */
-#define BARO_CH 10
-
-/**
- * @brief MPA client channel for CPU monitoring data
- *
- * Channel used for receiving CPU usage and performance
- * monitoring data.
- */
-#define CPU_CH 11
 
 // ============================================================================
 // PIPE NAMES AND LOCATIONS
@@ -247,21 +214,6 @@ namespace voxl
  * Full path location for the simple VIO data pipe.
  */
 #define OV_VIO_SIMPLE_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_SIMPLE_NAME "/"
-
-/**
- * @brief Name for overlay data pipe
- *
- * Pipe name for publishing visual overlay data for debugging
- * and visualization.
- */
-#define OV_VIO_OVERLAY_NAME "ov_overlay"
-
-/**
- * @brief Location for overlay data pipe
- *
- * Full path location for the overlay data pipe.
- */
-#define OV_VIO_OVERLAY_LOCATION MODAL_PIPE_DEFAULT_BASE_DIR OV_VIO_OVERLAY_NAME "/"
 
 /**
  * @brief Name for status information pipe
@@ -359,6 +311,9 @@ extern std::atomic<uint32_t> vio_error_codes;
  */
 extern std::atomic<bool> reset_requested;
 
+/** Flag indicating that a front-end-preserving SOFT reset was requested */
+extern std::atomic<bool> soft_reset_requested;
+
 /**
  * @brief VIO reset state flag
  *
@@ -375,6 +330,14 @@ extern std::atomic<bool> is_resetting;
  * reset operations are being performed as expected.
  */
 extern std::atomic<uint32_t> reset_num_counter;
+
+/**
+ * @brief Counter which increments only on SOFT (front-end-preserving) resets.
+ *
+ * Lets field logs distinguish soft resets from hard ones (hard count =
+ * reset_num_counter - soft_reset_num_counter) without a packet-ABI change.
+ */
+extern std::atomic<uint32_t> soft_reset_num_counter;
 
 /**
  * @brief Number of callbacks inside the system
@@ -399,14 +362,6 @@ extern std::mutex reset_mtx;
  * the reset thread will wait on active_callbacks to reach zero before proceeding.
  * */
 extern std::condition_variable reset_cv;
-
-/**
- * @brief System armed state
- *
- * Atomic flag indicating whether the system is armed and ready
- * for operation (typically used in drone applications).
- */
-extern std::atomic<bool> is_armed;
 
 /**
  * @brief Camera connection state
@@ -445,22 +400,6 @@ extern int en_auto_reset;
 extern float auto_reset_max_velocity;
 
 /**
- * @brief Maximum instantaneous velocity covariance for auto-reset
- *
- * Threshold for the instantaneous velocity covariance that
- * triggers an automatic reset.
- */
-extern float auto_reset_max_v_cov_instant;
-
-/**
- * @brief Maximum velocity covariance for auto-reset
- *
- * Threshold for the average velocity covariance that
- * triggers an automatic reset.
- */
-extern float auto_reset_max_v_cov;
-
-/**
  * @brief Timeout for velocity covariance auto-reset
  *
  * Duration in seconds that the velocity covariance must exceed
@@ -491,30 +430,6 @@ extern float auto_reset_min_feature_timeout_s;
  * quality is held low to avoid bad initialization.
  */
 extern float ok_state_grace_timeout_s;
-
-/**
- * @brief Timeout for auto-fallback mode
- *
- * Duration in seconds before the system falls back to
- * a simpler tracking mode.
- */
-extern float auto_fallback_timeout_s;
-
-/**
- * @brief Minimum velocity for auto-fallback
- *
- * Minimum velocity threshold required to trigger
- * auto-fallback mode.
- */
-extern float auto_fallback_min_v;
-
-/**
- * @brief Enable continuous yaw checks
- *
- * Flag to enable continuous monitoring of yaw angle
- * for stability and accuracy validation.
- */
-extern bool en_cont_yaw_checks;
 
 /**
  * @brief Fast yaw threshold
@@ -641,14 +556,6 @@ extern int config_only;
  */
 extern bool en_imu_body;
 
-/**
- * @brief Fusion rate in milliseconds
- *
- * Time interval in milliseconds for the main fusion loop
- * that processes and integrates sensor data.
- */
-extern float fusion_rate_dt_ms;
-
 // ============================================================================
 // SENSOR CONFIGURATION VARIABLES
 // ============================================================================
@@ -696,20 +603,22 @@ extern std::vector<cam_info> cam_info_vec;
 extern volatile int64_t last_imu_timestamp_ns;
 
 /**
- * @brief Estimated IMU sampling rate in Hz
- *
- * Exponentially-smoothed estimate of the IMU sampling frequency used to
- * compute the expected number of samples in the jerk detection window.
- */
-extern std::atomic<double> imu_rate_hz;
-
-/**
  * @brief Mutex for IMU data access synchronization
  *
  * Mutex used to synchronize access to IMU data
  * between multiple threads.
  */
 extern std::mutex imu_lock_mutex;
+
+/**
+ * @brief Server-side IMU frame-transform bring-up gravity gate (degrees)
+ *
+ * If >= 0, the server holds the sensor feed to the estimator until the measured gravity tilt is within
+ * this angle (opt-in "must be level" boot gate). Default -1 => any attitude (feed immediately), which is
+ * required for the ceres-free S2 dynamic initializer to (re)init/reset at any attitude. Keep in sync with
+ * (and generally >=) the estimator's init_gravity_max_angle.
+ */
+extern float imu_init_max_gravity_angle_deg;
 
 /**
  * @brief Global frame transform instance
@@ -725,50 +634,13 @@ extern voxl::FrameTransform frame_transform;
 extern std::atomic<bool> has_acc_jerk;
 
 /**
- * @brief Flag indicating if gyroscope jerk is detected
- */
-extern std::atomic<bool> has_gyro_jerk;
-
-/**
  * @brief Non-static flag for jerk detection
  */
 extern std::atomic<bool> non_static;
 
-/**
- * @brief Window size in seconds for jerk detection
- *
- * Time window in seconds used for detecting jerks
- * in accelerometer and gyroscope data.
- */
-extern double window_size_s;
-
 // ============================================================================
 // CAMERA-SPECIFIC VARIABLES
 // ============================================================================
-
-/**
- * @brief Takeoff camera identifier
- *
- * Identifier for the camera used during takeoff
- * and initial flight phases.
- */
-extern int takeoff_cam;
-
-/**
- * @brief Enable takeoff camera functionality
- *
- * Flag to enable special handling for the takeoff camera,
- * including different processing parameters.
- */
-extern int en_takeoff_cam;
-
-/**
- * @brief Vector of takeoff camera identifiers
- *
- * Vector containing identifiers for all cameras
- * that should be used during takeoff.
- */
-extern std::vector<int> takeoff_cams;
 
 /**
  * @brief Last camera timestamp
@@ -792,9 +664,6 @@ extern int cameras_used;
  * Atomic variable for the altitude z
  */
 extern std::atomic<float> alt_z;
-
-/** @brief Velocity Magnitude */
-extern std::atomic<float> vel_mag;
 
 /** @brief Takeoff altitude threshold */
 extern float takeoff_alt_threshold;
@@ -820,14 +689,6 @@ extern int camera_pipe_channels[MAX_CAM_CNT];
 // ============================================================================
 // IMAGE PROCESSING VARIABLES
 // ============================================================================
-
-/**
- * @brief Image ring buffer pointer
- *
- * Pointer to the image ring buffer used for efficient
- * image data management and processing.
- */
-extern voxl::img_ringbuf_packet *img_ringbuf;
 
 // ============================================================================
 // SETUP EXPERIMENTAL VARIABLES

@@ -1,7 +1,7 @@
 /**
  * @file VoxlSpinner.cpp
  * @brief Main server implementation for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -32,6 +32,7 @@
 #include <voxl_common_config.h>
 #include "VoxlCommon.h"
 #include "VoxlVars.h"
+#include "VoxlVioIngest.h"
 #include "VoxlConfigure.h"
 #include <unistd.h>
 #include <signal.h>
@@ -114,7 +115,6 @@ static void print_usage(const char *program_name);
  * - Closing all pipe connections (client and server)
  * - Shutting down the camera manager
  * - Removing the PID file
- * - Cleaning up image ring buffer
  * - Forcing process exit
  *
  * The function uses _exit() to ensure immediate termination and
@@ -149,10 +149,6 @@ static void _quit(int ret)
 
 	// REMOVE PID
 	remove_pid_file(PROCESS_NAME);
-
-	// DELETE IMG RINGBUF -- THIS MAY BE UNNECESSARY AS WE ARE NOT DOING OVERLAYS
-	if (img_ringbuf)
-		delete img_ringbuf;
 
 	if (ret == 0)
 		printf("Exiting Cleanly\n");
@@ -479,21 +475,21 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-	std::string config_path = std::string(folder_base) + "/estimator_config.yaml"; // PLACEHOLDER --> CHECK LOCATION OF YAMLS POST FLASH
+	std::string config_path = std::string(folder_base) + "/estimator_config.yaml";
 
 	// Create the VIO Manager -- Core OpenVINS state
 	vio_manager_options = VioManagerOptions();
 	auto parser = std::make_shared<ov_core::YamlParser>(config_path);
-	
-	// THIS GETS OVERWRITTEN BY THE YAML
-	std::string verbosity = "SILENT";
+
+	// The YAML "verbosity" key is the single source of truth for estimator print level (a rig
+	// mid-bring-up sets ALL in its config; production configs run INFO). The server's -v flag
+	// only RAISES the level to ALL for a debug session -- it never lowers it, so estimator
+	// WARNING/ERROR prints can never be swallowed (the old en_verbose switch mapped false to
+	// SILENT and lost them). Applied BEFORE print_and_load so the options dump obeys it too.
+	std::string verbosity = "INFO";
 	parser->parse_config("verbosity", verbosity);
+	ov_core::Printer::setPrintLevel(en_verbose ? std::string("ALL") : verbosity);
 	vio_manager_options.print_and_load(parser);
-	if (en_verbose) {
-		ov_core::Printer::setPrintLevel(ov_core::Printer::DEBUG);
-	} else {
-		ov_core::Printer::setPrintLevel(ov_core::Printer::SILENT);
-	}
 
 	// Re-apply stereo-matcher fields AFTER the YAML reload above wiped them.
 	// VoxlConfigure persisted the packed calib + tunables into VoxlVars
@@ -504,6 +500,7 @@ int main(int argc, char *argv[])
 	vio_manager_options.stereo_calib_valid   = g_stereo_calib_valid;
 
 	vio_manager = std::unique_ptr<VioManager>(new VioManager(vio_manager_options));
+	voxl::register_vio_camera_callback(*vio_manager);
 
 	
 
@@ -560,8 +557,6 @@ int main(int argc, char *argv[])
 	}
 
 	main_running = 1;
-
-	// zeroTimeOut = boost::posix_time::microsec_clock::local_time();
 
 	usleep(100000); // 100ms
 	voxl::Publisher::getInstance().start();

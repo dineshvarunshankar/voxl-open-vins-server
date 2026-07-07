@@ -14,7 +14,6 @@ libmodal-pipe
 libmodal-flow
 libmodal-cv
 voxl-mavlink
-voxl-ceres-solver
 voxl-mpa-tools
 librc-math
 libmodal-journal

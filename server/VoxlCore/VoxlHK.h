@@ -1,7 +1,7 @@
 /**
  * @file VoxlHK.h
  * @brief Housekeeping and data publishing for VOXL OpenVINS
- * @author Zauberflote
+ * @author Joao Leonardo Silva Cotta (@zauberflote1)
  * @date 2025
  * @version 1.0
  *
@@ -165,10 +165,12 @@ namespace voxl
          * systems through the configured pipe interfaces.
          *
          * @param state Current VIO state
-         * @param used_features_map Map of used features at current timestamp
+         * @param used_features_map Used-features map, by reference (no copy). The caller runs on
+         *        the VIO thread synchronously after the update, so the reference stays valid for
+         *        the whole call; publish must never re-enter feed/drain.
          */
         void publish(std::shared_ptr<ov_msckf::State> state,
-                     std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> used_features_map = {});
+                     const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map = {});
 
         /**
          * @brief Stop the publisher
@@ -186,7 +188,6 @@ namespace voxl
          * @param state Current VIO state
          * @param quality Current quality value
          * @param n_features Number of tracked features
-         * @param V_uncertainty Velocity uncertainty
          * @param yawrate Calculated yaw rate from angular velocity
          * @param current_velocity Current velocity magnitude
          * @param vel_x X-component of velocity
@@ -196,25 +197,31 @@ namespace voxl
         bool should_auto_reset(std::shared_ptr<ov_msckf::State> state,
                                int quality,
                                int n_features,
-                               double V_uncertainty,
                                double yawrate,
                                double current_velocity,
                                double vel_x,
                                double vel_y);
 
         /**
-         * @brief Calculate Quality of the VIO state
+         * @brief Calculate Quality of the VIO state (async-aware per-camera freshness ledger)
          *
-         * This function computes the quality score based on the features used at
-         * the current timestamp. The quality calculation considers:
-         * 1. Grid distribution: 5x5 grid per camera with 50 features target (2 per grid)
-         * 2. SLAM features: weighted by covariance largest eigenvalue and quality field
-         * 3. MSCKF features: weighted by quality field and number of measurements
+         * Pools all used-feature entries from the last QUAL_UNION_WINDOW_S (dedup by featid) and
+         * scores each camera over the pooled set with the unchanged synced-path grid metric
+         * (5x5 grid, SLAM features weighted by covariance largest eigenvalue + quality field,
+         * MSCKF by quality field + track length), sum-then-clamp as sync always fused. The union
+         * gives each camera its full recent track set -- one update's used list is a sparse,
+         * noisy sample -- so async ticks score like synced batches; a time-constant EMA smooths
+         * the published value against single weak updates. Floor is 10 while running (the metric
+         * alone must not trip the sustained quality<1 auto-reset timers); resets/FAILED force
+         * 0/-1 in publish() itself.
          *
-         * @param used_features_map Map of used features at the current timestamp
+         * Must only be called from the VIO thread (publish); uses the qual_ema state with no
+         * locks by design.
+         *
+         * @param used_features_map Map of used features keyed by update (epoch) timestamp
          * @param slam_features Map of SLAM features from the state
          * @param state Current VIO state for covariance access
-         * @return Quality score (0-100, higher is better)
+         * @return Quality score (10-100 while running, higher is better)
          */
         double calcQuality(const std::map<double, std::vector<std::shared_ptr<ov_core::Feature>>> &used_features_map,
                            std::unordered_map<size_t, std::shared_ptr<ov_type::Landmark>> &slam_features,
@@ -252,11 +259,34 @@ namespace voxl
         /** @brief Flag indicating if this is the first packet */
         bool first_packet = true;
 
+        /** @brief Tracks the rising edge of vio_manager->initialized() so the
+         *  origin snapshot is re-captured on every (re)init, including in-flight
+         *  resets where the Publisher singleton persists. */
+        bool prev_initialized = false;
+
+        /** @brief Yaw-only origin rotation captured at each init. Zeros the
+         *  (unobservable) heading at start while preserving gravity-true
+         *  roll/pitch. Identity until the first init. */
+        Eigen::Matrix3d ned_rot_zero = Eigen::Matrix3d::Identity();
+
         /** @brief VIO data packet structure */
         vio_data_t vio_packet;
 
         /** @brief Previous quaternion for angular velocity calculation */
         Eigen::Matrix<double, 4, 1> past_q_I_G;
+
+        /** @brief State for the async-aware quality metric (see calcQuality). Written only
+         *  inside publish() on the VIO/ingest thread -- single-writer, single-reader, no locks
+         *  by design. Invalidated by publish() on the same condition that resets the quality
+         *  hysteresis machine (reset counter change / FAILED), which fires for BOTH hard and
+         *  soft resets, so stale pre-reset values can never pre-charge a new episode (sensor
+         *  time is continuous across resets -- timestamps alone cannot tell). */
+        static constexpr int QUAL_MAX_CAMS = 4;
+        double qual_ema = -1.0;      ///< smoothed fused quality; <0 = unseeded/invalid
+        double qual_ema_t = 0.0;     ///< sensor time of the last EMA update
+        double qual_src_key = 0.0;   ///< newest map key last scored (rescore fingerprint)
+        size_t qual_src_size = 0;    ///< size of that entry when scored (appends re-dirty it)
+        size_t qual_src_map_size = 0; ///< map size when scored
     };
 
     // ============================================================================
@@ -395,6 +425,15 @@ namespace voxl
          * VIO manager and reinitializes the system.,
          */
         int doHardReset();
+
+        /**
+         * @brief Perform a front-end-preserving SOFT reset.
+         *
+         * Resets the navigation EKF via VioManager::soft_reset() while keeping the feature DB and
+         * IMU history so re-init fires fast (no full-window re-collection). Escalates to
+         * doHardReset() on failure or if there is no live VIO manager.
+         */
+        int doSoftReset();
 
         // ============================================================================
         // PRIVATE MEMBER VARIABLES
