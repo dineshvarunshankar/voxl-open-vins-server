@@ -119,6 +119,20 @@ void Publisher::ov_vio_control_pipe_cb(__attribute__((unused)) int ch,
 }
 
 /**
+ * @brief Z of a feature in the observing camera's frame, metres.
+ *
+ * clone is the IMU pose at the observation, calib that camera's IMU extrinsic,
+ * p_FinG the feature in the OpenVINS global frame (not FRD).
+ */
+static double feature_depth(const std::shared_ptr<ov_type::PoseJPL> &clone,
+                            const std::shared_ptr<ov_type::PoseJPL> &calib,
+                            const Eigen::Vector3d &p_FinG)
+{
+    Eigen::Vector3d p_FinI = clone->Rot() * (p_FinG - clone->pos());
+    return (calib->Rot() * p_FinI + calib->pos())(2);
+}
+
+/**
  * @brief Publish VIO data to external systems
  *
  * This method formats and publishes the current VIO state and tracking
@@ -886,7 +900,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
 
     if (pipe_server_get_num_clients(EXTENDED_CH) > 0)
     {
-        ext_vio_data_t ext_vio_packet;
+        ext_vio_data_t ext_vio_packet{};
         ext_vio_packet.v = vio_packet;
         ext_vio_packet.n_total_features = 0;
 
@@ -896,6 +910,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         if (timestamp_iter != used_features_map.end())
         {
             const auto &features = timestamp_iter->second;
+            const auto &imu_clone = state->_clones_IMU.at(current_timestamp);
 
             // Group features by camera ID
             std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
@@ -916,6 +931,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             {
                 int cam_id = camera_pair.first;
                 const auto &cam_features = camera_pair.second;
+                const auto &cam_calib = state->_calib_IMUtoCAM.at(cam_id);
 
                for (const auto &feature : cam_features)
                 {
@@ -953,10 +969,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
 
                         Eigen::Vector3d p_FinG;
+                        Eigen::Vector3d p_FinG_ov = Eigen::Vector3d::Zero();
                         if (SLAM_FEATS[feature->featid]->_feat_representation == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
                         {
-                            p_FinG = SLAM_FEATS[feature->featid]->get_xyz(true); // GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
-                            p_FinG = ov2frd * p_FinG;
+                            p_FinG_ov = SLAM_FEATS[feature->featid]->get_xyz(true); // GRAB FEJ VALUE --> AVOID SNAP BACK EFFECT IN VIZ
                         }
                         else if (SLAM_FEATS[feature->featid]->_feat_representation == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
                         {
@@ -981,10 +997,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                                 Eigen::Vector3d p_CinG = p_IinG - R_GtoC.transpose() * p_IinC;
 
                                 // Feature in OpenVINS global
-                                Eigen::Vector3d p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
-
-                                // Convert to FRD
-                                p_FinG = ov2frd * p_FinG_ov;
+                                p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
                             }
                             catch (const std::exception &e)
                             {
@@ -996,9 +1009,15 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                             printf("[WARNING] SLAM feat representation: %d not recognized, 3D point locations are likely invalid\n", SLAM_FEATS[feature->featid]->_feat_representation);
                         }
 
+                        // Convert to FRD
+                        p_FinG = ov2frd * p_FinG_ov;
+
                         ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
                         ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
                         ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+
+                        ext_vio_packet.features[i_global].depth =
+                            feature_depth(imu_clone, cam_calib, p_FinG_ov);
 
                         ext_vio_packet.features[i_global].point_quality = HIGH;
                     }
@@ -1018,13 +1037,10 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
 
                         Eigen::Vector3d p_FinA = feature->p_FinA;
-                        Eigen::Vector3d p_FinG = feature->p_FinG;
+                        Eigen::Vector3d p_FinG;
+                        Eigen::Vector3d p_FinG_ov = feature->p_FinG;
 
-                        if (msckf_ref == ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
-                        {
-                            p_FinG = ov2frd * p_FinG;
-                        }
-                        else if (msckf_ref == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
+                        if (msckf_ref == ov_type::LandmarkRepresentation::Representation::ANCHORED_MSCKF_INVERSE_DEPTH)
                         {
                             try
                             {
@@ -1043,23 +1059,27 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                                 Eigen::Vector3d p_CinG = p_IinG - R_GtoC.transpose() * p_IinC;
 
                                 // Feature in OpenVINS global
-                                Eigen::Vector3d p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
-
-                                // Convert to FRD
-                                p_FinG = ov2frd * p_FinG_ov;
+                                p_FinG_ov = R_GtoC.transpose() * p_FinA + p_CinG;
                             }
                             catch (const std::exception &e)
                             {
                                 std::cerr << e.what() << '\n';
                             }
                         }
-                        else
+                        else if (msckf_ref != ov_type::LandmarkRepresentation::Representation::GLOBAL_3D)
                         {
                             printf("[WARNING] MSCKF feat representation: %s not recognized, 3D point locations are likely invalid\n", ov_type::LandmarkRepresentation::as_string(msckf_ref).c_str());
                         }
+
+                        // Convert to FRD
+                        p_FinG = ov2frd * p_FinG_ov;
+
                         ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
                         ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
                         ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+
+                        ext_vio_packet.features[i_global].depth =
+                            feature_depth(imu_clone, cam_calib, p_FinG_ov);
 
                         ext_vio_packet.features[i_global].point_quality = MEDIUM;
                     }
