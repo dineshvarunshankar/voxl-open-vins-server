@@ -8,10 +8,11 @@
 # list all your dependencies here. Note for packages that have AMD64 equivalents
 # in the ubuntu repositories you should specify the arm64 architecture to make
 # sure the correct one is installed in voxl-cross.
+# libmodal-flow must match the drone: dpkg -l | grep libmodal-flow
 DEPS="
 libmodal-json
 libmodal-pipe
-libmodal-flow
+libmodal-flow=1.0.3
 libmodal-cv
 voxl-mavlink
 voxl-ceres-solver
