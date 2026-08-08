@@ -1087,6 +1087,57 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             }
         }
 
+        if (vio_manager)
+        {
+            double tracks_time;
+            std::unordered_map<size_t, Eigen::Vector3d> tracks_posinG, tracks_uvd;
+            vio_manager->get_active_tracks(tracks_time, tracks_posinG, tracks_uvd);
+
+            auto already_published = [&](uint32_t id) {
+                for (uint32_t i = 0; i < ext_vio_packet.n_total_features; i++)
+                    if (ext_vio_packet.features[i].id == id)
+                        return true;
+                return false;
+            };
+
+            const auto cam0 = state->_cam_intrinsics_cameras.at(0);
+            const double tan_h = std::tan(anchor_cone_h_deg * M_PI / 180.0);
+            const double tan_v = std::tan(anchor_cone_v_deg * M_PI / 180.0);
+
+            std::vector<size_t> ordered, outside;
+            for (const auto &track : tracks_uvd)
+            {
+                if (already_published((uint32_t)track.first))
+                    continue;
+                cv::Point2f n = cam0->undistort_cv(cv::Point2f(track.second(0), track.second(1)));
+                if (std::abs(n.x) < tan_h && std::abs(n.y) < tan_v)
+                    ordered.push_back(track.first);
+                else
+                    outside.push_back(track.first);
+            }
+            ordered.insert(ordered.end(), outside.begin(), outside.end());
+
+            for (size_t id : ordered)
+            {
+                if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
+                    break;
+
+                const Eigen::Vector3d &uvd = tracks_uvd.at(id);
+                Eigen::Vector3d p_FinG = ov2frd * tracks_posinG.at(id);
+
+                int i_global = ext_vio_packet.n_total_features++;
+                ext_vio_packet.features[i_global].id = id;
+                ext_vio_packet.features[i_global].cam_id = 0;
+                ext_vio_packet.features[i_global].pix_loc[0] = uvd(0);
+                ext_vio_packet.features[i_global].pix_loc[1] = uvd(1);
+                ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
+                ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
+                ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+                ext_vio_packet.features[i_global].depth = uvd(2);
+                ext_vio_packet.features[i_global].point_quality = LOW;
+            }
+        }
+
         pipe_server_write(EXTENDED_CH, (char *)&ext_vio_packet, sizeof(ext_vio_data_t));
     }
 }

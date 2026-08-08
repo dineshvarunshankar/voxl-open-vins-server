@@ -524,6 +524,14 @@ extern bool en_cont_yaw_checks;
 extern float fast_yaw_thresh;
 
 /**
+ * @brief Anchor cone half-angles, degrees
+ *
+ * Features inside the cone fill the extended packet first.
+ */
+extern float anchor_cone_h_deg;
+extern float anchor_cone_v_deg;
+
+/**
  * @brief Fast yaw timeout
  *
  * Duration in seconds for fast yaw change detection

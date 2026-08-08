@@ -110,6 +110,10 @@ bool en_cont_yaw_checks = false;
 /** @brief Fast yaw threshold */
 float fast_yaw_thresh = 0.0f;
 
+/** @brief Anchor cone half-angles (degrees) */
+float anchor_cone_h_deg = 90.0f;
+float anchor_cone_v_deg = 90.0f;
+
 /** @brief Fast yaw timeout (seconds) */
 float fast_yaw_timeout_s = 0.0f;
 

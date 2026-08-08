@@ -491,6 +491,8 @@ namespace voxl
         json_fetch_bool_with_default(parent, "en_cont_yaw_checks", (int *)&en_cont_yaw_checks, 0);
         json_fetch_float_with_default(parent, "fast_yaw_thresh", &fast_yaw_thresh, 5.0f);
         json_fetch_float_with_default(parent, "fast_yaw_timeout_s", &fast_yaw_timeout_s, 1.75f);
+        json_fetch_float_with_default(parent, "anchor_cone_h_deg", &anchor_cone_h_deg, 90.0f);
+        json_fetch_float_with_default(parent, "anchor_cone_v_deg", &anchor_cone_v_deg, 90.0f);
         json_fetch_string_with_default(parent, "yaml_folder", folder_base, CHAR_BUF_SIZE, "/usr/share/modalai/voxl-open-vins/VoxlConfig/starling2");
         json_fetch_int_with_default(parent, "using_stereo", &using_stereo, 0);
         json_fetch_float_with_default(parent, "takeoff_alt_threshold", &takeoff_alt_threshold, 0.5f);
