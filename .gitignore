@@ -11,3 +11,4 @@ pkg/data
 .vscode
 .gitconfig
 .vscode/*
+.cmake/*
