@@ -76,7 +76,7 @@ case "$1" in
 		cd build64
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
 				-DEN_ION_BUF=ON ${OPTS} ../
-		make -j$(nproc) 
+		make -j${JOBS:-$(nproc)} 
 		cd ../
 		;;
 
@@ -86,7 +86,7 @@ case "$1" in
 		cd build
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
 				-DEN_ION_BUF=ON ${OPTS} ../
-		make -j$(nproc)
+		make -j${JOBS:-$(nproc)}
 		cd ../
 		;;
 
@@ -97,7 +97,7 @@ case "$1" in
 		cd build
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QCS6490_64} \
 				-DEN_ION_BUF=ON ${OPTS} ../
-		make -j$(nproc)
+		make -j${JOBS:-$(nproc)}
 		cd ../
 		;;
 
@@ -106,7 +106,7 @@ case "$1" in
 		cd build
 		cmake -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_QRB5165_1_64} \
 				-DEN_ION_BUF=OFF ${OPTS} ../
-		make -j$(nproc)
+		make -j${JOBS:-$(nproc)}
 		cd ../
 		;;
 

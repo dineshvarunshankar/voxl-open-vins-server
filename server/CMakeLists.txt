@@ -37,19 +37,15 @@ FetchContent_Declare(
 
 # Disable yaml-cpp tests
 set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(YAML_BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE) #cross 4.0 quits the chat if building static
+# static: the drone loads ROS Foxy's yaml-cpp 0.6.2, which is ABI-incompatible
+# with the 0.6.3 headers this builds against
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(yaml-cpp)
 # Confirm target exists
 if (TARGET yaml-cpp)
     add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
 endif()
 
-install(FILES
-    ${yaml-cpp_BINARY_DIR}/libyaml-cpp.so
-    ${yaml-cpp_BINARY_DIR}/libyaml-cpp.so.0.6
-    ${yaml-cpp_BINARY_DIR}/libyaml-cpp.so.0.6.3
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
 # Find extras
 
 

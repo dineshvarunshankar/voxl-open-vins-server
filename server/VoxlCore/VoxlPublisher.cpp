@@ -910,7 +910,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         if (timestamp_iter != used_features_map.end())
         {
             const auto &features = timestamp_iter->second;
-            const auto &imu_clone = state->_clones_IMU.at(current_timestamp);
+            const auto imu_clone = state->_clones_IMU.at(current_timestamp);
 
             // Group features by camera ID
             std::map<int, std::vector<std::shared_ptr<ov_core::Feature>>> features_by_camera;
@@ -931,7 +931,7 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             {
                 int cam_id = camera_pair.first;
                 const auto &cam_features = camera_pair.second;
-                const auto &cam_calib = state->_calib_IMUtoCAM.at(cam_id);
+                const auto cam_calib = state->_calib_IMUtoCAM.at(cam_id);
 
                for (const auto &feature : cam_features)
                 {
