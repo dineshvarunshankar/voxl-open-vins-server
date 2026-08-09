@@ -180,6 +180,9 @@ std::vector<cam_info> cam_info_vec;
 /** @brief Timestamp of last IMU data (nanoseconds) */
 volatile int64_t last_imu_timestamp_ns = 0;
 
+/** @brief Monotonic time the last IMU batch arrived (nanoseconds) */
+volatile int64_t last_imu_time = 0;
+
 /** @brief Estimated IMU sampling rate in Hz */
 std::atomic<double> imu_rate_hz(1024.0);
 

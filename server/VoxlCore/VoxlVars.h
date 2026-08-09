@@ -702,6 +702,9 @@ extern std::vector<cam_info> cam_info_vec;
  */
 extern volatile int64_t last_imu_timestamp_ns;
 
+/** @brief Monotonic time the last IMU batch arrived (nanoseconds) */
+extern volatile int64_t last_imu_time;
+
 /**
  * @brief Estimated IMU sampling rate in Hz
  *

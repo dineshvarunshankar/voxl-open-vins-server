@@ -269,8 +269,9 @@ void HealthCheck::checkSystemConnectivity()
     {
         if (is_imu_connected.load(std::memory_order_acquire))
         {
-            std::cerr << "[HEALTH] IMU likely disconnected --> stale data (no data for "
-                      << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms)" << std::endl;
+            std::cerr << "[HEALTH] IMU likely disconnected --> stale data (sample "
+                      << (now_ns - last_imu_timestamp_ns) / 1000000 << "ms, arrived "
+                      << (now_ns - last_imu_time) / 1000000 << "ms ago)" << std::endl;
         }
         is_imu_connected.store(false, std::memory_order_release);
     }
@@ -360,7 +361,9 @@ void HealthCheck::monitorSystemPerformance()
     { // 5 seconds
         std::cout << "[HEALTH] Performance - Health checks: " << health_check_count_
                   << ", IMU timestamp: " << last_imu_timestamp_ns
-                  << ", Camera timestamp: " << last_cam_time << std::endl;
+                  << ", Camera timestamp: " << last_cam_time
+                  << ", IMU arrived " << (current_time_ns - last_imu_time) / 1000000
+                  << "ms ago" << std::endl;
 
         last_performance_log_ns = current_time_ns;
         health_check_count_ = 0; // Reset counter

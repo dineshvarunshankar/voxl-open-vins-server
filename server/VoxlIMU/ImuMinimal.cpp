@@ -116,6 +116,7 @@ void _imu_data_handler_cb(int ch, char *data, int bytes, void *context)
     int64_t t_start = _apps_time_monotonic_ns();
     int64_t t_prev = t_start;
     is_imu_connected.store(true, std::memory_order_release);
+    last_imu_time = t_start;
     // printf("[TS %ld ns] IMU callback start, bytes=%d\n", t_start, bytes);
 
     // ---- validate data ----
