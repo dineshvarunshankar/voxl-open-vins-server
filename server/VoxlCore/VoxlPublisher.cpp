@@ -10,6 +10,8 @@
 
 #include "VoxlHK.h"
 #include <atomic>
+#include <unordered_set>
+#include <vector>
 using namespace voxl;
 
 #define STR_MATCH(s, lit) (strncmp((s), (lit), strlen(lit)) == 0)
@@ -904,6 +906,9 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
         ext_vio_packet.v = vio_packet;
         ext_vio_packet.n_total_features = 0;
 
+        // collected unbounded, ranked into the 64 slots below
+        std::vector<vio_feature_t> cand;
+
         double current_timestamp = state->_timestamp;
         auto timestamp_iter = used_features_map.find(current_timestamp);
 
@@ -956,17 +961,13 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                     // check if feature id found in SLAM set
                     if (SLAM_FEATS.find(feature->featid) != SLAM_FEATS.end())
                     {
-                        if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
-                            break;
-
-                        int i_global = ext_vio_packet.n_total_features++;
-
-                        ext_vio_packet.features[i_global].id = feature->featid;
-                        ext_vio_packet.features[i_global].cam_id = cam_id;
+                        vio_feature_t pt{};
+                        pt.id = feature->featid;
+                        pt.cam_id = cam_id;
 
                         // Extract pixel location from UV measurement
-                        ext_vio_packet.features[i_global].pix_loc[0] = uv_meas(0);
-                        ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
+                        pt.pix_loc[0] = uv_meas(0);
+                        pt.pix_loc[1] = uv_meas(1);
 
                         Eigen::Vector3d p_FinG;
                         Eigen::Vector3d p_FinG_ov = Eigen::Vector3d::Zero();
@@ -1012,29 +1013,24 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         // Convert to FRD
                         p_FinG = ov2frd * p_FinG_ov;
 
-                        ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
-                        ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
-                        ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+                        pt.tsf[0] = p_FinG[0];
+                        pt.tsf[1] = p_FinG[1];
+                        pt.tsf[2] = p_FinG[2];
 
-                        ext_vio_packet.features[i_global].depth =
-                            feature_depth(imu_clone, cam_calib, p_FinG_ov);
-
-                        ext_vio_packet.features[i_global].point_quality = HIGH;
+                        pt.depth = feature_depth(imu_clone, cam_calib, p_FinG_ov);
+                        pt.point_quality = HIGH;
+                        cand.push_back(pt);
                     }
                     // if not found in SLAM, then it is an MSCKF feature
                     else
                     {
-                        if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
-                            break;
-
-                        int i_global = ext_vio_packet.n_total_features++;
-
-                        ext_vio_packet.features[i_global].id = feature->featid;
-                        ext_vio_packet.features[i_global].cam_id = cam_id;
+                        vio_feature_t pt{};
+                        pt.id = feature->featid;
+                        pt.cam_id = cam_id;
 
                         // Extract pixel location from UV measurement
-                        ext_vio_packet.features[i_global].pix_loc[0] = uv_meas(0);
-                        ext_vio_packet.features[i_global].pix_loc[1] = uv_meas(1);
+                        pt.pix_loc[0] = uv_meas(0);
+                        pt.pix_loc[1] = uv_meas(1);
 
                         Eigen::Vector3d p_FinA = feature->p_FinA;
                         Eigen::Vector3d p_FinG;
@@ -1074,14 +1070,13 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
                         // Convert to FRD
                         p_FinG = ov2frd * p_FinG_ov;
 
-                        ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
-                        ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
-                        ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
+                        pt.tsf[0] = p_FinG[0];
+                        pt.tsf[1] = p_FinG[1];
+                        pt.tsf[2] = p_FinG[2];
 
-                        ext_vio_packet.features[i_global].depth =
-                            feature_depth(imu_clone, cam_calib, p_FinG_ov);
-
-                        ext_vio_packet.features[i_global].point_quality = MEDIUM;
+                        pt.depth = feature_depth(imu_clone, cam_calib, p_FinG_ov);
+                        pt.point_quality = MEDIUM;
+                        cand.push_back(pt);
                     }
                 }
             }
@@ -1093,50 +1088,49 @@ void Publisher::publish(std::shared_ptr<ov_msckf::State> state,
             std::unordered_map<size_t, Eigen::Vector3d> tracks_posinG, tracks_uvd;
             vio_manager->get_active_tracks(tracks_time, tracks_posinG, tracks_uvd);
 
-            auto already_published = [&](uint32_t id) {
-                for (uint32_t i = 0; i < ext_vio_packet.n_total_features; i++)
-                    if (ext_vio_packet.features[i].id == id)
-                        return true;
-                return false;
-            };
+            std::unordered_set<uint32_t> seen;
+            for (const auto &c : cand)
+                seen.insert(c.id);
 
-            const auto cam0 = state->_cam_intrinsics_cameras.at(0);
-            const double tan_h = std::tan(anchor_cone_h_deg * M_PI / 180.0);
-            const double tan_v = std::tan(anchor_cone_v_deg * M_PI / 180.0);
-
-            std::vector<size_t> ordered, outside;
             for (const auto &track : tracks_uvd)
             {
-                if (already_published((uint32_t)track.first))
+                if (seen.count((uint32_t)track.first))
                     continue;
-                cv::Point2f n = cam0->undistort_cv(cv::Point2f(track.second(0), track.second(1)));
-                if (std::abs(n.x) < tan_h && std::abs(n.y) < tan_v)
-                    ordered.push_back(track.first);
-                else
-                    outside.push_back(track.first);
-            }
-            ordered.insert(ordered.end(), outside.begin(), outside.end());
 
-            for (size_t id : ordered)
-            {
-                if (ext_vio_packet.n_total_features >= VIO_MAX_REPORTED_FEATURES)
-                    break;
+                const Eigen::Vector3d &uvd = track.second;
+                Eigen::Vector3d p_FinG = ov2frd * tracks_posinG.at(track.first);
 
-                const Eigen::Vector3d &uvd = tracks_uvd.at(id);
-                Eigen::Vector3d p_FinG = ov2frd * tracks_posinG.at(id);
-
-                int i_global = ext_vio_packet.n_total_features++;
-                ext_vio_packet.features[i_global].id = id;
-                ext_vio_packet.features[i_global].cam_id = 0;
-                ext_vio_packet.features[i_global].pix_loc[0] = uvd(0);
-                ext_vio_packet.features[i_global].pix_loc[1] = uvd(1);
-                ext_vio_packet.features[i_global].tsf[0] = p_FinG[0];
-                ext_vio_packet.features[i_global].tsf[1] = p_FinG[1];
-                ext_vio_packet.features[i_global].tsf[2] = p_FinG[2];
-                ext_vio_packet.features[i_global].depth = uvd(2);
-                ext_vio_packet.features[i_global].point_quality = LOW;
+                vio_feature_t pt{};
+                pt.id = track.first;
+                pt.cam_id = 0;
+                pt.pix_loc[0] = uvd(0);
+                pt.pix_loc[1] = uvd(1);
+                pt.tsf[0] = p_FinG[0];
+                pt.tsf[1] = p_FinG[1];
+                pt.tsf[2] = p_FinG[2];
+                pt.depth = uvd(2);
+                pt.point_quality = LOW;
+                cand.push_back(pt);
             }
         }
+
+        // cam0 features inside the cone first
+        const auto cam0 = state->_cam_intrinsics_cameras.at(0);
+        const double tan_h = std::tan(anchor_cone_h_deg * M_PI / 180.0);
+        const double tan_v = std::tan(anchor_cone_v_deg * M_PI / 180.0);
+
+        std::stable_partition(
+            cand.begin(), cand.end(), [&](const vio_feature_t &f) {
+                if (f.cam_id != 0)
+                    return false;
+                cv::Point2f n = cam0->undistort_cv(cv::Point2f(f.pix_loc[0], f.pix_loc[1]));
+                return std::abs(n.x) < tan_h && std::abs(n.y) < tan_v;
+            });
+
+        ext_vio_packet.n_total_features = static_cast<uint32_t>(
+            std::min<size_t>(cand.size(), VIO_MAX_REPORTED_FEATURES));
+        std::copy_n(cand.begin(), ext_vio_packet.n_total_features,
+                    ext_vio_packet.features);
 
         pipe_server_write(EXTENDED_CH, (char *)&ext_vio_packet, sizeof(ext_vio_data_t));
     }
