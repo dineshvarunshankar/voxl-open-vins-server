@@ -82,7 +82,7 @@ filepath_gt: "/tmp/ov_groundtruth.txt"
 # we have a KLT and descriptor based (KLT is better implemented...)
 use_klt: true # if true we will use KLT, otherwise use a ORB descriptor + robust matching
 use_gpu: true
-num_pts: 150 # number of points (per camera) we will extract and try to track
+num_pts: 250 # number of points (per camera) we will extract and try to track
 fast_threshold: 15 # threshold for fast extraction (warning: lower threshs can be expensive)
 grid_x: 5 # extraction sub-grid count for horizontal direction (uniform tracking)
 grid_y: 5 # extraction sub-grid count for vertical direction (uniform tracking)
